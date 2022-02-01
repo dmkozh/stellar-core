@@ -1,0 +1,5 @@
+# New DB
+stellar-core.exe --conf D:\proj\stellar-core\docs\stellar-core_testnet.cfg new-db
+
+# Test catchup
+--conf D:\proj\stellar-core\docs\stellar-core_testnet.cfg --metric scp.envelope.validsig catchup 33218700/100
