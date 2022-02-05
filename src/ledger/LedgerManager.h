@@ -155,7 +155,8 @@ class LedgerManager
     // changes.  This is normally done automatically as part of
     // `valueExternalized()`; this method is present in the public interface to
     // permit testing.
-    virtual void closeLedger(LedgerCloseData const& ledgerData) = 0;
+    virtual void closeLedger(LedgerCloseData const& ledgerData,
+                             bool shouldUpdateLastModified = true) = 0;
 
     // deletes old entries stored in the database
     virtual void deleteOldEntries(Database& db, uint32_t ledgerSeq,

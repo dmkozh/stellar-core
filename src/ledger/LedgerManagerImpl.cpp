@@ -215,23 +215,38 @@ LedgerManagerImpl::startNewLedger(LedgerHeader const& genesisLedger)
     auto ledgerTime = mLedgerClose.TimeScope();
     SecretKey skey = SecretKey::fromSeed(mApp.getNetworkID());
 
-    LedgerTxn ltx(mApp.getLedgerTxnRoot(), false);
-    ltx.loadHeader().current() = genesisLedger;
+    /*LedgerTxn ltx(mApp.getLedgerTxnRoot(), false);
+    ltx.loadHeader().current() = genesisLedger;*/
 
-    LedgerEntry rootEntry;
-    rootEntry.lastModifiedLedgerSeq = 1;
-    rootEntry.data.type(ACCOUNT);
-    auto& rootAccount = rootEntry.data.account();
-    rootAccount.accountID = skey.getPublicKey();
-    rootAccount.thresholds[0] = 1;
-    rootAccount.balance = genesisLedger.totalCoins;
-    ltx.create(rootEntry);
+    // LedgerEntry rootEntry;
+    // rootEntry.lastModifiedLedgerSeq = 1;
+    // rootEntry.data.type(ACCOUNT);
+    // auto& rootAccount = rootEntry.data.account();
+    // rootAccount.accountID = skey.getPublicKey();
+    // rootAccount.thresholds[0] = 1;
+    // rootAccount.balance = genesisLedger.totalCoins;
+    // ltx.create(rootEntry);
+    TransactionEnvelope rootTxEnvelope(ENVELOPE_TYPE_TX);
+    auto& rootTx = rootTxEnvelope.v1().tx;
+    auto& rootOp = rootTx.operations.emplace_back();
+    rootOp.body.type(CREATE_ACCOUNT);
+    auto& createAccountOp = rootOp.body.createAccountOp();
+    createAccountOp.destination = skey.getPublicKey();
+    createAccountOp.startingBalance = genesisLedger.totalCoins;
+    auto rootTxFrame = TransactionFrameBase::makeTransactionFromWire(
+        mApp.getNetworkID(), rootTxEnvelope);
+    auto rootTxSet =
+        std::make_shared<TxSetFrame>(genesisLedger.previousLedgerHash);
+    rootTxSet->add(rootTxFrame);
+    LedgerCloseData rootLedgerData(genesisLedger.ledgerSeq, rootTxSet,
+                                   genesisLedger.scpValue);
 
     CLOG_INFO(Ledger, "Established genesis ledger, closing");
     CLOG_INFO(Ledger, "Root account: {}", skey.getStrKeyPublic());
     CLOG_INFO(Ledger, "Root account seed: {}", skey.getStrKeySeed().value);
-    ledgerClosed(ltx);
-    ltx.commit();
+    closeLedger(rootLedgerData, false);
+    /*ledgerClosed(ltx);
+    ltx.commit();*/
 }
 
 void
@@ -591,7 +606,8 @@ during replays.
 
 */
 void
-LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData)
+LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData,
+                               bool shouldUpdateLastModified)
 {
     ZoneScoped;
     auto ledgerTime = mLedgerClose.TimeScope();
@@ -599,7 +615,7 @@ LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData)
                                      LogSlowExecution::Mode::MANUAL, "",
                                      std::chrono::milliseconds::max()};
 
-    LedgerTxn ltx(mApp.getLedgerTxnRoot());
+    LedgerTxn ltx(mApp.getLedgerTxnRoot(), shouldUpdateLastModified);
     auto header = ltx.loadHeader();
     ++header.current().ledgerSeq;
     header.current().previousLedgerHash = mLastClosedLedger.hash;
