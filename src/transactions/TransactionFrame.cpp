@@ -566,6 +566,11 @@ TransactionFrame::processFeeSeqNum(AbstractLedgerTxn& ltx, int64_t baseFee)
 
     auto header = ltx.loadHeader();
     resetResults(header.current(), baseFee, true);
+    int64_t& fee = getResult().feeCharged;
+    if (fee == 0)
+    {
+        return;
+    }
 
     auto sourceAccount = loadSourceAccount(ltx, header);
     if (!sourceAccount)
@@ -574,7 +579,7 @@ TransactionFrame::processFeeSeqNum(AbstractLedgerTxn& ltx, int64_t baseFee)
     }
     auto& acc = sourceAccount.current().data.account();
 
-    int64_t& fee = getResult().feeCharged;
+    
     if (fee > 0)
     {
         fee = std::min(acc.balance, fee);

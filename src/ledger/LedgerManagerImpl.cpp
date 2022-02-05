@@ -215,31 +215,49 @@ LedgerManagerImpl::startNewLedger(LedgerHeader const& genesisLedger)
     auto ledgerTime = mLedgerClose.TimeScope();
     SecretKey skey = SecretKey::fromSeed(mApp.getNetworkID());
 
-    /*LedgerTxn ltx(mApp.getLedgerTxnRoot(), false);
-    ltx.loadHeader().current() = genesisLedger;*/
+    //LedgerTxn ltx(mApp.getLedgerTxnRoot(), false);
+    //ltx.loadHeader().current() = genesisLedger;
 
-    // LedgerEntry rootEntry;
-    // rootEntry.lastModifiedLedgerSeq = 1;
-    // rootEntry.data.type(ACCOUNT);
-    // auto& rootAccount = rootEntry.data.account();
-    // rootAccount.accountID = skey.getPublicKey();
-    // rootAccount.thresholds[0] = 1;
-    // rootAccount.balance = genesisLedger.totalCoins;
-    // ltx.create(rootEntry);
-    TransactionEnvelope rootTxEnvelope(ENVELOPE_TYPE_TX);
-    auto& rootTx = rootTxEnvelope.v1().tx;
+    //LedgerEntry rootEntry;
+    //rootEntry.lastModifiedLedgerSeq = 1;
+    //rootEntry.data.type(ACCOUNT);
+    //auto& rootAccount = rootEntry.data.account();
+    //rootAccount.accountID = skey.getPublicKey();
+    //rootAccount.thresholds[0] = 1;
+    //rootAccount.balance = genesisLedger.totalCoins;
+    //ltx.create(rootEntry);
+
+    //ledgerClosed(ltx);
+    //ltx.commit();
+
+    // TransactionEnvelope rootTxEnvelope(ENVELOPE_TYPE_TX);
+    // auto& rootTx = rootTxEnvelope.v1().tx;
+    TransactionSet rootTxSet;
+    rootTxSet.previousLedgerHash = genesisLedger.previousLedgerHash;
+    auto& rootTxEnvelope = rootTxSet.txs.emplace_back(ENVELOPE_TYPE_TX_V0);
+    auto& rootTx = rootTxEnvelope.v0().tx;
+    rootTx.sourceAccountEd25519 = skey.getPublicKey().ed25519();
+
     auto& rootOp = rootTx.operations.emplace_back();
+
+    // auto& rootTx = rootTxEnvelope.v1().tx;
     rootOp.body.type(CREATE_ACCOUNT);
     auto& createAccountOp = rootOp.body.createAccountOp();
     createAccountOp.destination = skey.getPublicKey();
     createAccountOp.startingBalance = genesisLedger.totalCoins;
-    auto rootTxFrame = TransactionFrameBase::makeTransactionFromWire(
-        mApp.getNetworkID(), rootTxEnvelope);
-    auto rootTxSet =
-        std::make_shared<TxSetFrame>(genesisLedger.previousLedgerHash);
-    rootTxSet->add(rootTxFrame);
-    LedgerCloseData rootLedgerData(genesisLedger.ledgerSeq, rootTxSet,
-                                   genesisLedger.scpValue);
+    /*auto rootTxFrame = TransactionFrameBase::makeTransactionFromWire(
+        mApp.getNetworkID(), rootTxEnvelope);*/
+
+    /*auto rootTxSet =
+        std::make_shared<TxSetFrame>(genesisLedger.previousLedgerHash);*/
+    auto rootTxSetFrame =
+        std::make_shared<TxSetFrame>(mApp.getNetworkID(), rootTxSet);
+
+    // rootTxSet->add(rootTxFrame);
+    StellarValue sv;
+    sv.txSetHash = rootTxSetFrame->getContentsHash();
+    sv.closeTime = genesisLedger.scpValue.closeTime;
+    LedgerCloseData rootLedgerData(genesisLedger.ledgerSeq, rootTxSetFrame, sv);
 
     CLOG_INFO(Ledger, "Established genesis ledger, closing");
     CLOG_INFO(Ledger, "Root account: {}", skey.getStrKeyPublic());
