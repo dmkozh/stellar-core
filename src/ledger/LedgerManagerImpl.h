@@ -133,8 +133,7 @@ class LedgerManagerImpl : public LedgerManager
                  std::shared_ptr<HistoryArchive> archive,
                  std::set<std::shared_ptr<Bucket>> bucketsToRetain) override;
 
-    void closeLedger(LedgerCloseData const& ledgerData,
-                     bool shouldUpdateLastModified = true) override;
+    void closeLedger(LedgerCloseData const& ledgerData) override;
     void deleteOldEntries(Database& db, uint32_t ledgerSeq,
                           uint32_t count) override;
 

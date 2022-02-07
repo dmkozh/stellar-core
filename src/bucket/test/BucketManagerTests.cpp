@@ -83,13 +83,6 @@ class LedgerManagerForBucketTests : public LedgerManagerImpl
         mTestDeadEntries = deadEntries;
     }
 
-    void
-    closeLedger(LedgerCloseData const& ledgerData,
-                bool shouldUpdateLastModified = true)
-    {
-        LedgerManagerImpl::closeLedger(ledgerData, shouldUpdateLastModified);
-    }
-
     LedgerManagerForBucketTests(Application& app) : LedgerManagerImpl(app)
     {
     }
