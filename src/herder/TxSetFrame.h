@@ -4,6 +4,7 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
+#include "herder/SurgePricingUtils.h"
 #include "ledger/LedgerHashUtils.h"
 #include "overlay/StellarXDR.h"
 #include "transactions/TransactionFrame.h"
@@ -11,6 +12,8 @@
 
 #include <deque>
 #include <functional>
+#include <list>
+#include <optional>
 #include <unordered_map>
 
 namespace stellar
@@ -22,7 +25,6 @@ using TxSetFrameConstPtr = std::shared_ptr<TxSetFrame const>;
 class TxSetFrame : public NonMovableOrCopyable
 {
   public:
-    using AccountTransactionQueue = std::deque<TransactionFrameBasePtr>;
     using Transactions = std::vector<TransactionFrameBasePtr>;
 
     // Creates a valid TxSetFrame from the provided transactions.
@@ -128,7 +130,10 @@ class TxSetFrame : public NonMovableOrCopyable
     TxSetFrame(bool isGeneralized, Hash const& previousLedgerHash,
                Transactions const& txs);
 
-    // Computes the fees for transactions in this set.
+    void computeContentsHash();
+
+    // Computes the fees for transactions in this set based on information from
+    // the non-generalized tx set.
     // This has to be `const` in combination with `mutable` fee-related fields
     // in order to accommodate one specific case: legacy (non-generalized) tx
     // sets received from the peers don't include the fee information and we
@@ -136,8 +141,7 @@ class TxSetFrame : public NonMovableOrCopyable
     // Hence we lazily compute the fees in `getTxBaseFee` for such TxSetFrames.
     // This can be cleaned up after the protocol migration as non-generalized tx
     // sets won't exist in the network anymore.
-    void computeTxFees(LedgerHeader const& lclHeader) const;
-    void computeContentsHash();
+    void computeTxFeesForNonGeneralizedSet(LedgerHeader const& lclHeader) const;
 
     std::optional<Hash> mHash;
     std::optional<size_t> mutable mEncodedSize;
@@ -146,7 +150,16 @@ class TxSetFrame : public NonMovableOrCopyable
     bool addTxsFromXdr(Hash const& networkID,
                        xdr::xvector<TransactionEnvelope> const& txs,
                        bool useBaseFee, std::optional<int64_t> baseFee);
-    void surgePricingFilter(uint32_t opsLeft);
+    void applySurgePricing(Application& app);
+
+    void computeTxFeesForNonGeneralizedSet(LedgerHeader const& lclHeader,
+                                           int64_t lowestBaseFee,
+                                           bool enableLogging) const;
+
+    void computeTxFees(LedgerHeader const& ledgerHeader,
+                       SurgePricingLaneConfig const& surgePricingConfig,
+                       std::vector<int64_t> const& lowestLaneFee,
+                       std::vector<bool> const& hadTxNotFittingLane);
 
     bool const mIsGeneralized;
 

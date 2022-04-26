@@ -4,6 +4,7 @@
 
 #include "herder/TransactionQueue.h"
 #include "crypto/SecretKey.h"
+#include "herder/SurgePricingUtils.h"
 #include "herder/TxQueueLimiter.h"
 #include "ledger/LedgerHashUtils.h"
 #include "ledger/LedgerManager.h"
@@ -65,8 +66,8 @@ TransactionQueue::TransactionQueue(Application& app, uint32 pendingDepth,
           app.getMetrics().NewTimer({"herder", "pending-txs", "self-delay"}))
     , mBroadcastTimer(app)
 {
-    mTxQueueLimiter = std::make_unique<TxQueueLimiter>(poolLedgerMultiplier,
-                                                       app.getLedgerManager());
+    mTxQueueLimiter =
+        std::make_unique<TxQueueLimiter>(poolLedgerMultiplier, app);
     for (uint32 i = 0; i < pendingDepth; i++)
     {
         mSizeByAge.emplace_back(&app.getMetrics().NewCounter(
@@ -78,6 +79,7 @@ TransactionQueue::TransactionQueue(Application& app, uint32 pendingDepth,
     mFilteredTypes.insert(filteredTypes.begin(), filteredTypes.end());
     mBroadcastSeed =
         rand_uniform<uint64>(0, std::numeric_limits<uint64>::max());
+    mBroadcastOpCarryover.resize(1);
 }
 
 TransactionQueue::~TransactionQueue()
@@ -521,14 +523,9 @@ TransactionQueue::tryAdd(TransactionFrameBasePtr tx, bool submittedFromSelf)
 
     // make space so that we can add this transaction
     // this will succeed as `canAdd` ensures that this is the case
-    if (!mTxQueueLimiter->evictTransactions(
-            ops, [&](TransactionFrameBasePtr const& txToEvict) {
-                ban({txToEvict});
-            }))
-    {
-        throw std::logic_error(
-            "Invalid queue state, could not evict transactions");
-    }
+    mTxQueueLimiter->evictTransactions(
+        tx,
+        [&](TransactionFrameBasePtr const& txToEvict) { ban({txToEvict}); });
     mTxQueueLimiter->addTransaction(tx);
 
     broadcast(false);
@@ -817,7 +814,7 @@ TransactionQueue::shift()
     {
         mSizeByAge[i]->set_count(sizes[i]);
     }
-    mTxQueueLimiter->resetMinFeeNeeded();
+    mTxQueueLimiter->resetEvictionState();
     // pick a new randomizing seed for tie breaking
     mBroadcastSeed =
         rand_uniform<uint64>(0, std::numeric_limits<uint64>::max());
@@ -893,26 +890,44 @@ TransactionQueue::maybeVersionUpgraded()
     mLedgerVersion = lcl.header.ledgerVersion;
 }
 
-size_t
+std::pair<uint32_t, std::optional<uint32_t>>
 TransactionQueue::getMaxOpsToFloodThisPeriod() const
 {
     auto& cfg = mApp.getConfig();
     double opRatePerLedger = cfg.FLOOD_OP_RATE_PER_LEDGER;
 
-    size_t maxOps = mApp.getLedgerManager().getLastMaxTxSetSizeOps();
+    auto maxOps = mApp.getLedgerManager().getLastMaxTxSetSizeOps();
     double opsToFloodLedgerDbl = opRatePerLedger * maxOps;
     releaseAssertOrThrow(opsToFloodLedgerDbl >= 0.0);
     releaseAssertOrThrow(isRepresentableAsInt64(opsToFloodLedgerDbl));
     int64_t opsToFloodLedger = static_cast<int64_t>(opsToFloodLedgerDbl);
 
-    int64_t opsToFlood;
-    opsToFlood =
-        mBroadcastOpCarryover +
+    int64_t opsToFlood =
+        mBroadcastOpCarryover[SurgePricingPriorityQueue::GENERIC_LANE] +
         bigDivideOrThrow(opsToFloodLedger, cfg.FLOOD_TX_PERIOD_MS,
                          cfg.getExpectedLedgerCloseTime().count() * 1000,
                          Rounding::ROUND_UP);
-    releaseAssertOrThrow(opsToFlood >= 0);
-    return static_cast<size_t>(opsToFlood);
+    releaseAssertOrThrow(opsToFlood >= 0 &&
+                         opsToFlood <= std::numeric_limits<uint32_t>::max());
+
+    auto maxDexOps = cfg.MAX_DEX_TX_OPERATIONS_IN_TX_SET;
+    std::optional<uint32_t> dexOpsToFlood;
+    if (maxDexOps)
+    {
+        *maxDexOps = std::min(maxOps, *maxDexOps);
+        uint32_t dexOpsToFloodLedger =
+            static_cast<uint32_t>(*maxDexOps * opRatePerLedger);
+        uint32_t dexOpsCarryover =
+            mBroadcastOpCarryover.size() > DexLimitingLaneConfig::DEX_LANE
+                ? mBroadcastOpCarryover[DexLimitingLaneConfig::DEX_LANE]
+                : 0;
+        dexOpsToFlood =
+            dexOpsCarryover +
+            bigDivideOrThrow(dexOpsToFloodLedger, cfg.FLOOD_TX_PERIOD_MS,
+                             cfg.getExpectedLedgerCloseTime().count() * 1000,
+                             Rounding::ROUND_UP);
+    }
+    return std::make_pair(static_cast<uint32_t>(opsToFlood), dexOpsToFlood);
 }
 
 TransactionQueue::BroadcastStatus
@@ -1011,46 +1026,70 @@ TransactionQueue::broadcastTx(AccountState& state, TimestampedTx& tx)
                : BroadcastStatus::BROADCAST_STATUS_ALREADY;
 }
 
-struct TxQueueTracker
+class TxQueueTracker : public TxStack
 {
-    TransactionQueue::TimestampedTransactions::iterator mCur;
-    TransactionQueue::AccountState* mAccountState;
+  public:
+    TxQueueTracker(TransactionQueue::AccountState* accountState)
+        : mAccountState(accountState)
+    {
+        mCur = mAccountState->mTransactions.begin();
+        skipToFirstNotBroadcasted();
+        // there should be at least one tx to broadcast in this queue
+        releaseAssert(!empty());
+    }
 
-    // skips to first transaction not broadcasted yet
+    TransactionFrameBasePtr
+    getTopTx() const override
+    {
+        releaseAssert(!empty());
+        return mCur->mTx;
+    }
+
+    TransactionQueue::TimestampedTx&
+    getCurrentTimestampedTx() const
+    {
+        return *mCur;
+    }
+
     bool
+    empty() const override
+    {
+        return mCur == mAccountState->mTransactions.end();
+    }
+
+    void
+    popTopTx() override
+    {
+        ++mCur;
+        skipToFirstNotBroadcasted();
+    }
+
+    uint32_t
+    getNumOperations() const override
+    {
+        // Operation count tracking is not relevant for this TxStack.
+        return 0;
+    }
+
+    TransactionQueue::AccountState&
+    getAccountState() const
+    {
+        return *mAccountState;
+    }
+
+  private:
+    // skips to first transaction not broadcasted yet
+    void
     skipToFirstNotBroadcasted()
     {
         while (mCur != mAccountState->mTransactions.end() && mCur->mBroadcasted)
         {
             ++mCur;
         }
-        return mCur != mAccountState->mTransactions.end();
     }
 
-    struct Comparator
-    {
-        size_t mSeed;
-        Comparator(size_t seed) : mSeed(seed)
-        {
-        }
-
-        // return true if l < r
-        // compares tx `cur` for each TxTracker as to implement surge
-        // pricing comparison
-        bool
-        operator()(TxQueueTracker const& l, TxQueueTracker const& r) const
-        {
-            if (l.mCur == l.mAccountState->mTransactions.end())
-            {
-                return r.mCur != r.mAccountState->mTransactions.end();
-            }
-            if (r.mCur == r.mAccountState->mTransactions.end())
-            {
-                return false;
-            }
-            return lessThanXored(l.mCur->mTx, r.mCur->mTx, mSeed);
-        }
-    };
+    TransactionQueue::TimestampedTransactions::iterator mCur;
+    TransactionQueue::AccountState* mAccountState;
 };
 
 bool
@@ -1061,73 +1100,63 @@ TransactionQueue::broadcastSome()
     // highest base fee not broadcasted so far.
     // This broadcasts from account queues in order as to maximize chances of
     // propagation.
-    size_t opsToFlood = getMaxOpsToFloodThisPeriod();
+    auto [opsToFlood, dexOpsToFlood] = getMaxOpsToFloodThisPeriod();
 
-    // uses a priority queue of trackers, using a custom comparator as to
-    // prioritize higher fee queues
-    TxQueueTracker::Comparator comp(mBroadcastSeed);
-    std::priority_queue<TxQueueTracker, std::vector<TxQueueTracker>,
-                        TxQueueTracker::Comparator>
-        iters(comp);
     size_t totalOpsToFlood = 0;
-    for (auto& m : mAccountStates)
+    std::vector<TxStackPtr> trackersToBroadcast;
+    for (auto& [_, accountState] : mAccountStates)
     {
-        auto asOps = m.second.mBroadcastQueueOps;
+        auto asOps = accountState.mBroadcastQueueOps;
         if (asOps != 0)
         {
-            TxQueueTracker tracker{m.second.mTransactions.begin(), &m.second};
-            auto r = tracker.skipToFirstNotBroadcasted();
-            // there should be at least one tx to broadcast in this queue
-            releaseAssert(r);
-            iters.emplace(tracker);
+            trackersToBroadcast.emplace_back(
+                std::make_shared<TxQueueTracker>(&accountState));
             totalOpsToFlood += asOps;
         }
     }
 
     std::vector<TransactionFrameBasePtr> banningTxs;
-    while (opsToFlood != 0 && !iters.empty())
-    {
-        auto curTracker = iters.top();
-        iters.pop();
+    auto visitor = [this, &totalOpsToFlood,
+                    &banningTxs](TxStack const& txStack) {
+        auto const& curTracker = static_cast<TxQueueTracker const&>(txStack);
         // look at the next candidate transaction for that account
-        auto& cur = curTracker.mCur;
-        auto& tx = cur->mTx;
+        auto& cur = curTracker.getCurrentTimestampedTx();
+        auto tx = curTracker.getTopTx();
         // by construction, cur points to non broadcasted transactions
-        releaseAssert(!cur->mBroadcasted);
-        if (opsToFlood < tx->getNumOperations())
-        {
-            // as we can't flood this transaction we have to wait to
-            // accumulate more flooding credit
-            break;
-        }
-        auto bStatus = broadcastTx(*curTracker.mAccountState, *cur);
+        releaseAssert(!cur.mBroadcasted);
+        auto bStatus = broadcastTx(curTracker.getAccountState(), cur);
         if (bStatus == BroadcastStatus::BROADCAST_STATUS_SUCCESS)
         {
-            auto ops = tx->getNumOperations();
-            opsToFlood -= ops;
-            totalOpsToFlood -= ops;
+            totalOpsToFlood -= tx->getNumOperations();
+            return SurgePricingPriorityQueue::VisitTxStackResult::TX_PROCESSED;
         }
-        // when skipping, we ban the transaction and skip the remainder of the
-        // queue
-        if (bStatus == BroadcastStatus::BROADCAST_STATUS_SKIPPED)
+        else if (bStatus == BroadcastStatus::BROADCAST_STATUS_SKIPPED)
         {
+            // When skipping, we ban the transaction and skip the remainder of
+            // the stack.
             banningTxs.emplace_back(tx);
+            return SurgePricingPriorityQueue::VisitTxStackResult::
+                TX_STACK_SKIPPED;
         }
         else
         {
-            cur++;
-            // if we're not done with this account, add the tracker back
-            if (curTracker.skipToFirstNotBroadcasted())
-            {
-                iters.push(curTracker);
-            }
+            // Already broadcasted; don't invalidate the stack but also don't
+            // count transaction as processed.
+            return SurgePricingPriorityQueue::VisitTxStackResult::TX_SKIPPED;
         }
-    }
+    };
+    SurgePricingPriorityQueue::visitTopTxs(
+        trackersToBroadcast,
+        std::make_shared<DexLimitingLaneConfig>(opsToFlood, dexOpsToFlood),
+        mBroadcastSeed, visitor, mBroadcastOpCarryover);
     ban(banningTxs);
     // carry over remainder, up to MAX_OPS_PER_TX ops
     // reason is that if we add 1 next round, we can flood a "worst case fee
     // bump" tx
-    mBroadcastOpCarryover = std::min<size_t>(opsToFlood, MAX_OPS_PER_TX + 1);
+    for (auto& opsLeft : mBroadcastOpCarryover)
+    {
+        opsLeft = std::min(opsLeft, MAX_OPS_PER_TX + 1);
+    }
     return totalOpsToFlood != 0;
 }
 
