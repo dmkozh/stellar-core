@@ -1034,6 +1034,19 @@ runMergeBucketList(CommandLineArgs const& args)
 }
 
 int
+runMergeBucketListJson(CommandLineArgs const& args)
+{
+    CommandLine::ConfigOption configOption;
+    std::string outputDir{"."};
+
+    return runWithHelp(
+        args,
+        {configurationParser(configOption),
+         outputDirParser(outputDir).required()},
+        [&] { return mergeBucketListJson(configOption.getConfig(), outputDir); });
+}
+
+int
 runNewDB(CommandLineArgs const& args)
 {
     CommandLine::ConfigOption configOption;
@@ -1642,6 +1655,8 @@ handleCommandLine(int argc, char* const* argv)
          {"self-check", "performs diagnostic checks", runSelfCheck},
          {"merge-bucketlist", "writes diagnostic merged bucket list",
           runMergeBucketList},
+         {"merge-bucketlist-json", "writes diagnostic merged bucket list as JSON",
+          runMergeBucketListJson},
          {"new-db", "creates or restores the DB to the genesis ledger",
           runNewDB},
          {"new-hist", "initialize history archives", runNewHist},

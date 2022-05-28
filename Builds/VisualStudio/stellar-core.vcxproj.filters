@@ -175,6 +175,9 @@
     <Filter Include="xdr\generated_next">
       <UniqueIdentifier>{3be84928-7d19-426f-9bc0-4c34254c559e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="util\xdrquery">
+      <UniqueIdentifier>{166a403b-4f13-4505-9953-97ea92e5d855}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\lib\util\getopt_long.c">
@@ -1248,6 +1251,12 @@
     <ClCompile Include="..\..\src\herder\TxSetUtils.cpp">
       <Filter>herder</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\util\xdrquery\XDRMatcher.cpp">
+      <Filter>util\xdrquery</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\util\xdrquery\XDRQueryEval.cpp">
+      <Filter>util\xdrquery</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\lib\util\cpptoml.h">
@@ -2183,6 +2192,18 @@
     <ClInclude Include="src_next\generated\xdr\Stellar-types.h">
       <Filter>xdr\generated_next</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\src\util\xdrquery\XDRMatcher.h">
+      <Filter>util\xdrquery</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\util\xdrquery\XDRMatcher.hpp">
+      <Filter>util\xdrquery</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\util\xdrquery\XDRQueryEval.h">
+      <Filter>util\xdrquery</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\util\xdrquery\XDRQueryError.h">
+      <Filter>util\xdrquery</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\AUTHORS" />
@@ -2320,6 +2341,12 @@
     </None>
     <None Include="..\..\docs\stellar-core_testnet_validator.cfg">
       <Filter>docs</Filter>
+    </None>
+    <None Include="..\..\src\util\xdrquery\scanner.ll">
+      <Filter>util\xdrquery</Filter>
+    </None>
+    <None Include="..\..\src\util\xdrquery\parser.yy">
+      <Filter>util\xdrquery</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>

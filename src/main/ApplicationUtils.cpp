@@ -25,6 +25,7 @@
 #include "overlay/OverlayManager.h"
 #include "util/GlobalChecks.h"
 #include "util/Logging.h"
+#include "util/XDRCereal.h"
 #include "work/WorkScheduler.h"
 
 #include <filesystem>
@@ -434,6 +435,33 @@ mergeBucketList(Config cfg, std::string const& outputDir)
         LOG_ERROR(DEFAULT_LOG, "Writing bucket failed");
         return 1;
     }
+}
+
+int
+mergeBucketListJson(Config cfg, std::string const& outputDir)
+{
+    VirtualClock clock;
+    cfg.setNoListen();
+    Application::pointer app = Application::create(clock, cfg, false);
+    app->getLedgerManager().loadLastKnownLedger(nullptr);
+    auto& lm = app->getLedgerManager();
+    auto& bm = app->getBucketManager();
+    HistoryArchiveState has = lm.getLastClosedLedgerHAS();
+    auto entries = bm.loadCompleteLedgerState(has);
+    std::filesystem::path outPath(outputDir);
+    outPath /= "bucketList.json";
+    std::ofstream ofs(outPath);
+    ofs << "{\"entries\": [";
+    for (auto it = entries.begin(); it != entries.end(); ++it)
+    {
+        if (it != entries.begin())
+        {
+            ofs << "," << std::endl;
+        }
+        ofs << xdr_to_string(it->second, "entry", true);
+    }
+    ofs << "]}";
+    return 0;
 }
 
 void
