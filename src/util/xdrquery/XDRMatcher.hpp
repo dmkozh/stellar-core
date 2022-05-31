@@ -7,26 +7,22 @@
 #include <exception>
 #include <variant>
 
+#include "util/xdrquery/XDRQueryError.h"
 #include "xdrpp/marshal.h"
 #include "xdrpp/types.h"
 
 namespace xdrquery
 {
-namespace internal
-{
 using namespace xdr;
 
-struct XDRFieldCollector
+struct XDRFieldResolver
 {
-    using FieldType =
-        std::variant<bool, int32_t, uint32_t, int64_t, uint64_t, std::string>;
-
-    XDRFieldCollector(std::vector<std::string> const& fieldPath)
+    XDRFieldResolver(std::vector<std::string> const& fieldPath)
         : mFieldPath(fieldPath), mPathIter(mFieldPath.cbegin())
     {
     }
 
-    FieldType const&
+    ResultType const&
     getResult()
     {
         return mResult;
@@ -132,22 +128,19 @@ struct XDRFieldCollector
 
     std::vector<std::string> const& mFieldPath;
     std::vector<std::string>::const_iterator mPathIter;
-    FieldType mResult;
+    ResultType mResult;
 };
+}
 
-template <> struct archive_adapter<XDRFieldCollector>
+namespace xdr
+{
+template <> struct archive_adapter<xdrquery::XDRFieldResolver>
 {
     template <typename T>
     static void
-    apply(XDRFieldCollector& ar, T&& t, char const* fieldName)
+    apply(xdrquery::XDRFieldResolver& ar, T&& t, char const* fieldName)
     {
         ar(std::forward<T>(t), fieldName);
     }
 };
-}
-
-template <typename T> bool matchXdr(T const& xdrMessage)
-{
-
-}
 }

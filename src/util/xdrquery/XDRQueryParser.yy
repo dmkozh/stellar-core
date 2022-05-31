@@ -1,48 +1,58 @@
-%{
-#include "fmt/format.h"
+%skeleton "lalr1.cc" /* -*- C++ -*- */
+%require "3.2"
+
+%code requires
+{
 #include "util/xdrquery/XDRQueryError.h"
 #include "util/xdrquery/XDRQueryEval.h"
 
 #include <memory>
-
-using namespace xdrquery;
-%}
-
-%union {
-  std::string str;
-  std::unique_ptr<EvalNode> node;
-  std::unique_ptr<FieldNode> field_node;
-  std::unique_ptr<BoolEvalNode> bool_node;
 }
 
-%token <str> T_ID
-%token <str> T_INT
-%token <str> T_STR
+%code provides
+{
+#define YY_DECL xdrquery::XDRQueryParser::symbol_type yylex()
+YY_DECL;
+}
 
-%token T_AND "&&"
-%token T_OR "||"
+%define api.value.type variant
+%define api.parser.class { XDRQueryParser }
+%define api.namespace { xdrquery }
+%define api.token.prefix {TOKEN_}
+%define api.token.constructor
 
-%token T_EQ "=="
-%token T_NE "!="
-%token T_GT ">"
-%token T_GE ">="
-%token T_LT "<"
-%token T_LE "<="
+%parse-param { std::unique_ptr<BoolEvalNode>& root }
 
-%token T_LPAREN "("
-%token T_RPAREN ")"
+%token <std::string> ID
+%token <std::string> INT
+%token <std::string> STR
 
-%token T_DOT "."
+%token AND "&&"
+%token OR "||"
+
+%token EQ "=="
+%token NE "!="
+%token GT ">"
+%token GE ">="
+%token LT "<"
+%token LE "<="
+
+%token LPAREN "("
+%token RPAREN ")"
+
+%token DOT "."
 
 %left "||"
 %left "&&"
 %left "==" "!=" ">" ">=" "<" "<="
 
-%type <node> literal operand
-%type <bool_node> comparison_expr logic_expr
-%type <field_node> field
+%type <std::unique_ptr<EvalNode>> literal operand
+%type <std::unique_ptr<BoolEvalNode>> comparison_expr logic_expr
+%type <std::unique_ptr<FieldNode>> field
 
 %%
+
+statement: logic_expr { root = std::move($1); }
 
 logic_expr: comparison_expr { $$ = std::move($1); }
           | comparison_expr "&&" logic_expr {
@@ -75,25 +85,16 @@ comparison_expr: operand "==" operand {
 operand: literal { $$ = std::move($1); }
        | field { $$ = std::move($1); }
 
-literal: T_INT { $$ = std::make_unique<LiteralNode>(LiteralNodeType::INT, $1); }
-       | T_STR { $$ = std::make_unique<LiteralNode>(LiteralNodeType::STR, $1); }
+literal: INT { $$ = std::make_unique<LiteralNode>(LiteralNodeType::INT, $1); }
+       | STR { $$ = std::make_unique<LiteralNode>(LiteralNodeType::STR, $1); }
 
-field: T_ID { $$ = std::make_unique<FieldNode>($1); }
-     | field "." T_ID { $1->mFieldPath.push_back($3); }
+field: ID { $$ = std::make_unique<FieldNode>($1); }
+     | field "." ID { $1->mFieldPath.push_back($3); }
 
 %%
 
-void yy::parser::error(location_type const& loc, std::string const& msg) {
-  throw XDRQueryError(
-    fmt::format(FMT_STRING("Query parse error at {}: {}"), loc, msg);
-}
-
-void setInput(std::string const& str);
-void endScan();
-
-std::unique_ptr<EvalNode> parseQuery(std::string const& query) {
-  setInput(query);
-  auto res = yyparse();
-  endScan();
-  return res;
+void
+xdrquery::XDRQueryParser::error(std::string const& error)
+{
+    throw xdrquery::XDRQueryError("Parsing error: '" + error + "'.");
 }
