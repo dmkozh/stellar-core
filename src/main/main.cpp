@@ -9,8 +9,6 @@
 #include "util/Backtrace.h"
 #include "util/FileSystemException.h"
 #include "util/Logging.h"
-#include "util/XDRCereal.h"
-#include "xdr/Stellar-ledger.h"
 
 #include "crypto/ShortHash.h"
 #include "util/RandHasher.h"
@@ -20,8 +18,6 @@
 #include <sodium/core.h>
 #include <system_error>
 #include <xdrpp/marshal.h>
-
-#include <variant>
 
 namespace stellar
 {
@@ -147,55 +143,6 @@ outOfMemory()
 }
 }
 
-using namespace xdr;
-#include "util/xdrquery/XDRMatcher.h"
-namespace stellar
-{
-
-template <class... Ts> struct overloaded : Ts...
-{
-    using Ts::operator()...;
-};
-// explicit deduction guide (not needed as of C++20)
-template <class... Ts> overloaded(Ts...)->overloaded<Ts...>;
-
-void
-testXdr()
-{
-    LedgerEntry e;
-    e.data.type(LedgerEntryType::OFFER);
-    auto& offer = e.data.offer();
-    offer.amount = -123;
-    offer.flags = 321;
-    offer.price.n = -456;
-    xdrquery::XDRMatcher matcher("data.offer.amount == -123");
-    std::cout << matcher.matchXDR(e) << std::endl;
-    //AccountEntry acc;
-    //acc.homeDomain = "abc";
-
-    ///*std::vector<std::string> path = {"flags"};*/
-    ///*std::vector<std::string> path = {"type"};*/
-    //// std::vector<std::string> path = {"homeDomain"};
-    //std::vector<std::string> path = {"data", "offer", "amount"};
-    //XDRFieldCollector collector(path);
-
-    //// xdr_argpack_archive(collector, offer);
-    //xdr_argpack_archive(collector, e);
-    //// xdr_argpack_archive(collector, e);
-    //std::visit(
-    //    overloaded{[](auto arg) { std::cout << arg << ' '; },
-    //               [](int32_t arg) { std::cout << "int32 " << arg; },
-    //               [](uint32_t arg) { std::cout << "uint32 " << arg; },
-    //               [](int64_t arg) { std::cout << "int64 " << arg; },
-    //               [](uint64_t arg) { std::cout << "uint64 " << arg; },
-    //               [](std::string const& arg) { std::cout << "str " << arg; }},
-    //    collector.getResult());
-    //int t = 0;
-    /*auto str = xdr_to_string(offer, "foo");
-    std::cout << str << std::endl;*/
-}
-}
-
 int
 main(int argc, char* const* argv)
 {
@@ -217,7 +164,6 @@ main(int argc, char* const* argv)
     shortHash::initialize();
     randHash::initialize();
     xdr::marshaling_stack_limit = 1000;
-    testXdr();
-    // return handleCommandLine(argc, argv);
-    return 0;
+
+    return handleCommandLine(argc, argv);
 }

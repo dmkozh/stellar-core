@@ -4,8 +4,8 @@
 
 #pragma once
 
+#include "util/xdrquery/XDRFieldResolver.h"
 #include "util/xdrquery/XDRQueryEval.h"
-#include "util/xdrquery/XDRMatcher.hpp"
 #include <string>
 #include <variant>
 
@@ -17,22 +17,22 @@ class XDRMatcher
   public:
     XDRMatcher(std::string const& query);
 
-    template <typename T> bool matchXDR(T const& xdrMessage)
+    template <typename T>
+    bool
+    matchXDR(T const& xdrMessage)
     {
-        return mEvalRoot->evalBool(
-            [&xdrMessage](std::vector<std::string> const& fieldPath)
-            {
+        return matchInternal(
+            [&xdrMessage](std::vector<std::string> const& fieldPath) {
                 XDRFieldResolver resolver(fieldPath);
                 xdr::xdr_argpack_archive(resolver, xdrMessage);
                 return resolver.getResult();
             });
-        
-
     }
 
   private:
-    std::shared_ptr<BoolEvalNode> mEvalRoot;
+    bool matchInternal(FieldResolver const& fieldResolver);
+
+    std::string const mQuery;
+    std::unique_ptr<BoolEvalNode> mEvalRoot;
 };
 }
-
-#include "util/xdrquery/XDRMatcher.hpp"

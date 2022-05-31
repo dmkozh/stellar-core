@@ -8,6 +8,7 @@
 #include <variant>
 
 #include "util/xdrquery/XDRQueryError.h"
+#include "util/xdrquery/XDRQueryEval.h"
 #include "xdrpp/marshal.h"
 #include "xdrpp/types.h"
 
@@ -97,8 +98,7 @@ struct XDRFieldResolver
         }
         if (++mPathIter == mFieldPath.end())
         {
-            throw XDRQueryError(
-                "Field path must end with a primitive field.");
+            throw XDRQueryError("Field path must end with a primitive field.");
         }
         xdr_traits<T>::save(*this, t);
     }

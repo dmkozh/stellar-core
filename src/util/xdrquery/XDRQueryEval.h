@@ -105,8 +105,7 @@ enum class ComparisonNodeType
 
 struct ComparisonNode : public BoolEvalNode
 {
-    ComparisonNode(ComparisonNodeType nodeType,
-                   std::unique_ptr<EvalNode> left,
+    ComparisonNode(ComparisonNodeType nodeType, std::unique_ptr<EvalNode> left,
                    std::unique_ptr<EvalNode> right);
 
     bool evalBool(FieldResolver const& fieldResolver) const override;
@@ -118,19 +117,4 @@ struct ComparisonNode : public BoolEvalNode
     std::unique_ptr<EvalNode> mLeft;
     std::unique_ptr<EvalNode> mRight;
 };
-
-// class FieldResolver
-//{
-//  public:
-//    void addField(std::string const& field, EvalNode* node);
-//
-//    void
-//    resolveFields(std::function<ResultType(std::vector<std::string> const&)>
-//                      resolveField);
-//
-//  private:
-//    using FieldNode = std::pair<std::vector<std::string>, EvalNode*>;
-//    std::vector<FieldNode> mFieldNodes;
-//};
-
 }

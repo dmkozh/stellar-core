@@ -78,7 +78,7 @@ FieldNode::eval(FieldResolver const& fieldResolver) const
 EvalNodeType
 FieldNode::getType() const
 {
-    return EvalNodeType();
+    return EvalNodeType::FIELD;
 }
 
 ResultType

@@ -12,71 +12,21 @@
 
 namespace xdrquery
 {
-// namespace
-//{
-
-// template <typename T> class QueryEvaluator
-//{
-//  public:
-//    QueryEvaluator(std::string const& query) : mQuery(query)
-//    {
-//    }
-//
-//    ResultType
-//    evaluateQuery(T const& xdrMessage)
-//    {
-//        // Lazily evaluate the query in order to simplify exception handling.
-//        // The query might fail both during the parsing and during matching
-//        // process with XDRQueryError.
-//        if (!mEvalRoot)
-//        {
-//            parseQuery();
-//        }
-//    }
-//
-//  private:
-//
-//    void
-//    parseQuery()
-//    {
-//        std::stack<EvalNode*> nodes;
-//        std::string curr_token;
-//
-//        for (char c : mQuery)
-//        {
-//            if (std::isspace(c))
-//            {
-//                continue;
-//            }
-//
-//        }
-//
-//    }
-//
-//    std::string mQuery;
-//
-//    std::unique_ptr<EvalNode> mEvalRoot;
-//    std::vector<std::pair<ValueNode*, std::vector<std::string>> mBoundValues;
-//};
-
-//}
-
-XDRMatcher::XDRMatcher(std::string const& query)
+XDRMatcher::XDRMatcher(std::string const& query) : mQuery(query)
 {
-    /*std::istringstream iss(query);
-    scanner.switch_streams(iss, nullptr);*/
-    /*yyscan_t scanner;
-    yylex_init(&scanner);*/
-    
-    // yyparse(scanner);
+}
 
-    // setInputStr(query.c_str());
-    //XDRQueryParser parser(mEvalRoot);
-    //mEvalRoot = parseXDRQuery(query);
-    //parser.parse();
-     
-    //yylex_destroy(scanner);
-    // endScan();
+bool
+XDRMatcher::matchInternal(FieldResolver const& fieldResolver)
+{
+    // Lazily parse the query in order to simplify exception handling as we
+    // might throw XDRQueryError both during query parsing and query execution
+    // against XDR.
+    if (mEvalRoot == nullptr)
+    {
+        mEvalRoot = parseXDRQuery(mQuery);
+    }
+    return mEvalRoot->evalBool(fieldResolver);
 }
 
 }

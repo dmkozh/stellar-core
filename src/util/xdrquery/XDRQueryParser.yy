@@ -13,6 +13,12 @@
 {
 #define YY_DECL xdrquery::XDRQueryParser::symbol_type yylex()
 YY_DECL;
+
+namespace xdrquery
+{
+std::unique_ptr<BoolEvalNode>
+parseXDRQuery(std::string const& query);
+}  // namespace xdrquery
 }
 
 %define api.value.type variant
@@ -89,12 +95,29 @@ literal: INT { $$ = std::make_unique<LiteralNode>(LiteralNodeType::INT, $1); }
        | STR { $$ = std::make_unique<LiteralNode>(LiteralNodeType::STR, $1); }
 
 field: ID { $$ = std::make_unique<FieldNode>($1); }
-     | field "." ID { $1->mFieldPath.push_back($3); }
+     | field "." ID { $1->mFieldPath.push_back($3); $$ = std::move($1); }
 
 %%
 
-void
-xdrquery::XDRQueryParser::error(std::string const& error)
+void beginScan(char const* s);
+void endScan();
+
+namespace xdrquery
 {
-    throw xdrquery::XDRQueryError("Parsing error: '" + error + "'.");
+void
+XDRQueryParser::error(std::string const& error)
+{
+    throw XDRQueryError("Parsing error: '" + error + "'.");
 }
+
+std::unique_ptr<BoolEvalNode>
+parseXDRQuery(std::string const& query)
+{
+    beginScan(query.c_str());
+    std::unique_ptr<BoolEvalNode> root;
+    XDRQueryParser parser(root);
+    parser();
+    endScan();
+    return root;
+}
+}  // namespace xdrquery

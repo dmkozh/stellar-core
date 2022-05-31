@@ -16,8 +16,9 @@
 %option noyywrap
 %option nounput noinput
 %option batch
+%option debug
 
-IDENTIFIER  [a-zA-Z_][a-zA-Z_0-9]
+IDENTIFIER  [a-zA-Z_][a-zA-Z_0-9]*
 INT -?[0-9]+
 STRING \".*\"
 WHITESPACE [ \t\r\n]
@@ -54,7 +55,7 @@ WHITESPACE [ \t\r\n]
 
 %%
 
-void setInputStr(char const* s) {
+void beginScan(char const* s) {
   yy_scan_string(s);
 }
 

@@ -940,7 +940,7 @@ exit /b 0
     <ClInclude Include="..\..\src\util\XDRCereal.h" />
     <ClInclude Include="..\..\src\util\XDROperators.h" />
     <ClInclude Include="..\..\src\util\xdrquery\XDRMatcher.h" />
-    <ClInclude Include="..\..\src\util\xdrquery\XDRMatcher.hpp" />
+    <ClInclude Include="..\..\src\util\xdrquery\XDRFieldResolver.h" />
     <ClInclude Include="..\..\src\util\xdrquery\XDRQueryEval.h" />
     <ClInclude Include="..\..\src\util\xdrquery\XDRQueryError.h" />
     <ClInclude Include="..\..\src\util\xdrquery\XDRQueryParser.h" />

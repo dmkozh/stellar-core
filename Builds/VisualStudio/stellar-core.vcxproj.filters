@@ -2201,7 +2201,7 @@
     <ClInclude Include="..\..\src\util\xdrquery\XDRMatcher.h">
       <Filter>util\xdrquery</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\src\util\xdrquery\XDRMatcher.hpp">
+    <ClInclude Include="..\..\src\util\xdrquery\XDRFieldResolver.h">
       <Filter>util\xdrquery</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\util\xdrquery\XDRQueryEval.h">
