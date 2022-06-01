@@ -2,8 +2,8 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include "fmt/format.h"
 #include "util/xdrquery/XDRQueryEval.h"
+#include "fmt/format.h"
 #include "util/xdrquery/XDRQueryError.h"
 
 namespace xdrquery
@@ -12,6 +12,10 @@ namespace xdrquery
 LiteralNode::LiteralNode(LiteralNodeType valueType, std::string const& val)
     : mType(valueType), mValue(val)
 {
+    if (mType == LiteralNodeType::NULL_LITERAL)
+    {
+        mValue = NULL_LITERAL;
+    }
 }
 
 ResultType
@@ -27,18 +31,18 @@ LiteralNode::getType() const
 }
 
 void
-LiteralNode::resolveIntType(ResultType const& fieldValue,
+LiteralNode::resolveIntType(ResultValueType const& fieldValue,
                             std::vector<std::string> const& fieldPath) const
 {
     if (std::holds_alternative<std::string>(fieldValue))
     {
         std::string valueStr =
-            std::visit([](auto&& v) { return fmt::to_string(v); }, mValue);
+            std::visit([](auto&& v) { return fmt::to_string(v); }, *mValue);
         throw XDRQueryError(fmt::format(
             FMT_STRING("String field '{}' is compared with int value: {}."),
             fmt::join(fieldPath, "."), valueStr));
     }
-    std::string valueStr = std::get<std::string>(mValue);
+    std::string valueStr = std::get<std::string>(*mValue);
     try
     {
         mValue = std::visit(
@@ -46,17 +50,17 @@ LiteralNode::resolveIntType(ResultType const& fieldValue,
                 using T = std::decay_t<decltype(v)>;
                 if constexpr (std::is_same_v<T, int32_t>)
                     return std::stoi(valueStr);
-                if constexpr (std::is_same_v<T, int64_t>)
+                else if constexpr (std::is_same_v<T, int64_t>)
                     return std::stoll(valueStr);
-                if constexpr (std::is_same_v<T, uint32_t>)
+                else if constexpr (std::is_same_v<T, uint32_t>)
                     return static_cast<uint32_t>(std::stoul(valueStr));
-                if constexpr (std::is_same_v<T, uint64_t>)
+                else if constexpr (std::is_same_v<T, uint64_t>)
                     return std::stoull(valueStr);
                 throw std::runtime_error("Unexpected field type.");
             },
             fieldValue);
     }
-    catch (std::out_of_range& e)
+    catch (std::out_of_range&)
     {
         throw XDRQueryError(fmt::format(
             FMT_STRING("Value for field '{}' is out of type range: {}."),
@@ -132,35 +136,46 @@ ComparisonNode::evalBool(FieldResolver const& fieldResolver) const
 {
     auto leftType = mLeft->getType();
     auto leftVal = mLeft->eval(fieldResolver);
+
+    if (!leftVal)
+    {
+        return false;
+    }
+
     auto rightType = mRight->getType();
     if (leftType == EvalNodeType::FIELD && rightType == EvalNodeType::LITERAL)
     {
         // Lazily resolve the type of the int literal using the field type.
-        // This allows to change the literal range and simplifies the
+        // This allows to correctly check the literal range and simplifies the
         // comparisons.
         auto* lit = static_cast<LiteralNode const*>(mRight.get());
         if (lit->mType == LiteralNodeType::INT &&
-            std::holds_alternative<std::string>(lit->mValue))
+            std::holds_alternative<std::string>(*lit->mValue))
         {
             auto* field = static_cast<FieldNode const*>(mLeft.get());
-            lit->resolveIntType(leftVal, field->mFieldPath);
+            lit->resolveIntType(*leftVal, field->mFieldPath);
         }
     }
     auto rightVal = mRight->eval(fieldResolver);
+    if (!rightVal)
+    {
+        return false;
+    }
+
     switch (mType)
     {
     case ComparisonNodeType::EQ:
-        return leftVal == rightVal;
+        return *leftVal == *rightVal;
     case ComparisonNodeType::NE:
-        return leftVal != rightVal;
+        return *leftVal != *rightVal;
     case ComparisonNodeType::LT:
-        return leftVal < rightVal;
+        return *leftVal < *rightVal;
     case ComparisonNodeType::LE:
-        return leftVal <= rightVal;
+        return *leftVal <= *rightVal;
     case ComparisonNodeType::GT:
-        return leftVal > rightVal;
+        return *leftVal > *rightVal;
     case ComparisonNodeType::GE:
-        return leftVal >= rightVal;
+        return *leftVal >= *rightVal;
     }
 }
 

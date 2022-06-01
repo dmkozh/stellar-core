@@ -33,6 +33,8 @@ parseXDRQuery(std::string const& query);
 %token <std::string> INT
 %token <std::string> STR
 
+%token NULL
+
 %token AND "&&"
 %token OR "||"
 
@@ -93,6 +95,7 @@ operand: literal { $$ = std::move($1); }
 
 literal: INT { $$ = std::make_unique<LiteralNode>(LiteralNodeType::INT, $1); }
        | STR { $$ = std::make_unique<LiteralNode>(LiteralNodeType::STR, $1); }
+       | NULL { $$ = std::make_unique<LiteralNode>(LiteralNodeType::NULL_LITERAL, ""); }
 
 field: ID { $$ = std::make_unique<FieldNode>($1); }
      | field "." ID { $1->mFieldPath.push_back($3); $$ = std::move($1); }

@@ -27,6 +27,8 @@ WHITESPACE [ \t\r\n]
 
 {WHITESPACE}+ /* discard */;
 
+NULL  { return xdrquery::XDRQueryParser::make_NULL(); }
+
 {IDENTIFIER}  { return xdrquery::XDRQueryParser::make_ID(yytext); }
 {INT}         { return xdrquery::XDRQueryParser::make_INT(yytext); }
 

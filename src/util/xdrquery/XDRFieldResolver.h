@@ -7,19 +7,23 @@
 #include <exception>
 #include <variant>
 
+#include "util/types.h"
 #include "util/xdrquery/XDRQueryError.h"
 #include "util/xdrquery/XDRQueryEval.h"
+#include "xdr/Stellar-ledger-entries.h"
 #include "xdrpp/marshal.h"
 #include "xdrpp/types.h"
 
 namespace xdrquery
 {
 using namespace xdr;
+using namespace stellar;
 
 struct XDRFieldResolver
 {
     XDRFieldResolver(std::vector<std::string> const& fieldPath)
-        : mFieldPath(fieldPath), mPathIter(mFieldPath.cbegin())
+        : mFieldPath(fieldPath)
+        , mPathIter(mFieldPath.cbegin())        
     {
     }
 
@@ -40,6 +44,94 @@ struct XDRFieldResolver
         }
     }
 
+    // Compare enums by their stringified names.
+    template <typename T>
+    typename std::enable_if<xdr_traits<T>::is_enum>::type
+    operator()(T const& t, char const* fieldName)
+    {
+        if (checkLeafField(fieldName))
+        {
+            mResult = std::string(xdr_traits<T>::enum_name(t));
+        }
+    }
+
+    // Allow public key comparisons by their string representation.
+    template <typename T>
+    typename std::enable_if<std::is_same<PublicKey, T>::value>::type
+    operator()(T const& k, char const* fieldName)
+    {
+        if (checkLeafField(fieldName))
+        {
+            mResult = KeyUtils::toStrKey<PublicKey>(k);
+        }
+    }
+
+    // Allow comparisons like field.account == "<account_id_str>" (bypassing
+    // account types).
+    template <typename T>
+    typename std::enable_if<std::is_same<MuxedAccount, T>::value>::type
+    operator()(T const& muxedAccount, char const* fieldName)
+    {
+        bool isLeaf;
+        if (checkMaybeLeafField(fieldName, isLeaf))
+        {
+            if (isLeaf)
+            {
+                mResult = KeyUtils::toStrKey(toAccountID(muxedAccount));
+            }
+            else
+            {
+                xdr_traits<T>::save(*this, muxedAccount);
+            }
+        }
+    }
+
+    template <typename T>
+    typename std::enable_if<std::is_same<Asset, T>::value ||
+                            std::is_same<TrustLineAsset, T>::value>::type
+    operator()(T const& asset, char const* fieldName)
+    {
+        if (!matchFieldToPath(fieldName))
+        {
+            return;
+        }
+        ++mPathIter;
+        switch (asset.type())
+        {
+        case ASSET_TYPE_NATIVE:
+            if (mPathIter == mFieldPath.end())
+            {
+                // If non-leaf field is requested, then we're looking for
+                // non-native asset.
+                mResult = "NATIVE";
+            }
+            break;
+        case ASSET_TYPE_POOL_SHARE:
+            processPoolAsset(asset);
+            break;
+        case ASSET_TYPE_CREDIT_ALPHANUM4:
+        case ASSET_TYPE_CREDIT_ALPHANUM12:
+        {
+            std::string code;
+            if (asset.type() == ASSET_TYPE_CREDIT_ALPHANUM4)
+            {
+                stellar::assetCodeToStr(asset.alphaNum4().assetCode, code);
+            }
+            else
+            {
+                stellar::assetCodeToStr(asset.alphaNum12().assetCode, code);
+            }
+
+            processString(code, "assetCode");
+            *this(stellar::getIssuer(asset), "issuer");
+            break;
+        }
+        default:
+            mResult = "UNKNOWN";
+            break;
+        }
+    }
+
     template <uint32_t N>
     void
     operator()(xstring<N> const& t, char const* fieldName)
@@ -50,23 +142,13 @@ struct XDRFieldResolver
         }
     }
 
-    template <typename T>
-    typename std::enable_if<xdr_traits<T>::is_bytes>::type
-    operator()(T const& t, char const* fieldName)
+    template <uint32_t N>
+    void
+    operator()(xdr::opaque_vec<N> const& t, char const* fieldName)
     {
         if (checkLeafField(fieldName))
         {
-            throw XDRQueryError("Matching byte fields is not supported.");
-        }
-    }
-
-    template <typename T>
-    typename std::enable_if<xdr_traits<T>::is_enum>::type
-    operator()(T const& t, char const* fieldName)
-    {
-        if (checkLeafField(fieldName))
-        {
-            mResult = std::string(xdr_traits<T>::enum_name(t));
+            mResult = binToHex(ByteSlice(s.data(), s.size()));
         }
     }
 
@@ -103,6 +185,24 @@ struct XDRFieldResolver
         xdr_traits<T>::save(*this, t);
     }
 
+    template <typename T>
+    void
+    operator()(pointer<T> const& ptr, char const* fieldName)
+    {
+        if (ptr != nullptr)
+        {
+            archive(*this, *ptr, fieldName);
+        }
+        else
+        {
+            if (checkLeafField(fieldName))
+            {
+                mResult = NULL_LITERAL;
+                return;
+            }
+        }
+    }
+
   private:
     bool
     matchFieldToPath(char const* fieldName) const
@@ -124,6 +224,37 @@ struct XDRFieldResolver
                 "Encountered primitive field in the middle of the path.");
         }
         return true;
+    }
+
+    bool
+    checkMaybeLeafField(char const* fieldName, bool& isLeaf)
+    {
+        if (!matchFieldToPath(fieldName))
+        {
+            return false;
+        }
+        return ++mPathIter != mFieldPath.end();
+    }
+
+    void
+    processString(std::string const& s, char const* fieldName)
+    {
+        if (checkLeafField(fieldName))
+        {
+            mResult = s;
+        }
+    }
+
+    void
+    processPoolAsset(Asset const& asset)
+    {
+        throw std::runtime_error("Unexpected asset type for the pool asset.");
+    }
+
+    void
+    processPoolAsset(TrustLineAsset const& asset)
+    {
+        //this->operator()(asset.liquidityPoolID(), "liquidityPoolID");
     }
 
     std::vector<std::string> const& mFieldPath;

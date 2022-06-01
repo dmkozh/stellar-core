@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <variant>
@@ -13,11 +14,14 @@
 
 namespace xdrquery
 {
-using ResultType =
+using ResultValueType =
     std::variant<bool, int32_t, uint32_t, int64_t, uint64_t, std::string>;
+using ResultType = std::optional<ResultValueType>;
 
 using FieldResolver =
     std::function<ResultType(std::vector<std::string> const&)>;
+
+char const NULL_LITERAL[] = "__NULL__";
 
 enum class EvalNodeType
 {
@@ -31,12 +35,15 @@ struct EvalNode
 {
     virtual ResultType eval(FieldResolver const& fieldResolver) const = 0;
     virtual EvalNodeType getType() const = 0;
+
+    virtual ~EvalNode() = default;
 };
 
 enum class LiteralNodeType
 {
     INT,
-    STR
+    STR,
+    NULL_LITERAL
 };
 
 struct LiteralNode : public EvalNode
@@ -47,7 +54,7 @@ struct LiteralNode : public EvalNode
 
     EvalNodeType getType() const override;
 
-    void resolveIntType(ResultType const& fieldValue,
+    void resolveIntType(ResultValueType const& fieldValue,
                         std::vector<std::string> const& fieldPath) const;
 
     LiteralNodeType mType;
