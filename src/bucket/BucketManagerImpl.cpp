@@ -966,6 +966,38 @@ BucketManagerImpl::mergeBuckets(HistoryArchiveState const& has)
     return out.getBucket(*this);
 }
 
+void
+BucketManagerImpl::visitLedgerEntries(
+    HistoryArchiveState const& has, std::optional<int64_t> minLedger,
+    std::function<void(LedgerEntry& const)> const& visitor)
+{
+    std::map<LedgerKey, LedgerEntry> ledgerMap;
+    std::vector<std::pair<Hash, std::string>> hashes;
+    for (uint32_t i = BucketList::kNumLevels; i > 0; --i)
+    {
+        HistoryStateBucket const& hsb = has.currentBuckets.at(i - 1);
+        hashes.emplace_back(hexToBin256(hsb.snap),
+                            fmt::format(FMT_STRING("snap {:d}"), i - 1));
+        hashes.emplace_back(hexToBin256(hsb.curr),
+                            fmt::format(FMT_STRING("curr {:d}"), i - 1));
+    }
+    for (auto const& pair : hashes)
+    {
+        if (isZero(pair.first))
+        {
+            continue;
+        }
+        auto b = getBucketByHash(pair.first);
+        if (!b)
+        {
+            throw std::runtime_error(std::string("missing bucket: ") +
+                                     binToHex(pair.first));
+        }
+        loadEntriesFromBucket(b, pair.second, ledgerMap);
+    }
+    return ledgerMap;
+}
+
 std::shared_ptr<BasicWork>
 BucketManagerImpl::scheduleVerifyReferencedBucketsWork()
 {

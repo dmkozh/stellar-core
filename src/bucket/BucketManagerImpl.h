@@ -143,6 +143,10 @@ class BucketManagerImpl : public BucketManager
     std::shared_ptr<Bucket>
     mergeBuckets(HistoryArchiveState const& has) override;
 
+    void visitLedgerEntries(
+        HistoryArchiveState const& has, std::optional<int64_t> minLedger,
+        std::function<void(LedgerEntry& const)> const& visitor) override;
+
     std::shared_ptr<BasicWork> scheduleVerifyReferencedBucketsWork() override;
 };
 
