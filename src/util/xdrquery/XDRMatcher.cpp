@@ -29,4 +29,4 @@ XDRMatcher::matchInternal(FieldResolver const& fieldResolver)
     return mEvalRoot->evalBool(fieldResolver);
 }
 
-}
+}  // namespace xdrquery

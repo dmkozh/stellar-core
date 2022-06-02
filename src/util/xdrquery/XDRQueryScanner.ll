@@ -16,27 +16,18 @@
 %option noyywrap
 %option nounput noinput
 %option batch
-%option debug
 
 IDENTIFIER  [a-zA-Z_][a-zA-Z_0-9]*
 INT -?[0-9]+
-STRING \".*\"
+STRING (\"[^"\n]*\")|('[^'\n]*')
 WHITESPACE [ \t\r\n]
 
 %%
-
-{WHITESPACE}+ /* discard */;
 
 NULL  { return xdrquery::XDRQueryParser::make_NULL(); }
 
 {IDENTIFIER}  { return xdrquery::XDRQueryParser::make_ID(yytext); }
 {INT}         { return xdrquery::XDRQueryParser::make_INT(yytext); }
-
-{STRING} { 
-    std::string s(yytext + 1); 
-    s.pop_back();
-    return xdrquery::XDRQueryParser::make_STR(s);
-}
 
 "&&"  { return xdrquery::XDRQueryParser::make_AND(); }
 "||"  { return xdrquery::XDRQueryParser::make_OR(); }
@@ -52,6 +43,14 @@ NULL  { return xdrquery::XDRQueryParser::make_NULL(); }
 ")"   { return xdrquery::XDRQueryParser::make_RPAREN(); }
 
 "."   { return xdrquery::XDRQueryParser::make_DOT(); }
+
+{STRING} { 
+    std::string s(yytext + 1); 
+    s.pop_back();
+    return xdrquery::XDRQueryParser::make_STR(s);
+}
+
+{WHITESPACE}+ /* discard */;
 
 .     { throw xdrquery::XDRQueryParser::syntax_error("Unexpected character: " + std::string(yytext)); }
 

@@ -124,4 +124,4 @@ struct ComparisonNode : public BoolEvalNode
     std::unique_ptr<EvalNode> mLeft;
     std::unique_ptr<EvalNode> mRight;
 };
-}
+} // namespace xdrquery

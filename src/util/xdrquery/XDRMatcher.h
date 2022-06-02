@@ -23,9 +23,7 @@ class XDRMatcher
     {
         return matchInternal(
             [&xdrMessage](std::vector<std::string> const& fieldPath) {
-                XDRFieldResolver resolver(fieldPath);
-                xdr::xdr_argpack_archive(resolver, xdrMessage);
-                return resolver.getResult();
+                return getXDRField(xdrMessage, fieldPath);
             });
     }
 
@@ -35,4 +33,4 @@ class XDRMatcher
     std::string const mQuery;
     std::unique_ptr<BoolEvalNode> mEvalRoot;
 };
-}
+} // namespace xdrquery

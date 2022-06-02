@@ -128,6 +128,20 @@ ComparisonNode::ComparisonNode(ComparisonNodeType nodeType,
     if (mRight->getType() == EvalNodeType::FIELD)
     {
         std::swap(mLeft, mRight);
+        // Invert the operation as we have swapped operands.
+        switch (mType)
+        {        
+        case ComparisonNodeType::LT:
+            mType = ComparisonNodeType::GT;
+        case ComparisonNodeType::LE:
+            mType = ComparisonNodeType::GE;
+        case ComparisonNodeType::GT:
+            mType = ComparisonNodeType::LT;
+        case ComparisonNodeType::GE:
+            mType = ComparisonNodeType::LE;
+        default:
+            break;
+        }
     }
 }
 
@@ -185,4 +199,4 @@ ComparisonNode::getType() const
     return EvalNodeType::COMPARISON_OP;
 }
 
-}
+}  // namespace xdrquery

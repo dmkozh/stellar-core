@@ -5,8 +5,12 @@
 #pragma once
 
 #include <exception>
+#include <fmt/format.h>
 #include <variant>
 
+#include "crypto/Hex.h"
+#include "crypto/KeyUtils.h"
+#include "crypto/SecretKey.h"
 #include "util/types.h"
 #include "util/xdrquery/XDRQueryError.h"
 #include "util/xdrquery/XDRQueryEval.h"
@@ -16,14 +20,15 @@
 
 namespace xdrquery
 {
+namespace internal
+{
 using namespace xdr;
 using namespace stellar;
 
 struct XDRFieldResolver
 {
     XDRFieldResolver(std::vector<std::string> const& fieldPath)
-        : mFieldPath(fieldPath)
-        , mPathIter(mFieldPath.cbegin())        
+        : mFieldPath(fieldPath), mPathIter(mFieldPath.cbegin())
     {
     }
 
@@ -34,8 +39,8 @@ struct XDRFieldResolver
     }
 
     template <typename T>
-    typename std::enable_if<xdr_traits<T>::is_numeric &&
-                            !xdr_traits<T>::is_enum>::type
+    typename std::enable_if_t<xdr_traits<T>::is_numeric &&
+                              !xdr_traits<T>::is_enum>
     operator()(T const& t, char const* fieldName)
     {
         if (checkLeafField(fieldName))
@@ -44,9 +49,9 @@ struct XDRFieldResolver
         }
     }
 
-    // Compare enums by their stringified names.
+    // Retrieve enums as their XDR string representation.
     template <typename T>
-    typename std::enable_if<xdr_traits<T>::is_enum>::type
+    typename std::enable_if_t<xdr_traits<T>::is_enum>
     operator()(T const& t, char const* fieldName)
     {
         if (checkLeafField(fieldName))
@@ -55,40 +60,20 @@ struct XDRFieldResolver
         }
     }
 
-    // Allow public key comparisons by their string representation.
+    // Retrieve public keys in standard string representation.
     template <typename T>
-    typename std::enable_if<std::is_same<PublicKey, T>::value>::type
+    typename std::enable_if_t<std::is_same<PublicKey, T>::value>
     operator()(T const& k, char const* fieldName)
     {
         if (checkLeafField(fieldName))
         {
-            mResult = KeyUtils::toStrKey<PublicKey>(k);
-        }
-    }
-
-    // Allow comparisons like field.account == "<account_id_str>" (bypassing
-    // account types).
-    template <typename T>
-    typename std::enable_if<std::is_same<MuxedAccount, T>::value>::type
-    operator()(T const& muxedAccount, char const* fieldName)
-    {
-        bool isLeaf;
-        if (checkMaybeLeafField(fieldName, isLeaf))
-        {
-            if (isLeaf)
-            {
-                mResult = KeyUtils::toStrKey(toAccountID(muxedAccount));
-            }
-            else
-            {
-                xdr_traits<T>::save(*this, muxedAccount);
-            }
+            mResult = stellar::KeyUtils::toStrKey(k);
         }
     }
 
     template <typename T>
-    typename std::enable_if<std::is_same<Asset, T>::value ||
-                            std::is_same<TrustLineAsset, T>::value>::type
+    typename std::enable_if_t<std::is_same<Asset, T>::value ||
+                              std::is_same<TrustLineAsset, T>::value>
     operator()(T const& asset, char const* fieldName)
     {
         if (!matchFieldToPath(fieldName))
@@ -101,9 +86,9 @@ struct XDRFieldResolver
         case ASSET_TYPE_NATIVE:
             if (mPathIter == mFieldPath.end())
             {
-                // If non-leaf field is requested, then we're looking for
+                // If non-leaf field is requested, then we must be looking for
                 // non-native asset.
-                mResult = "NATIVE";
+                mResult.emplace().emplace<std::string>() = "NATIVE";
             }
             break;
         case ASSET_TYPE_POOL_SHARE:
@@ -123,7 +108,7 @@ struct XDRFieldResolver
             }
 
             processString(code, "assetCode");
-            *this(stellar::getIssuer(asset), "issuer");
+            (*this)(stellar::getIssuer(asset), "issuer");
             break;
         }
         default:
@@ -144,28 +129,60 @@ struct XDRFieldResolver
 
     template <uint32_t N>
     void
-    operator()(xdr::opaque_vec<N> const& t, char const* fieldName)
+    operator()(xdr::opaque_vec<N> const& v, char const* fieldName)
     {
         if (checkLeafField(fieldName))
         {
-            mResult = binToHex(ByteSlice(s.data(), s.size()));
+            mResult = binToHex(ByteSlice(v.data(), v.size()));
+        }
+    }
+
+    template <uint32_t N>
+    void
+    operator()(xdr::opaque_array<N> const& v, char const* fieldName)
+    {
+        if (checkLeafField(fieldName))
+        {
+            mResult = binToHex(ByteSlice(v.data(), v.size()));
         }
     }
 
     template <typename T>
-    typename std::enable_if<xdr_traits<T>::is_container>::type
+    void
+    operator()(xdr::pointer<T> const& ptr, char const* fieldName)
+    {
+        if (ptr)
+        {
+            archive(*this, *ptr, fieldName);
+        }
+        else
+        {
+            if (checkLeafField(fieldName))
+            {
+                mResult = NULL_LITERAL;
+                return;
+            }
+        }
+    }
+
+    template <typename T>
+    typename std::enable_if_t<xdr_traits<T>::is_container>
     operator()(T const& t, char const* fieldName)
     {
         if (matchFieldToPath(fieldName))
         {
-            throw XDRQueryError("Array fields are not supported.");
+            throw XDRQueryError(
+                fmt::format(FMT_STRING("Array fields are not supported: '{}'."),
+                            fieldName));
         }
     }
 
     template <typename T>
-    typename std::enable_if<!xdr_traits<T>::is_container &&
-                            (xdr_traits<T>::is_union ||
-                             xdr_traits<T>::is_class)>::type
+    typename std::enable_if_t<
+        !std::is_same<PublicKey, T>::value && !std::is_same<Asset, T>::value &&
+        !std::is_same<TrustLineAsset, T>::value &&
+        (xdr_traits<T>::is_union || xdr_traits<T>::is_class) &&
+        !xdr_traits<T>::is_container>
     operator()(T const& t, char const* fieldName)
     {
         if (!matchFieldToPath(fieldName))
@@ -183,24 +200,6 @@ struct XDRFieldResolver
             throw XDRQueryError("Field path must end with a primitive field.");
         }
         xdr_traits<T>::save(*this, t);
-    }
-
-    template <typename T>
-    void
-    operator()(pointer<T> const& ptr, char const* fieldName)
-    {
-        if (ptr != nullptr)
-        {
-            archive(*this, *ptr, fieldName);
-        }
-        else
-        {
-            if (checkLeafField(fieldName))
-            {
-                mResult = NULL_LITERAL;
-                return;
-            }
-        }
     }
 
   private:
@@ -221,7 +220,9 @@ struct XDRFieldResolver
         if (++mPathIter != mFieldPath.end())
         {
             throw XDRQueryError(
-                "Encountered primitive field in the middle of the path.");
+                fmt::format(FMT_STRING("Encountered leaf field in the middle "
+                                       "of the field path: '{}'."),
+                            fieldName));
         }
         return true;
     }
@@ -254,22 +255,34 @@ struct XDRFieldResolver
     void
     processPoolAsset(TrustLineAsset const& asset)
     {
-        //this->operator()(asset.liquidityPoolID(), "liquidityPoolID");
+        (*this)(asset.liquidityPoolID(), "liquidityPoolID");
     }
 
     std::vector<std::string> const& mFieldPath;
     std::vector<std::string>::const_iterator mPathIter;
     ResultType mResult;
 };
+} // namespace internal
+
+template <typename T>
+ResultType
+getXDRField(T const& xdrMessage, std::vector<std::string> const& fieldPath)
+{
+    internal::XDRFieldResolver resolver(fieldPath);
+    xdr::xdr_argpack_archive(resolver, xdrMessage);
+    return resolver.getResult();
 }
+
+} // namespace xdrquery
 
 namespace xdr
 {
-template <> struct archive_adapter<xdrquery::XDRFieldResolver>
+template <> struct archive_adapter<xdrquery::internal::XDRFieldResolver>
 {
     template <typename T>
     static void
-    apply(xdrquery::XDRFieldResolver& ar, T&& t, char const* fieldName)
+    apply(xdrquery::internal::XDRFieldResolver& ar, T&& t,
+          char const* fieldName)
     {
         ar(std::forward<T>(t), fieldName);
     }

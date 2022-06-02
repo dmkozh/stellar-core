@@ -16,4 +16,4 @@ class XDRQueryError : public std::invalid_argument
     }
     virtual ~XDRQueryError() = default;
 };
-}
+} // namespace xdrquery
