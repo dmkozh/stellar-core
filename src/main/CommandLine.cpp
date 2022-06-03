@@ -373,6 +373,12 @@ startAtHashParser(std::string& startAtHash)
         "start in-memory run with replay from historical ledger hash");
 };
 
+clara::Opt
+filterQueryParser(std::optional<std::string>& filterQuery)
+{
+    return clara::Opt{filterQuery}["--filter-query"]("query to filter ledgers");
+};
+
 int
 runWithHelp(CommandLineArgs const& args,
             std::vector<ParserWithValidation> parsers, std::function<int()> f)
@@ -1039,11 +1045,32 @@ runMergeBucketListJson(CommandLineArgs const& args)
     CommandLine::ConfigOption configOption;
     std::string outputDir{"."};
 
-    return runWithHelp(
-        args,
-        {configurationParser(configOption),
-         outputDirParser(outputDir).required()},
-        [&] { return mergeBucketListJson(configOption.getConfig(), outputDir); });
+    return runWithHelp(args,
+                       {configurationParser(configOption),
+                        outputDirParser(outputDir).required()},
+                       [&] {
+                           return mergeBucketListJson(configOption.getConfig(),
+                                                      outputDir);
+                       });
+}
+
+int
+runDumpLedger(CommandLineArgs const& args)
+{
+    CommandLine::ConfigOption configOption;
+    std::string outputFile;
+    std::optional<std::string> filterQuery;
+    std::optional<uint32_t> ledgerCount;
+    std::optional<uint64_t> limit;
+    return runWithHelp(args,
+                       {configurationParser(configOption),
+                        outputFileParser(outputFile).required(),
+                        filterQueryParser(filterQuery)},
+                       [&] {
+                           return dumpLedger(configOption.getConfig(),
+                                             outputFile, filterQuery,
+                                             ledgerCount, limit);
+                       });
 }
 
 int
@@ -1655,7 +1682,8 @@ handleCommandLine(int argc, char* const* argv)
          {"self-check", "performs diagnostic checks", runSelfCheck},
          {"merge-bucketlist", "writes diagnostic merged bucket list",
           runMergeBucketList},
-         {"merge-bucketlist-json", "writes diagnostic merged bucket list as JSON",
+         {"merge-bucketlist-json",
+          "writes diagnostic merged bucket list as JSON",
           runMergeBucketListJson},
          {"new-db", "creates or restores the DB to the genesis ledger",
           runNewDB},

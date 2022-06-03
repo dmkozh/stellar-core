@@ -966,20 +966,81 @@ BucketManagerImpl::mergeBuckets(HistoryArchiveState const& has)
     return out.getBucket(*this);
 }
 
+static bool
+visitEntriesInBucket(std::shared_ptr<Bucket const> b, std::string const& name,
+                     std::optional<int64_t> minLedger,
+                     std::function<bool(LedgerEntry const&)> const& visitor,
+                     UnorderedSet<LedgerKey>& deletedEntries)
+{
+    using namespace std::chrono;
+    medida::Timer timer;
+    BucketInputIterator in(b);
+    UnorderedMap<LedgerKey, LedgerEntry> bucketEntries;
+    bool stopIteration = false;
+    timer.Time([&]() {
+        while (in)
+        {
+            BucketEntry const& e = *in;
+            if (e.type() == LIVEENTRY || e.type() == INITENTRY)
+            {
+                if (minLedger && e.liveEntry().lastModifiedLedgerSeq < *minLedger)
+                {
+                    stopIteration = true;
+                    continue;
+                }
+                auto key = LedgerEntryKey(e.liveEntry());
+                if (deletedEntries.find(key) != deletedEntries.end())
+                {
+                    continue;
+                }
+                bucketEntries[key] = e.liveEntry();
+            }
+            else
+            {
+                if (e.type() != DEADENTRY)
+                {
+                    std::string err = "Malformed bucket: unexpected "
+                                      "non-INIT/LIVE/DEAD entry.";
+                    CLOG_ERROR(Bucket, "{}", err);
+                    throw std::runtime_error(err);
+                }
+                bucketEntries.erase(e.deadEntry());
+                deletedEntries.insert(e.deadEntry());
+            }
+            ++in;
+        }
+        for (auto const& [_, entry] : bucketEntries)
+        {
+            if (!visitor(entry))
+            {
+                stopIteration = true;
+                break;
+            }
+        }
+    });
+    nanoseconds ns =
+        timer.duration_unit() * static_cast<nanoseconds::rep>(timer.max());
+    milliseconds ms = duration_cast<milliseconds>(ns);
+    size_t bytesPerSec = (b->getSize() * 1000 / (1 + ms.count()));
+    CLOG_INFO(Bucket, "Read {}-byte bucket file '{}' in {} ({}/s)",
+              b->getSize(), name, ms, formatSize(bytesPerSec));
+    return !stopIteration;
+}
+
 void
 BucketManagerImpl::visitLedgerEntries(
     HistoryArchiveState const& has, std::optional<int64_t> minLedger,
-    std::function<void(LedgerEntry& const)> const& visitor)
+    std::function<bool(LedgerEntry const&)> const& visitor)
 {
-    std::map<LedgerKey, LedgerEntry> ledgerMap;
+    UnorderedSet<LedgerKey> deletedEntries;
     std::vector<std::pair<Hash, std::string>> hashes;
-    for (uint32_t i = BucketList::kNumLevels; i > 0; --i)
+    for (uint32_t i = 0; i < BucketList::kNumLevels; ++i)
     {
-        HistoryStateBucket const& hsb = has.currentBuckets.at(i - 1);
-        hashes.emplace_back(hexToBin256(hsb.snap),
-                            fmt::format(FMT_STRING("snap {:d}"), i - 1));
+        HistoryStateBucket const& hsb = has.currentBuckets.at(i);
         hashes.emplace_back(hexToBin256(hsb.curr),
-                            fmt::format(FMT_STRING("curr {:d}"), i - 1));
+                            fmt::format(FMT_STRING("curr {:d}"), i));
+        hashes.emplace_back(hexToBin256(hsb.snap),
+                            fmt::format(FMT_STRING("snap {:d}"), i));
     }
     for (auto const& pair : hashes)
     {
@@ -993,9 +1054,11 @@ BucketManagerImpl::visitLedgerEntries(
             throw std::runtime_error(std::string("missing bucket: ") +
                                      binToHex(pair.first));
         }
-        loadEntriesFromBucket(b, pair.second, ledgerMap);
+        if (!visitEntriesInBucket(b, pair.second, minLedger, visitor, deletedEntries))
+        {
+            break;
+        }
     }
-    return ledgerMap;
 }
 
 std::shared_ptr<BasicWork>

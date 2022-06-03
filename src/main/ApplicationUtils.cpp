@@ -26,6 +26,7 @@
 #include "util/GlobalChecks.h"
 #include "util/Logging.h"
 #include "util/XDRCereal.h"
+#include "util/xdrquery/XDRMatcher.h"
 #include "work/WorkScheduler.h"
 
 #include <filesystem>
@@ -461,6 +462,65 @@ mergeBucketListJson(Config cfg, std::string const& outputDir)
         ofs << xdr_to_string(it->second, "entry", true);
     }
     ofs << "]}";
+    return 0;
+}
+
+int
+dumpLedger(Config cfg, std::string const& outputFile,
+           std::optional<std::string> filterQuery,
+           std::optional<uint32_t> ledgerCount, std::optional<uint64_t> limit)
+{
+    VirtualClock clock;
+    cfg.setNoListen();
+    Application::pointer app = Application::create(clock, cfg, false);
+    app->getLedgerManager().loadLastKnownLedger(nullptr);
+    auto& lm = app->getLedgerManager();
+    HistoryArchiveState has = lm.getLastClosedLedgerHAS();
+    std::optional<uint32_t> minLedger;
+    if (ledgerCount)
+    {
+        uint32_t lclNum = lm.getLastClosedLedgerNum();
+        if (lclNum >= *ledgerCount)
+        {
+            minLedger = *ledgerCount - lclNum;
+        }
+        else
+        {
+            minLedger = 0;
+        }
+    }
+    std::optional<xdrquery::XDRMatcher> matcher;
+    if (filterQuery)
+    {
+        matcher.emplace(*filterQuery);
+    }
+    std::ofstream ofs(outputFile);
+    ofs << "{\"entries\": [";
+
+    auto& bm = app->getBucketManager();
+    uint64_t entryCount = 0;
+    try
+    {
+        bm.visitLedgerEntries(has, minLedger,
+                              [&](LedgerEntry const& entry)
+                              {
+                                  if (matcher && !matcher->matchXDR(entry))
+                                  {
+                                      return true;
+                                  }
+                                  if (entryCount != 0)
+                                  {
+                                      ofs << "," << std::endl;
+                                  }
+                                  ofs << xdr_to_string(entry, "entry", true);
+                                  ++entryCount;
+                                  return !limit || *limit < entryCount;
+                              });
+    }
+    catch (xdrquery::XDRQueryError& e)
+    {
+        std::cerr << "Filter query error: " << e.what() << std::endl;
+    }
     return 0;
 }
 

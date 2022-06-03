@@ -232,7 +232,7 @@ class BucketManager : NonMovableOrCopyable
 
     virtual void visitLedgerEntries(
         HistoryArchiveState const& has, std::optional<int64_t> minLedger,
-        std::function<void(LedgerEntry& const)> const& visitor) = 0;
+        std::function<void(LedgerEntry const&)> const& visitor) = 0;
 
     // Schedule a Work class that verifies the hashes of all referenced buckets
     // on background threads.
