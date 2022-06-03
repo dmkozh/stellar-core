@@ -521,6 +521,7 @@ dumpLedger(Config cfg, std::string const& outputFile,
     {
         LOG_ERROR(DEFAULT_LOG, "Filter query error: {}", e.what());
     }
+    ofs << "]}";
     return 0;
 }
 
