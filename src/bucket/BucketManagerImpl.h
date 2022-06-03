@@ -145,7 +145,8 @@ class BucketManagerImpl : public BucketManager
 
     void visitLedgerEntries(
         HistoryArchiveState const& has, std::optional<int64_t> minLedger,
-        std::function<void(LedgerEntry const&)> const& visitor) override;
+        std::function<bool(LedgerEntry const&)> const& filterEntry,
+        std::function<bool(LedgerEntry const&)> const& acceptEntry) override;
 
     std::shared_ptr<BasicWork> scheduleVerifyReferencedBucketsWork() override;
 };

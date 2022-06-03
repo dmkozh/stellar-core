@@ -468,7 +468,8 @@ mergeBucketListJson(Config cfg, std::string const& outputDir)
 int
 dumpLedger(Config cfg, std::string const& outputFile,
            std::optional<std::string> filterQuery,
-           std::optional<uint32_t> ledgerCount, std::optional<uint64_t> limit)
+           std::optional<uint32_t> lastModifiedLedgerCount,
+           std::optional<uint64_t> limit)
 {
     VirtualClock clock;
     cfg.setNoListen();
@@ -477,12 +478,12 @@ dumpLedger(Config cfg, std::string const& outputFile,
     auto& lm = app->getLedgerManager();
     HistoryArchiveState has = lm.getLastClosedLedgerHAS();
     std::optional<uint32_t> minLedger;
-    if (ledgerCount)
+    if (lastModifiedLedgerCount)
     {
         uint32_t lclNum = lm.getLastClosedLedgerNum();
-        if (lclNum >= *ledgerCount)
+        if (lclNum >= *lastModifiedLedgerCount)
         {
-            minLedger = *ledgerCount - lclNum;
+            minLedger = lclNum - *lastModifiedLedgerCount;
         }
         else
         {
@@ -501,25 +502,24 @@ dumpLedger(Config cfg, std::string const& outputFile,
     uint64_t entryCount = 0;
     try
     {
-        bm.visitLedgerEntries(has, minLedger,
-                              [&](LedgerEntry const& entry)
-                              {
-                                  if (matcher && !matcher->matchXDR(entry))
-                                  {
-                                      return true;
-                                  }
-                                  if (entryCount != 0)
-                                  {
-                                      ofs << "," << std::endl;
-                                  }
-                                  ofs << xdr_to_string(entry, "entry", true);
-                                  ++entryCount;
-                                  return !limit || *limit < entryCount;
-                              });
+        bm.visitLedgerEntries(
+            has, minLedger,
+            [&](LedgerEntry const& entry) {
+                return !matcher || matcher->matchXDR(entry);
+            },
+            [&](LedgerEntry const& entry) {
+                if (entryCount != 0)
+                {
+                    ofs << "," << std::endl;
+                }
+                ofs << xdr_to_string(entry, "entry", true);
+                ++entryCount;
+                return !limit || entryCount < *limit;
+            });
     }
     catch (xdrquery::XDRQueryError& e)
     {
-        std::cerr << "Filter query error: " << e.what() << std::endl;
+        LOG_ERROR(DEFAULT_LOG, "Filter query error: {}", e.what());
     }
     return 0;
 }

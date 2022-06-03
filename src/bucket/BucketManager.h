@@ -10,6 +10,7 @@
 #include <future>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 
 #include "medida/timer_context.h"
@@ -232,7 +233,8 @@ class BucketManager : NonMovableOrCopyable
 
     virtual void visitLedgerEntries(
         HistoryArchiveState const& has, std::optional<int64_t> minLedger,
-        std::function<void(LedgerEntry const&)> const& visitor) = 0;
+        std::function<bool(LedgerEntry const&)> const& filterEntry,
+        std::function<bool(LedgerEntry const&)> const& acceptEntry) = 0;
 
     // Schedule a Work class that verifies the hashes of all referenced buckets
     // on background threads.

@@ -120,7 +120,7 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>USE_POSTGRES;ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION=1;USE_SPDLOG;FMT_HEADER_ONLY=1;BUILD_TESTS;WIN32_LEAN_AND_MEAN;NOMINMAX;ASIO_STANDALONE;_WINSOCK_DEPRECATED_NO_WARNINGS;SODIUM_STATIC;ASIO_SEPARATE_COMPILATION;ASIO_ERROR_CATEGORY_NOEXCEPT=noexcept;TRACY_ENABLE;TRACY_ON_DEMAND;TRACY_NO_BROADCAST;TRACY_ONLY_LOCALHOST;USE_TRACY;_CRT_SECURE_NO_WARNINGS;_WIN32_WINNT=0x0601;WIN32;_MBCS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;../../src;../../lib;../../lib/tracy;../../lib/spdlog/include;../../lib/libmedida/src;../../lib/soci/src/core;../../lib/autocheck/include;../../lib/cereal/include;../../lib/asio/asio/include;../../lib/xdrpp;../../lib/libsodium/src/libsodium/include;../../lib/fmt/include;src/generated;../..;src_next/generated;../../lib/sqlite;c:\Program Files\PostgreSQL\9.5\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;../../src;../../lib;../../lib/tracy;../../lib/spdlog/include;../../lib/libmedida/src;../../lib/soci/src/core;../../lib/autocheck/include;../../lib/cereal/include;../../lib/asio/asio/include;../../lib/xdrpp;../../lib/libsodium/src/libsodium/include;../../lib/fmt/include;../..;src/$(Configuration)/generated;../../lib/sqlite;c:\Program Files\PostgreSQL\9.5\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <MinimalRebuild>false</MinimalRebuild>
       <DisableSpecificWarnings>4060;4100;4127;4324;4408;4510;4512;4582;4583;4592</DisableSpecificWarnings>
@@ -130,7 +130,7 @@
       </ControlFlowGuard>
       <SmallerTypeCheck>false</SmallerTypeCheck>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <AdditionalOptions>/bigobj /Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -146,7 +146,7 @@
       </Message>
     </PreBuildEvent>
     <CustomBuildStep>
-      <Inputs>src_next/generated/xdr/Stellar-overlay.h</Inputs>
+      <Inputs>src/$(Configuration)/generated/xdr/Stellar-overlay.h</Inputs>
       <Command>@echo XDR &gt; $(IntermediateOutputPath)\xdrgen.stamp</Command>
       <Message>XDR check</Message>
       <Outputs>$(IntermediateOutputPath)\xdrgen.stamp</Outputs>
@@ -178,7 +178,7 @@ exit /b 0
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>USE_POSTGRES;USE_SPDLOG;FMT_HEADER_ONLY=1;BUILD_TESTS;WIN32_LEAN_AND_MEAN;NOMINMAX;ASIO_STANDALONE;_WINSOCK_DEPRECATED_NO_WARNINGS;SODIUM_STATIC;ASIO_SEPARATE_COMPILATION;ASIO_ERROR_CATEGORY_NOEXCEPT=noexcept;TRACY_ENABLE;TRACY_ON_DEMAND;TRACY_NO_BROADCAST;TRACY_ONLY_LOCALHOST;USE_TRACY;_CRT_SECURE_NO_WARNINGS;_WIN32_WINNT=0x0601;WIN32;_MBCS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;../../src;../../lib;../../lib/tracy;../../lib/spdlog/include;../../lib/libmedida/src;../../lib/soci/src/core;../../lib/autocheck/include;../../lib/cereal/include;../../lib/asio/asio/include;../../lib/xdrpp;../../lib/libsodium/src/libsodium/include;../../lib/fmt/include;src/generated;../..;src_curr/generated;../../lib/sqlite;c:\Program Files\PostgreSQL\9.5\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;../../src;../../lib;../../lib/tracy;../../lib/spdlog/include;../../lib/libmedida/src;../../lib/soci/src/core;../../lib/autocheck/include;../../lib/cereal/include;../../lib/asio/asio/include;../../lib/xdrpp;../../lib/libsodium/src/libsodium/include;../../lib/fmt/include;../..;src/$(Configuration)/generated;../../lib/sqlite;c:\Program Files\PostgreSQL\9.5\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <MinimalRebuild>false</MinimalRebuild>
       <DisableSpecificWarnings>4060;4100;4127;4324;4408;4510;4512;4582;4583;4592</DisableSpecificWarnings>
@@ -188,7 +188,7 @@ exit /b 0
       </ControlFlowGuard>
       <SmallerTypeCheck>false</SmallerTypeCheck>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <AdditionalOptions>/bigobj /Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -204,7 +204,7 @@ exit /b 0
       </Message>
     </PreBuildEvent>
     <CustomBuildStep>
-      <Inputs>src_next/generated/xdr/Stellar-overlay.h</Inputs>
+      <Inputs>src/$(Configuration)/generated/xdr/Stellar-overlay.h</Inputs>
       <Command>@echo XDR &gt; $(IntermediateOutputPath)\xdrgen.stamp</Command>
       <Message>XDR check</Message>
       <Outputs>$(IntermediateOutputPath)\xdrgen.stamp</Outputs>
@@ -237,7 +237,7 @@ exit /b 0
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION=1;USE_SPDLOG;FMT_HEADER_ONLY=1;BUILD_TESTS;WIN32_LEAN_AND_MEAN;NOMINMAX;ASIO_STANDALONE;_WINSOCK_DEPRECATED_NO_WARNINGS;SODIUM_STATIC;ASIO_SEPARATE_COMPILATION;ASIO_ERROR_CATEGORY_NOEXCEPT=noexcept;TRACY_ENABLE;TRACY_ON_DEMAND;TRACY_NO_BROADCAST;TRACY_ONLY_LOCALHOST;USE_TRACY;_CRT_SECURE_NO_WARNINGS;_WIN32_WINNT=0x0601;WIN32;_MBCS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;../../src;../../lib;../../lib/tracy;../../lib/spdlog/include;../../lib/libmedida/src;../../lib/soci/src/core;../../lib/autocheck/include;../../lib/cereal/include;../../lib/asio/asio/include;../../lib/xdrpp;../../lib/libsodium/src/libsodium/include;../../lib/fmt/include;src/generated;../..;src_next/generated;../../lib/sqlite;c:\Program Files\PostgreSQL\9.5\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;../../src;../../lib;../../lib/tracy;../../lib/spdlog/include;../../lib/libmedida/src;../../lib/soci/src/core;../../lib/autocheck/include;../../lib/cereal/include;../../lib/asio/asio/include;../../lib/xdrpp;../../lib/libsodium/src/libsodium/include;../../lib/fmt/include;../..;src/$(Configuration)/generated;../../lib/sqlite;c:\Program Files\PostgreSQL\9.5\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <MinimalRebuild>false</MinimalRebuild>
       <DisableSpecificWarnings>4060;4100;4127;4324;4408;4510;4512;4582;4583;4592</DisableSpecificWarnings>
@@ -247,7 +247,7 @@ exit /b 0
       </ControlFlowGuard>
       <SmallerTypeCheck>false</SmallerTypeCheck>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <AdditionalOptions>/bigobj /Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -265,7 +265,7 @@ exit /b 0
       </Message>
     </PreBuildEvent>
     <CustomBuildStep>
-      <Inputs>src_next/generated/xdr/Stellar-overlay.h;src/generated/rust/bridge.h</Inputs>
+      <Inputs>src/$(Configuration)/generated/xdr/Stellar-overlay.h;src/$(Configuration)/generated/rust/RustBridge.h</Inputs>
       <Command>@echo XDR &gt; $(IntermediateOutputPath)\xdrgen.stamp</Command>
       <Message>XDR check</Message>
       <Outputs>$(IntermediateOutputPath)\xdrgen.stamp</Outputs>
@@ -300,12 +300,12 @@ exit /b 0
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>USE_POSTGRES;ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION=1;USE_SPDLOG;FMT_HEADER_ONLY=1;BUILD_TESTS;WIN32_LEAN_AND_MEAN;NOMINMAX;ASIO_STANDALONE;_WINSOCK_DEPRECATED_NO_WARNINGS;SODIUM_STATIC;ASIO_SEPARATE_COMPILATION;ASIO_ERROR_CATEGORY_NOEXCEPT=noexcept;TRACY_ENABLE;TRACY_ON_DEMAND;TRACY_NO_BROADCAST;TRACY_ONLY_LOCALHOST;USE_TRACY;_CRT_SECURE_NO_WARNINGS;_WIN32_WINNT=0x0601;WIN32;_MBCS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;../../src;../../lib;../../lib/tracy;../../lib/spdlog/include;../../lib/libmedida/src;../../lib/soci/src/core;../../lib/autocheck/include;../../lib/cereal/include;../../lib/asio/asio/include;../../lib/xdrpp;../../lib/libsodium/src/libsodium/include;../../lib/fmt/include;src/generated;../..;src_next/generated;../../lib/sqlite;c:\Program Files\PostgreSQL\9.5\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;../../src;../../lib;../../lib/tracy;../../lib/spdlog/include;../../lib/libmedida/src;../../lib/soci/src/core;../../lib/autocheck/include;../../lib/cereal/include;../../lib/asio/asio/include;../../lib/xdrpp;../../lib/libsodium/src/libsodium/include;../../lib/fmt/include;../..;src/$(Configuration)/generated;../../lib/sqlite;c:\Program Files\PostgreSQL\9.5\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <BrowseInformation>false</BrowseInformation>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <DisableSpecificWarnings>4060;4100;4127;4324;4408;4510;4512;4582;4583;4592</DisableSpecificWarnings>
       <ControlFlowGuard>false</ControlFlowGuard>
-      <AdditionalOptions>/bigobj /Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <OmitFramePointers>false</OmitFramePointers>
     </ClCompile>
@@ -324,7 +324,7 @@ exit /b 0
       </Message>
     </PreBuildEvent>
     <CustomBuildStep>
-      <Inputs>src_next/generated/xdr/Stellar-overlay.h</Inputs>
+      <Inputs>src/$(Configuration)/generated/xdr/Stellar-overlay.h</Inputs>
       <Command>@echo XDR &gt; $(IntermediateOutputPath)\xdrgen.stamp</Command>
       <Message>XDR check</Message>
       <Outputs>$(IntermediateOutputPath)\xdrgen.stamp</Outputs>
@@ -358,12 +358,12 @@ exit /b 0
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>USE_POSTGRES;USE_SPDLOG;FMT_HEADER_ONLY=1;BUILD_TESTS;WIN32_LEAN_AND_MEAN;NOMINMAX;ASIO_STANDALONE;_WINSOCK_DEPRECATED_NO_WARNINGS;SODIUM_STATIC;ASIO_SEPARATE_COMPILATION;ASIO_ERROR_CATEGORY_NOEXCEPT=noexcept;TRACY_ENABLE;TRACY_ON_DEMAND;TRACY_NO_BROADCAST;TRACY_ONLY_LOCALHOST;USE_TRACY;_CRT_SECURE_NO_WARNINGS;_WIN32_WINNT=0x0601;WIN32;_MBCS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;../../src;../../lib;../../lib/tracy;../../lib/spdlog/include;../../lib/libmedida/src;../../lib/soci/src/core;../../lib/autocheck/include;../../lib/cereal/include;../../lib/asio/asio/include;../../lib/xdrpp;../../lib/libsodium/src/libsodium/include;../../lib/fmt/include;src/generated;../..;src_curr/generated;../../lib/sqlite;c:\Program Files\PostgreSQL\9.5\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;../../src;../../lib;../../lib/tracy;../../lib/spdlog/include;../../lib/libmedida/src;../../lib/soci/src/core;../../lib/autocheck/include;../../lib/cereal/include;../../lib/asio/asio/include;../../lib/xdrpp;../../lib/libsodium/src/libsodium/include;../../lib/fmt/include;../..;src/$(Configuration)/generated;../../lib/sqlite;c:\Program Files\PostgreSQL\9.5\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <BrowseInformation>false</BrowseInformation>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <DisableSpecificWarnings>4060;4100;4127;4324;4408;4510;4512;4582;4583;4592</DisableSpecificWarnings>
       <ControlFlowGuard>false</ControlFlowGuard>
-      <AdditionalOptions>/bigobj /Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <OmitFramePointers>false</OmitFramePointers>
     </ClCompile>
@@ -382,7 +382,7 @@ exit /b 0
       </Message>
     </PreBuildEvent>
     <CustomBuildStep>
-      <Inputs>src_next/generated/xdr/Stellar-overlay.h</Inputs>
+      <Inputs>src/$(Configuration)/generated/xdr/Stellar-overlay.h</Inputs>
       <Command>@echo XDR &gt; $(IntermediateOutputPath)\xdrgen.stamp</Command>
       <Message>XDR check</Message>
       <Outputs>$(IntermediateOutputPath)\xdrgen.stamp</Outputs>
@@ -531,6 +531,7 @@ exit /b 0
     <ClCompile Include="..\..\src\transactions\TransactionSQL.cpp" />
     <ClCompile Include="..\..\src\transactions\RevokeSponsorshipOpFrame.cpp" />
     <ClCompile Include="..\..\src\transactions\TrustFlagsOpFrameBase.cpp" />
+    <ClCompile Include="..\..\src\transactions\contracts\ContractUtils.cpp" />
     <ClCompile Include="..\..\src\util\Backtrace.cpp" />
     <ClCompile Include="..\..\src\util\FileSystemException.cpp" />
     <ClCompile Include="..\..\src\util\ProtocolVersion.cpp" />
@@ -540,11 +541,6 @@ exit /b 0
     <ClCompile Include="..\..\src\util\test\MetricTests.cpp" />
     <ClCompile Include="..\..\src\util\test\SchedulerTests.cpp" />
     <ClCompile Include="..\..\src\util\XDRCereal.cpp" />
-    <ClCompile Include="..\..\src\util\xdrquery\tests\XDRQueryTests.cpp" />
-    <ClCompile Include="..\..\src\util\xdrquery\XDRMatcher.cpp" />
-    <ClCompile Include="..\..\src\util\xdrquery\XDRQueryEval.cpp" />
-    <ClCompile Include="..\..\src\util\xdrquery\XDRQueryParser.cpp" />
-    <ClCompile Include="..\..\src\util\xdrquery\XDRQueryScanner.cpp" />
     <ClCompile Include="..\..\src\work\BatchWork.cpp" />
     <ClCompile Include="..\..\src\historywork\CheckSingleLedgerHeaderWork.cpp" />
     <ClCompile Include="..\..\src\historywork\DownloadBucketsWork.cpp" />
@@ -823,7 +819,7 @@ exit /b 0
     <ClCompile Include="..\..\src\work\WorkScheduler.cpp" />
     <ClCompile Include="..\..\src\work\WorkSequence.cpp" />
     <ClCompile Include="..\..\src\work\WorkWithCallback.cpp" />
-    <ClCompile Include="src\generated\rust\bridge.cpp" />
+    <ClCompile Include="src\$(Configuration)\generated\rust\RustBridge.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\lib\catch.hpp" />
@@ -930,6 +926,7 @@ exit /b 0
     <ClInclude Include="..\..\src\transactions\TransactionSQL.h" />
     <ClInclude Include="..\..\src\transactions\RevokeSponsorshipOpFrame.h" />
     <ClInclude Include="..\..\src\transactions\TrustFlagsOpFrameBase.h" />
+    <ClInclude Include="..\..\src\transactions\contracts\ContractUtils.h" />
     <ClInclude Include="..\..\src\util\Backtrace.h" />
     <ClInclude Include="..\..\src\util\Decoder.h" />
     <ClInclude Include="..\..\src\util\ProtocolVersion.h" />
@@ -940,11 +937,6 @@ exit /b 0
     <ClInclude Include="..\..\src\util\UnorderedSet.h" />
     <ClInclude Include="..\..\src\util\XDRCereal.h" />
     <ClInclude Include="..\..\src\util\XDROperators.h" />
-    <ClInclude Include="..\..\src\util\xdrquery\XDRMatcher.h" />
-    <ClInclude Include="..\..\src\util\xdrquery\XDRFieldResolver.h" />
-    <ClInclude Include="..\..\src\util\xdrquery\XDRQueryEval.h" />
-    <ClInclude Include="..\..\src\util\xdrquery\XDRQueryError.h" />
-    <ClInclude Include="..\..\src\util\xdrquery\XDRQueryParser.h" />
     <ClInclude Include="..\..\src\work\BatchWork.h" />
     <ClInclude Include="..\..\src\historywork\CheckSingleLedgerHeaderWork.h" />
     <ClInclude Include="..\..\src\historywork\DownloadBucketsWork.h" />
@@ -1056,6 +1048,8 @@ exit /b 0
     <ClInclude Include="..\..\src\overlay\Tracker.h" />
     <ClInclude Include="..\..\src\process\ProcessManager.h" />
     <ClInclude Include="..\..\src\process\ProcessManagerImpl.h" />
+    <ClInclude Include="..\..\src\rust\CppShims.h" />
+    <ClInclude Include="..\..\src\rust\RustVecXdrMarshal.h" />
     <ClInclude Include="..\..\src\scp\BallotProtocol.h" />
     <ClInclude Include="..\..\src\scp\LocalNode.h" />
     <ClInclude Include="..\..\src\scp\NominationProtocol.h" />
@@ -1130,19 +1124,14 @@ exit /b 0
     <ClInclude Include="..\..\src\work\WorkScheduler.h" />
     <ClInclude Include="..\..\src\work\WorkSequence.h" />
     <ClInclude Include="..\..\src\work\WorkWithCallback.h" />
-    <ClInclude Include="src\generated\rust\bridge.h" />
-    <ClInclude Include="src_curr\generated\xdr\Stellar-ledger-entries.h" />
-    <ClInclude Include="src_curr\generated\xdr\Stellar-ledger.h" />
-    <ClInclude Include="src_curr\generated\xdr\Stellar-overlay.h" />
-    <ClInclude Include="src_curr\generated\xdr\Stellar-SCP.h" />
-    <ClInclude Include="src_curr\generated\xdr\Stellar-transaction.h" />
-    <ClInclude Include="src_curr\generated\xdr\Stellar-types.h" />
-    <ClInclude Include="src_next\generated\xdr\Stellar-ledger-entries.h" />
-    <ClInclude Include="src_next\generated\xdr\Stellar-ledger.h" />
-    <ClInclude Include="src_next\generated\xdr\Stellar-overlay.h" />
-    <ClInclude Include="src_next\generated\xdr\Stellar-SCP.h" />
-    <ClInclude Include="src_next\generated\xdr\Stellar-transaction.h" />
-    <ClInclude Include="src_next\generated\xdr\Stellar-types.h" />
+    <ClInclude Include="src\$(Configuration)\generated\rust\RustBridge.h" />
+    <ClInclude Include="src\$(Configuration)\generated\xdr\Stellar-contract.h" />
+    <ClInclude Include="src\$(Configuration)\generated\xdr\Stellar-ledger-entries.h" />
+    <ClInclude Include="src\$(Configuration)\generated\xdr\Stellar-ledger.h" />
+    <ClInclude Include="src\$(Configuration)\generated\xdr\Stellar-overlay.h" />
+    <ClInclude Include="src\$(Configuration)\generated\xdr\Stellar-SCP.h" />
+    <ClInclude Include="src\$(Configuration)\generated\xdr\Stellar-transaction.h" />
+    <ClInclude Include="src\$(Configuration)\generated\xdr\Stellar-types.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\.github\ISSUE_TEMPLATE\bug-report.md" />
@@ -1192,6 +1181,21 @@ exit /b 0
     <None Include="..\..\src\history\serialize-tests\stellar-history.livenet.15686975.json" />
     <None Include="..\..\src\history\serialize-tests\stellar-history.testnet.6714239.json" />
     <None Include="..\..\lib\xdrpp\tests\xdrtest.x" />
+    <CustomBuild Include="..\..\src\protocol-next\xdr\Stellar-contract.x">
+      <FileType>Document</FileType>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">false</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">false</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">false</ExcludedFromBuild>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-contract.h ../../src/protocol-next/xdr/Stellar-contract.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-contract.h ../../src/protocol-next/xdr/Stellar-contract.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-contract.h ../../src/protocol-next/xdr/Stellar-contract.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-contract.h</Outputs>
+      <AdditionalInputs>src/$(Configuration)/generated/xdr/Stellar-types.h</AdditionalInputs>
+      <OutputItemType>ClInclude</OutputItemType>
+    </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-next\xdr\Stellar-ledger.x">
       <FileType>Document</FileType>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">true</ExcludedFromBuild>
@@ -1199,21 +1203,13 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">false</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-ledger.h ../../src/protocol-next/xdr/Stellar-ledger.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-ledger.h ../../src/protocol-next/xdr/Stellar-ledger.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-ledger.h ../../src/protocol-next/xdr/Stellar-ledger.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src_next/generated/xdr/Stellar-ledger.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src_next/generated/xdr/Stellar-ledger.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src_next/generated/xdr/Stellar-ledger.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src_next/generated/xdr/Stellar-transaction.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src_next/generated/xdr/Stellar-transaction.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src_next/generated/xdr/Stellar-transaction.h</AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">ClInclude</OutputItemType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-ledger.h ../../src/protocol-next/xdr/Stellar-ledger.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-ledger.h ../../src/protocol-next/xdr/Stellar-ledger.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-ledger.h ../../src/protocol-next/xdr/Stellar-ledger.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-ledger.h</Outputs>
+      <AdditionalInputs>src/$(Configuration)/generated/xdr/Stellar-transaction.h</AdditionalInputs>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-next\xdr\Stellar-transaction.x">
       <FileType>Document</FileType>
@@ -1222,21 +1218,13 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">false</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-transaction.h ../../src/protocol-next/xdr/Stellar-transaction.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-transaction.h ../../src/protocol-next/xdr/Stellar-transaction.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-transaction.h ../../src/protocol-next/xdr/Stellar-transaction.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src_next/generated/xdr/Stellar-transaction.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src_next/generated/xdr/Stellar-transaction.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src_next/generated/xdr/Stellar-transaction.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src_next/generated/xdr/Stellar-ledger-entries.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src_next/generated/xdr/Stellar-ledger-entries.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src_next/generated/xdr/Stellar-ledger-entries.h</AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">ClInclude</OutputItemType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-transaction.h ../../src/protocol-next/xdr/Stellar-transaction.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-transaction.h ../../src/protocol-next/xdr/Stellar-transaction.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-transaction.h ../../src/protocol-next/xdr/Stellar-transaction.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-transaction.h</Outputs>
+      <AdditionalInputs>src/$(Configuration)/generated/xdr/Stellar-ledger-entries.h</AdditionalInputs>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-next\xdr\Stellar-types.x">
       <FileType>Document</FileType>
@@ -1245,24 +1233,14 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">false</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-types.h ../../src/protocol-next/xdr/Stellar-types.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-types.h ../../src/protocol-next/xdr/Stellar-types.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-types.h ../../src/protocol-next/xdr/Stellar-types.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src_next/generated/xdr/Stellar-types.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src_next/generated/xdr/Stellar-types.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src_next/generated/xdr/Stellar-types.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-types.h ../../src/protocol-next/xdr/Stellar-types.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-types.h ../../src/protocol-next/xdr/Stellar-types.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-types.h ../../src/protocol-next/xdr/Stellar-types.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-types.h</Outputs>
+      <AdditionalInputs>
       </AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">
-      </AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">
-      </AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">ClInclude</OutputItemType>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-next\xdr\Stellar-overlay.x">
       <FileType>Document</FileType>
@@ -1271,21 +1249,13 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">false</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-overlay.h ../../src/protocol-next/xdr/Stellar-overlay.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-overlay.h ../../src/protocol-next/xdr/Stellar-overlay.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-overlay.h ../../src/protocol-next/xdr/Stellar-overlay.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src_next/generated/xdr/Stellar-overlay.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src_next/generated/xdr/Stellar-overlay.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src_next/generated/xdr/Stellar-overlay.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src_next/generated/xdr/Stellar-ledger.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src_next/generated/xdr/Stellar-ledger.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src_next/generated/xdr/Stellar-ledger.h</AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">ClInclude</OutputItemType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-overlay.h ../../src/protocol-next/xdr/Stellar-overlay.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-overlay.h ../../src/protocol-next/xdr/Stellar-overlay.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-overlay.h ../../src/protocol-next/xdr/Stellar-overlay.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-overlay.h</Outputs>
+      <AdditionalInputs>src/$(Configuration)/generated/xdr/Stellar-ledger.h</AdditionalInputs>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-next\xdr\Stellar-ledger-entries.x">
       <FileType>Document</FileType>
@@ -1294,21 +1264,13 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">false</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-ledger-entries.h ../../src/protocol-next/xdr/Stellar-ledger-entries.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-ledger-entries.h ../../src/protocol-next/xdr/Stellar-ledger-entries.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-ledger-entries.h ../../src/protocol-next/xdr/Stellar-ledger-entries.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src_next/generated/xdr/Stellar-ledger-entries.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src_next/generated/xdr/Stellar-ledger-entries.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src_next/generated/xdr/Stellar-ledger-entries.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src_next/generated/xdr/Stellar-types.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src_next/generated/xdr/Stellar-types.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src_next/generated/xdr/Stellar-types.h</AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">ClInclude</OutputItemType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-ledger-entries.h ../../src/protocol-next/xdr/Stellar-ledger-entries.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-ledger-entries.h ../../src/protocol-next/xdr/Stellar-ledger-entries.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-ledger-entries.h ../../src/protocol-next/xdr/Stellar-ledger-entries.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-ledger-entries.h</Outputs>
+      <AdditionalInputs>src/$(Configuration)/generated/xdr/Stellar-types.h</AdditionalInputs>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-next\xdr\Stellar-SCP.x">
       <FileType>Document</FileType>
@@ -1317,21 +1279,13 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">false</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-SCP.h ../../src/protocol-next/xdr/Stellar-SCP.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-SCP.h ../../src/protocol-next/xdr/Stellar-SCP.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src_next/generated/xdr/Stellar-SCP.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src_next/generated/xdr/Stellar-SCP.h</Outputs>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_next/generated/xdr/Stellar-SCP.h ../../src/protocol-next/xdr/Stellar-SCP.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src_next/generated/xdr/Stellar-SCP.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src_next/generated/xdr/Stellar-types.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src_next/generated/xdr/Stellar-types.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src_next/generated/xdr/Stellar-types.h</AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">ClInclude</OutputItemType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-SCP.h ../../src/protocol-next/xdr/Stellar-SCP.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-SCP.h ../../src/protocol-next/xdr/Stellar-SCP.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-SCP.h ../../src/protocol-next/xdr/Stellar-SCP.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-SCP.h</Outputs>
+      <AdditionalInputs>src/$(Configuration)/generated/xdr/Stellar-types.h</AdditionalInputs>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-curr\xdr\Stellar-ledger.x">
       <FileType>Document</FileType>
@@ -1340,16 +1294,12 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">true</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-ledger.h ../../src/protocol-curr/xdr/Stellar-ledger.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-ledger.h ../../src/protocol-curr/xdr/Stellar-ledger.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src_curr/generated/xdr/Stellar-ledger.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src_curr/generated/xdr/Stellar-ledger.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src_curr/generated/xdr/Stellar-transaction.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src_curr/generated/xdr/Stellar-transaction.h</AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">ClInclude</OutputItemType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-ledger.h ../../src/protocol-curr/xdr/Stellar-ledger.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-ledger.h ../../src/protocol-curr/xdr/Stellar-ledger.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-ledger.h</Outputs>
+      <AdditionalInputs>src/$(Configuration)/generated/xdr/Stellar-transaction.h</AdditionalInputs>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-curr\xdr\Stellar-transaction.x">
       <FileType>Document</FileType>
@@ -1358,16 +1308,12 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">true</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-transaction.h ../../src/protocol-curr/xdr/Stellar-transaction.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-transaction.h ../../src/protocol-curr/xdr/Stellar-transaction.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src_curr/generated/xdr/Stellar-transaction.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src_curr/generated/xdr/Stellar-transaction.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src_curr/generated/xdr/Stellar-ledger-entries.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src_curr/generated/xdr/Stellar-ledger-entries.h</AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">ClInclude</OutputItemType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-transaction.h ../../src/protocol-curr/xdr/Stellar-transaction.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-transaction.h ../../src/protocol-curr/xdr/Stellar-transaction.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-transaction.h</Outputs>
+      <AdditionalInputs>src/$(Configuration)/generated/xdr/Stellar-ledger-entries.h</AdditionalInputs>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-curr\xdr\Stellar-types.x">
       <FileType>Document</FileType>
@@ -1376,18 +1322,13 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">true</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-types.h ../../src/protocol-curr/xdr/Stellar-types.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-types.h ../../src/protocol-curr/xdr/Stellar-types.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src_curr/generated/xdr/Stellar-types.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src_curr/generated/xdr/Stellar-types.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-types.h ../../src/protocol-curr/xdr/Stellar-types.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-types.h ../../src/protocol-curr/xdr/Stellar-types.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-types.h</Outputs>
+      <AdditionalInputs>
       </AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">
-      </AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">ClInclude</OutputItemType>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-curr\xdr\Stellar-overlay.x">
       <FileType>Document</FileType>
@@ -1396,16 +1337,12 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">true</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-overlay.h ../../src/protocol-curr/xdr/Stellar-overlay.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-overlay.h ../../src/protocol-curr/xdr/Stellar-overlay.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src_curr/generated/xdr/Stellar-overlay.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src_curr/generated/xdr/Stellar-overlay.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src_curr/generated/xdr/Stellar-ledger.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src_curr/generated/xdr/Stellar-ledger.h</AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">ClInclude</OutputItemType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-overlay.h ../../src/protocol-curr/xdr/Stellar-overlay.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-overlay.h ../../src/protocol-curr/xdr/Stellar-overlay.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-overlay.h</Outputs>
+      <AdditionalInputs>src/$(Configuration)/generated/xdr/Stellar-ledger.h</AdditionalInputs>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-curr\xdr\Stellar-ledger-entries.x">
       <FileType>Document</FileType>
@@ -1414,16 +1351,12 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">true</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-ledger-entries.h ../../src/protocol-curr/xdr/Stellar-ledger-entries.x</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-ledger-entries.h ../../src/protocol-curr/xdr/Stellar-ledger-entries.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">running xdrc</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src_curr/generated/xdr/Stellar-ledger-entries.h</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src_curr/generated/xdr/Stellar-ledger-entries.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src_curr/generated/xdr/Stellar-types.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src_curr/generated/xdr/Stellar-types.h</AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">ClInclude</OutputItemType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-ledger-entries.h ../../src/protocol-curr/xdr/Stellar-ledger-entries.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-ledger-entries.h ../../src/protocol-curr/xdr/Stellar-ledger-entries.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-ledger-entries.h</Outputs>
+      <AdditionalInputs>src/$(Configuration)/generated/xdr/Stellar-types.h</AdditionalInputs>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\protocol-curr\xdr\Stellar-SCP.x">
       <FileType>Document</FileType>
@@ -1432,16 +1365,12 @@ exit /b 0
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">true</ExcludedFromBuild>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-SCP.h ../../src/protocol-curr/xdr/Stellar-SCP.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src_curr/generated/xdr/Stellar-SCP.h</Outputs>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src_curr/generated/xdr/Stellar-SCP.h ../../src/protocol-curr/xdr/Stellar-SCP.x</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">running xdrc</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src_curr/generated/xdr/Stellar-SCP.h</Outputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src_curr/generated/xdr/Stellar-types.h</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src_curr/generated/xdr/Stellar-types.h</AdditionalInputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">ClInclude</OutputItemType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(SolutionDir)$(Platform)\Debug\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-SCP.h ../../src/protocol-curr/xdr/Stellar-SCP.x</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(SolutionDir)$(Platform)\Release\xdrc.exe -hh -pedantic -o src/$(Configuration)/generated/xdr/Stellar-SCP.h ../../src/protocol-curr/xdr/Stellar-SCP.x</Command>
+      <Message>running xdrc</Message>
+      <Outputs>src/$(Configuration)/generated/xdr/Stellar-SCP.h</Outputs>
+      <AdditionalInputs>src/$(Configuration)/generated/xdr/Stellar-types.h</AdditionalInputs>
+      <OutputItemType>ClInclude</OutputItemType>
     </CustomBuild>
     <CustomBuild Include="..\..\src\main\StellarCoreVersion.cpp.in">
       <FileType>Document</FileType>
@@ -1513,66 +1442,23 @@ exit /b 0
     </CustomBuild>
     <CustomBuild Include="..\..\src\rust\src\lib.rs">
       <FileType>Document</FileType>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --header --output src\generated\rust\bridge.h
-$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --output src\generated\rust\bridge.cpp</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --header --output src\generated\rust\bridge.h
-$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --output src\generated\rust\bridge.cpp</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --header --output src\generated\rust\bridge.h
-$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --output src\generated\rust\bridge.cpp</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --header --output src\generated\rust\bridge.h
-$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --output src\generated\rust\bridge.cpp</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --header --output src\generated\rust\bridge.h
-$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --output src\generated\rust\bridge.cpp</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">running cxxbridge to generate bridge.h and bridge.cpp</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">running cxxbridge to generate bridge.h and bridge.cpp</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">running cxxbridge to generate bridge.h and bridge.cpp</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">running cxxbridge to generate bridge.h and bridge.cpp</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">running cxxbridge to generate bridge.h and bridge.cpp</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">src\generated\rust\bridge.h;src\generated\rust\bridge.cpp</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">src\generated\rust\bridge.h;src\generated\rust\bridge.cpp</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">src\generated\rust\bridge.h;src\generated\rust\bridge.cpp</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">src\generated\rust\bridge.h;src\generated\rust\bridge.cpp</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">src\generated\rust\bridge.h;src\generated\rust\bridge.cpp</Outputs>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">ClInclude</OutputItemType>
-      <OutputItemType Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">ClInclude</OutputItemType>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(OutDir)\bin\cxxbridge.exe </AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(OutDir)\bin\cxxbridge.exe </AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(OutDir)\bin\cxxbridge.exe </AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(OutDir)\bin\cxxbridge.exe </AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(OutDir)\bin\cxxbridge.exe </AdditionalInputs>
+      <Command>$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --header --output src\$(Configuration)\generated\rust\RustBridge.h
+$(OutDir)\bin\cxxbridge.exe ..\..\src\rust\src\lib.rs --output src\$(Configuration)\generated\rust\RustBridge.cpp</Command>
+      <Message>running cxxbridge to generate RustBridge.h and RustBridge.cpp</Message>
+      <Outputs>src\$(Configuration)\generated\rust\RustBridge.h;src\$(Configuration)\generated\rust\RustBridge.cpp</Outputs>
+      <OutputItemType>ClInclude</OutputItemType>
+      <AdditionalInputs>$(OutDir)\bin\cxxbridge.exe</AdditionalInputs>
     </CustomBuild>
     <CustomBuild Include="..\..\src\rust\install-cxxbridge-cmd">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">false</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">false</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">false</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">false</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">false</ExcludedFromBuild>
       <FileType>Document</FileType>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">cargo install --root $(OutDir) cxxbridge-cmd</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">cargo install --root $(OutDir) cxxbridge-cmd</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">cargo install --root $(OutDir) cxxbridge-cmd</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">cargo install --root $(OutDir) cxxbridge-cmd</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">cargo install --root $(OutDir) cxxbridge-cmd</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">cargo install --root $(OutDir) cxxbridge-cmd</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">cargo install --root $(OutDir) cxxbridge-cmd</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">cargo install --root $(OutDir) cxxbridge-cmd</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">cargo install --root $(OutDir) cxxbridge-cmd</Message>
-      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">cargo install --root $(OutDir) cxxbridge-cmd</Message>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNextV|x64'">$(OutDir)/bin/cxxbridge.exe</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugCurrV|x64'">$(OutDir)/bin/cxxbridge.exe</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugNoPostgres|x64'">$(OutDir)/bin/cxxbridge.exe</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseNextV|x64'">$(OutDir)/bin/cxxbridge.exe</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseCurrV|x64'">$(OutDir)/bin/cxxbridge.exe</Outputs>
+      <Command>cargo install --root $(OutDir) cxxbridge-cmd</Command>
+      <Message>cargo install --root $(OutDir) cxxbridge-cmd</Message>
+      <Outputs>$(OutDir)/bin/cxxbridge.exe</Outputs>
     </CustomBuild>
     <None Include="..\..\src\scp\readme.md" />
     <None Include="..\..\src\transactions\readme.md" />
     <None Include="..\..\ci-build.sh" />
     <None Include="..\..\src\util\LogPartitions.def" />
-    <None Include="..\..\src\util\xdrquery\XDRQueryParser.yy" />
-    <None Include="..\..\src\util\xdrquery\XDRQueryScanner.ll" />
     <None Include="libmedida\libmedida.vcxproj" />
   </ItemGroup>
   <ItemGroup>

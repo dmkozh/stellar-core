@@ -26,7 +26,7 @@ int mergeBucketList(Config cfg, std::string const& outputDir);
 int mergeBucketListJson(Config cfg, std::string const& outputDir);
 int dumpLedger(Config cfg, std::string const& outputFile,
                std::optional<std::string> filterQuery,
-               std::optional<uint32_t> ledgerCount,
+               std::optional<uint32_t> lastModifiedLedgerCount,
                std::optional<uint64_t> limit);
 void showOfflineInfo(Config cfg);
 int reportLastHistoryCheckpoint(Config cfg, std::string const& outputFile);
