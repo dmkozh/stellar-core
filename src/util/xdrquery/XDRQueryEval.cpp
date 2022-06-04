@@ -6,15 +6,64 @@
 #include "fmt/format.h"
 #include "util/xdrquery/XDRQueryError.h"
 
+namespace fmt
+{
+template <> struct fmt::formatter<xdrquery::NullFieldType>
+{
+    template <typename FormatContext>
+    auto
+    format(xdrquery::NullFieldType, FormatContext& ctx)
+    {
+        return fmt::format_to(ctx.out(), "NULL");
+    }
+};
+} // fmt
+
 namespace xdrquery
 {
+bool
+NullFieldType::operator==(NullFieldType other) const
+{
+    return operationNotSupported();
+}
+bool
+NullFieldType::operator!=(NullFieldType other) const
+{
+    return operationNotSupported();
+}
+bool
+NullFieldType::operator<(NullFieldType other) const
+{
+    return operationNotSupported();
+}
+bool
+NullFieldType::operator<=(NullFieldType other) const
+{
+    return operationNotSupported();
+}
+bool
+NullFieldType::operator>(NullFieldType other) const
+{
+    return operationNotSupported();
+}
+bool
+NullFieldType::operator>=(NullFieldType other) const
+{
+    return operationNotSupported();
+}
+bool
+NullFieldType::operationNotSupported() const
+{
+    throw std::runtime_error("Null fields should not be compared directly.");
+    return false;
+}
 
 LiteralNode::LiteralNode(LiteralNodeType valueType, std::string const& val)
     : mType(valueType), mValue(val)
 {
     if (mType == LiteralNodeType::NULL_LITERAL)
     {
-        mValue = NULL_LITERAL;
+        mValue = NullFieldType();
     }
 }
 
@@ -130,7 +179,7 @@ ComparisonNode::ComparisonNode(ComparisonNodeType nodeType,
         std::swap(mLeft, mRight);
         // Invert the operation as we have swapped operands.
         switch (mType)
-        {        
+        {
         case ComparisonNodeType::LT:
             mType = ComparisonNodeType::GT;
         case ComparisonNodeType::LE:
@@ -176,6 +225,22 @@ ComparisonNode::evalBool(FieldResolver const& fieldResolver) const
         return false;
     }
 
+    bool leftIsNull = std::holds_alternative<NullFieldType>(*leftVal);
+    bool rightIsNull = std::holds_alternative<NullFieldType>(*rightVal);
+    if (leftIsNull || rightIsNull)
+    {
+        return compareNullFields(leftIsNull, rightIsNull);
+    }
+
+    if (leftVal->index() != rightVal->index())
+    {
+        auto valueToStr = [](auto&& v) { return fmt::to_string(v); };
+        throw XDRQueryError(
+            fmt::format(FMT_STRING("Type mismatch between values `{}` and `{}`."),
+                        std::visit(valueToStr, *leftVal),
+                        std::visit(valueToStr, *rightVal)));
+    }
+
     switch (mType)
     {
     case ComparisonNodeType::EQ:
@@ -199,4 +264,22 @@ ComparisonNode::getType() const
     return EvalNodeType::COMPARISON_OP;
 }
 
-}  // namespace xdrquery
+bool
+ComparisonNode::compareNullFields(bool leftIsNull, bool rightIsNull) const
+{
+    switch (mType)
+    {
+    case ComparisonNodeType::EQ:
+        return leftIsNull == rightIsNull;
+    case ComparisonNodeType::NE:
+        return leftIsNull != rightIsNull;
+    case ComparisonNodeType::LT:
+    case ComparisonNodeType::LE:
+    case ComparisonNodeType::GT:
+    case ComparisonNodeType::GE:
+        throw XDRQueryError(
+            "Fields can only be compared with `NULL` using `==` and `!=`.");
+    }
+}
+
+} // namespace xdrquery

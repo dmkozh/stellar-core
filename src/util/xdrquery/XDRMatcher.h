@@ -22,7 +22,12 @@ class XDRMatcher
     matchXDR(T const& xdrMessage)
     {
         return matchInternal(
-            [&xdrMessage](std::vector<std::string> const& fieldPath) {
+            [&xdrMessage, this](std::vector<std::string> const& fieldPath) {
+                if (mFirstMatch)
+                {
+                    mFirstMatch = false;
+                    return getXDRFieldValidated(xdrMessage, fieldPath);
+                }
                 return getXDRField(xdrMessage, fieldPath);
             });
     }
@@ -32,5 +37,6 @@ class XDRMatcher
 
     std::string const mQuery;
     std::unique_ptr<BoolEvalNode> mEvalRoot;
+    bool mFirstMatch = true;
 };
 } // namespace xdrquery

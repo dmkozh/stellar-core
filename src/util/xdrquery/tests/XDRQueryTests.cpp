@@ -60,20 +60,20 @@ TEST_CASE("XDR field resolver", "[xdrquery]")
         price.d = std::numeric_limits<int32_t>::max();
         SECTION("negative")
         {
-            auto field = getXDRField(price, {"n"});
+            auto field = getXDRFieldValidated(price, {"n"});
             REQUIRE(std::get<int32_t>(*field) == price.n);
         }
         SECTION("positive")
         {
-            auto field = getXDRField(price, {"d"});
+            auto field = getXDRFieldValidated(price, {"d"});
             REQUIRE(std::get<int32_t>(*field) == price.d);
         }
     }
 
     SECTION("uint32 field")
     {
-        auto field =
-            getXDRField(accountEntry, {"data", "account", "numSubEntries"});
+        auto field = getXDRFieldValidated(accountEntry,
+                                          {"data", "account", "numSubEntries"});
         REQUIRE(std::get<uint32_t>(*field) == account.numSubEntries);
     }
 
@@ -81,62 +81,71 @@ TEST_CASE("XDR field resolver", "[xdrquery]")
     {
         SECTION("negative")
         {
-            auto field =
-                getXDRField(accountEntry, {"data", "account", "ext", "v1",
-                                           "liabilities", "buying"});
+            auto field = getXDRFieldValidated(
+                accountEntry,
+                {"data", "account", "ext", "v1", "liabilities", "buying"});
             REQUIRE(std::get<int64_t>(*field) ==
                     account.ext.v1().liabilities.buying);
         }
         SECTION("positive")
         {
-            auto field =
-                getXDRField(accountEntry, {"data", "account", "seqNum"});
+            auto field = getXDRFieldValidated(accountEntry,
+                                              {"data", "account", "seqNum"});
             REQUIRE(std::get<int64_t>(*field) == account.seqNum);
         }
     }
 
     SECTION("uint64 field")
     {
-        auto field =
-            getXDRField(accountEntry, {"data", "account", "ext", "v1", "ext",
-                                       "v2", "ext", "v3", "seqTime"});
+        auto field = getXDRFieldValidated(
+            accountEntry, {"data", "account", "ext", "v1", "ext", "v2", "ext",
+                           "v3", "seqTime"});
         REQUIRE(std::get<uint64_t>(*field) ==
                 account.ext.v1().ext.v2().ext.v3().seqTime);
     }
 
     SECTION("string field")
     {
-        auto field =
-            getXDRField(accountEntry, {"data", "account", "homeDomain"});
+        auto field = getXDRFieldValidated(accountEntry,
+                                          {"data", "account", "homeDomain"});
         REQUIRE(std::get<std::string>(*field) == account.homeDomain);
     }
 
     SECTION("bytes field")
     {
-        auto field =
-            getXDRField(accountEntry, {"data", "account", "thresholds"});
+        auto field = getXDRFieldValidated(accountEntry,
+                                          {"data", "account", "thresholds"});
         REQUIRE(std::get<std::string>(*field) == "01000200");
     }
 
     SECTION("enum field")
     {
-        auto field = getXDRField(accountEntry, {"data", "type"});
+        auto field = getXDRFieldValidated(accountEntry, {"data", "type"});
         REQUIRE(std::get<std::string>(*field) == "ACCOUNT");
+    }
+
+    SECTION("null field")
+    {
+        LedgerEntry e;
+        e.data.type(ACCOUNT);
+        auto field =
+            getXDRFieldValidated(e, {"data", "account", "inflationDest"});
+        REQUIRE(std::holds_alternative<NullFieldType>(*field));
     }
 
     SECTION("public key field")
     {
         SECTION("non-optional")
         {
-            auto field =
-                getXDRField(accountEntry, {"data", "account", "accountID"});
+            auto field = getXDRFieldValidated(accountEntry,
+                                              {"data", "account", "accountID"});
             REQUIRE(std::get<std::string>(*field) ==
                     "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAG6ELY");
         }
         SECTION("optional")
         {
-            auto field =
-                getXDRField(accountEntry, {"data", "account", "inflationDest"});
+            auto field = getXDRFieldValidated(
+                accountEntry, {"data", "account", "inflationDest"});
             REQUIRE(std::get<std::string>(*field) ==
                     "GBHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB2HL");
         }
@@ -150,7 +159,7 @@ TEST_CASE("XDR field resolver", "[xdrquery]")
             {
                 asset.type(ASSET_TYPE_NATIVE);
 
-                auto field = getXDRField(entry, fieldPath);
+                auto field = getXDRFieldValidated(entry, fieldPath);
                 REQUIRE(std::get<std::string>(*field) == "NATIVE");
             }
             auto testAlphaNum = [&](auto& alphaNum, std::string const& code) {
@@ -162,7 +171,7 @@ TEST_CASE("XDR field resolver", "[xdrquery]")
                 {
                     auto currFieldPath = fieldPath;
                     currFieldPath.push_back("assetCode");
-                    auto field = getXDRField(entry, currFieldPath);
+                    auto field = getXDRFieldValidated(entry, currFieldPath);
                     REQUIRE(std::get<std::string>(*field) == code);
                 }
 
@@ -170,7 +179,7 @@ TEST_CASE("XDR field resolver", "[xdrquery]")
                 {
                     auto currFieldPath = fieldPath;
                     currFieldPath.push_back("issuer");
-                    auto field = getXDRField(entry, currFieldPath);
+                    auto field = getXDRFieldValidated(entry, currFieldPath);
                     REQUIRE(std::get<std::string>(*field) ==
                             "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
                             "AG6ELY");
@@ -202,7 +211,8 @@ TEST_CASE("XDR field resolver", "[xdrquery]")
                 entry.asset.type(ASSET_TYPE_POOL_SHARE);
                 entry.asset.liquidityPoolID()[0] = 1;
                 entry.asset.liquidityPoolID()[2] = 2;
-                auto field = getXDRField(entry, {"asset", "liquidityPoolID"});
+                auto field =
+                    getXDRFieldValidated(entry, {"asset", "liquidityPoolID"});
                 REQUIRE(std::get<std::string>(*field) ==
                         "010002000000000000000000000000000000000000000000000000"
                         "0000000000");
@@ -210,35 +220,49 @@ TEST_CASE("XDR field resolver", "[xdrquery]")
         }
     }
 
-    SECTION("non-matching paths return nullopt")
+    SECTION("non-matching union returns nullopt")
     {
-        SECTION("bad path")
-        {
-            auto field =
-                getXDRField(accountEntry, {"data", "account", "noSuchField"});
-            REQUIRE(!field);
-        }
-        SECTION("wrong union element")
-        {
-            auto field =
-                getXDRField(accountEntry, {"data", "trustLine", "accountID"});
-            REQUIRE(!field);
-        }
+        auto field = getXDRFieldValidated(accountEntry,
+                                          {"data", "trustLine", "accountID"});
+        REQUIRE(!field);
     }
 
     SECTION("bad paths throw exception")
     {
+        SECTION("incorrect leaf name")
+        {
+            REQUIRE_THROWS_AS(
+                getXDRFieldValidated(accountEntry,
+                                     {"data", "account", "noSuchField"}),
+                XDRQueryError);
+        }
+        SECTION("incorrect struct field name")
+        {
+            REQUIRE_THROWS_AS(
+                getXDRFieldValidated(accountEntry,
+                                     {"data2", "account", "balance"}),
+                XDRQueryError);
+        }
+        SECTION("incorrect union field name")
+        {
+            REQUIRE_THROWS_AS(
+                getXDRFieldValidated(accountEntry,
+                                     {"data", "account2", "balance"}),
+                XDRQueryError);
+        }
+
         SECTION("leaf field in the middle")
         {
             REQUIRE_THROWS_AS(
-                getXDRField(accountEntry,
-                            {"data", "account", "balance", "balance2"}),
+                getXDRFieldValidated(
+                    accountEntry, {"data", "account", "balance", "balance2"}),
                 XDRQueryError);
         }
         SECTION("non-leaf field in the end")
         {
-            REQUIRE_THROWS_AS(getXDRField(accountEntry, {"data", "account"}),
-                              XDRQueryError);
+            REQUIRE_THROWS_AS(
+                getXDRFieldValidated(accountEntry, {"data", "account"}),
+                XDRQueryError);
         }
     }
 }
@@ -248,6 +272,8 @@ TEST_CASE("XDR matcher", "[xdrquery]")
     std::vector<LedgerEntry> entries = {
         makeAccountEntry(100), makeAccountEntry(200), makeDataEntry("foo"),
         makeDataEntry("foobar")};
+    entries[1].data.account().inflationDest.reset();
+
     auto testMatches = [&](std::string const& query,
                            std::vector<bool> const& expectedMatches) {
         XDRMatcher matcher(query);
@@ -281,6 +307,14 @@ TEST_CASE("XDR matcher", "[xdrquery]")
                         {false, false, false, true});
             testMatches("data.data.dataName >= 'foo'",
                         {false, false, true, true});
+        }
+
+        SECTION("null")
+        {
+            testMatches("data.account.inflationDest == NULL",
+                        {false, true, false, false});
+            testMatches("NULL != data.account.inflationDest",
+                        {true, false, false, false});
         }
     }
 
@@ -349,6 +383,20 @@ TEST_CASE("XDR matcher", "[xdrquery]")
                               XDRQueryError);
             REQUIRE_THROWS_AS(runQuery("data.account == 'ACCOUNT'"),
                               XDRQueryError);
+            REQUIRE_THROWS_AS(runQuery("data.account.accountID2 == 'ACCOUNT'"),
+                              XDRQueryError);
+            REQUIRE_THROWS_AS(runQuery("data.account2.accountID == 'ACCOUNT'"),
+                              XDRQueryError);
+            REQUIRE_THROWS_AS(runQuery("data2.account.accountID == 'ACCOUNT'"),
+                              XDRQueryError);
+        }
+
+        SECTION("type mismatch")
+        {
+            REQUIRE_THROWS_AS(runQuery("data.type == 123"), XDRQueryError);
+            REQUIRE_THROWS_AS(runQuery("data.account == 123"), XDRQueryError);
+            REQUIRE_THROWS_AS(runQuery("data.account.balance == '123'"),
+                              XDRQueryError);
         }
 
         SECTION("int out of range")
@@ -358,6 +406,13 @@ TEST_CASE("XDR matcher", "[xdrquery]")
                 XDRQueryError);
             REQUIRE_THROWS_AS(
                 runQuery("5000000000 > data.account.numSubEntries"),
+                XDRQueryError);
+        }
+
+        SECTION("non-equality NULL comparison")
+        {
+            REQUIRE_THROWS_AS(
+                runQuery("data.account.inflationDest <= NULL"),
                 XDRQueryError);
         }
     }

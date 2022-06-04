@@ -14,14 +14,26 @@
 
 namespace xdrquery
 {
-using ResultValueType =
-    std::variant<bool, int32_t, uint32_t, int64_t, uint64_t, std::string>;
+
+struct NullFieldType
+{
+    bool operator==(NullFieldType other) const;
+    bool operator!=(NullFieldType other) const;
+    bool operator<(NullFieldType other) const;
+    bool operator<=(NullFieldType other) const;
+    bool operator>(NullFieldType other) const;
+    bool operator>=(NullFieldType other) const;
+
+  private:
+    bool operationNotSupported() const;
+};
+
+using ResultValueType = std::variant<NullFieldType, bool, int32_t, uint32_t,
+                                     int64_t, uint64_t, std::string>;
 using ResultType = std::optional<ResultValueType>;
 
 using FieldResolver =
     std::function<ResultType(std::vector<std::string> const&)>;
-
-char const NULL_LITERAL[] = "__NULL__";
 
 enum class EvalNodeType
 {
@@ -120,6 +132,8 @@ struct ComparisonNode : public BoolEvalNode
     EvalNodeType getType() const override;
 
   private:
+    bool compareNullFields(bool leftIsNull, bool rightIsNull) const;
+
     ComparisonNodeType mType;
     std::unique_ptr<EvalNode> mLeft;
     std::unique_ptr<EvalNode> mRight;
