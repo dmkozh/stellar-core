@@ -12,26 +12,36 @@
 #include <variant>
 #include <vector>
 
+// This is a simple engine for evaluating boolean expresions containing literals
+// and XDR fields.
 namespace xdrquery
 {
-
-struct NullFieldType
+// This type represents an optional XDR fields that is not set.
+struct NullField
 {
-    bool operator==(NullFieldType other) const;
-    bool operator!=(NullFieldType other) const;
-    bool operator<(NullFieldType other) const;
-    bool operator<=(NullFieldType other) const;
-    bool operator>(NullFieldType other) const;
-    bool operator>=(NullFieldType other) const;
+    bool operator==(NullField other) const;
+    bool operator!=(NullField other) const;
+    bool operator<(NullField other) const;
+    bool operator<=(NullField other) const;
+    bool operator>(NullField other) const;
+    bool operator>=(NullField other) const;
 
   private:
     bool operationNotSupported() const;
 };
 
-using ResultValueType = std::variant<NullFieldType, bool, int32_t, uint32_t,
+// All the possible intermediate expression result types that are defined
+// values.
+using ResultValueType = std::variant<NullField, bool, int32_t, uint32_t,
                                      int64_t, uint64_t, std::string>;
+
+// All the possible expression result types. When this is set to std::nullopt,
+// this represents an expression that cannot be meaningfully evaluated to either
+// `true` or `false`. Currently that's only set to std::nullopt for the cases
+// when an XDR union has an alternative selected that is not in the field path.
 using ResultType = std::optional<ResultValueType>;
 
+// A function that resolves the field path to an actual value.
 using FieldResolver =
     std::function<ResultType(std::vector<std::string> const&)>;
 
@@ -43,6 +53,7 @@ enum class EvalNodeType
     COMPARISON_OP
 };
 
+// Expression node that can be evaluated.
 struct EvalNode
 {
     virtual ResultType eval(FieldResolver const& fieldResolver) const = 0;
@@ -58,6 +69,7 @@ enum class LiteralNodeType
     NULL_LITERAL
 };
 
+// Node representing literal in the expression.
 struct LiteralNode : public EvalNode
 {
     LiteralNode(LiteralNodeType valueType, std::string const& val);
@@ -66,6 +78,9 @@ struct LiteralNode : public EvalNode
 
     EvalNodeType getType() const override;
 
+    // We only resolve integer literals when they're compared to XDR fields and
+    // for simplicity do that lazily via calling this function in eval(). Hence
+    // it has to be `const` and `mValue` has to be mutable.
     void resolveIntType(ResultValueType const& fieldValue,
                         std::vector<std::string> const& fieldPath) const;
 
@@ -73,6 +88,7 @@ struct LiteralNode : public EvalNode
     mutable ResultType mValue;
 };
 
+// Node representing an XDR field in expression.
 struct FieldNode : public EvalNode
 {
     FieldNode(std::string const& initField);
@@ -84,6 +100,7 @@ struct FieldNode : public EvalNode
     std::vector<std::string> mFieldPath;
 };
 
+// `EvalNode` that always has a `bool` evaluation result.
 struct BoolEvalNode : public EvalNode
 {
     ResultType eval(FieldResolver const& fieldResolver) const override;
@@ -97,6 +114,7 @@ enum class BoolOpNodeType
     OR
 };
 
+// Node for binary bool operations.
 struct BoolOpNode : public BoolEvalNode
 {
     BoolOpNode(BoolOpNodeType nodeType, std::unique_ptr<BoolEvalNode> left,
@@ -122,6 +140,7 @@ enum class ComparisonNodeType
     GE
 };
 
+// Node for comparing arbitrary values. Values have to have the same type.
 struct ComparisonNode : public BoolEvalNode
 {
     ComparisonNode(ComparisonNodeType nodeType, std::unique_ptr<EvalNode> left,

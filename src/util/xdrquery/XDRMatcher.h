@@ -11,7 +11,12 @@
 
 namespace xdrquery
 {
-
+// Helper to match multiple XDR messages of the same type using the provided
+// query.
+// Queries may consist of literals, XDR fields, comparisons and boolean
+// operations, e.g.
+// `data.account.balance >= 100000 || data.trustLine.balance < 5000`
+// See more examples in `XDRQueryTests`.
 class XDRMatcher
 {
   public:

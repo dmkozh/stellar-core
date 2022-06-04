@@ -130,7 +130,7 @@ TEST_CASE("XDR field resolver", "[xdrquery]")
         e.data.type(ACCOUNT);
         auto field =
             getXDRFieldValidated(e, {"data", "account", "inflationDest"});
-        REQUIRE(std::holds_alternative<NullFieldType>(*field));
+        REQUIRE(std::holds_alternative<NullField>(*field));
     }
 
     SECTION("public key field")

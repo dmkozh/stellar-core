@@ -8,11 +8,11 @@
 
 namespace fmt
 {
-template <> struct fmt::formatter<xdrquery::NullFieldType>
+template <> struct fmt::formatter<xdrquery::NullField>
 {
     template <typename FormatContext>
     auto
-    format(xdrquery::NullFieldType, FormatContext& ctx)
+    format(xdrquery::NullField, FormatContext& ctx)
     {
         return fmt::format_to(ctx.out(), "NULL");
     }
@@ -22,37 +22,37 @@ template <> struct fmt::formatter<xdrquery::NullFieldType>
 namespace xdrquery
 {
 bool
-NullFieldType::operator==(NullFieldType other) const
+NullField::operator==(NullField other) const
 {
     return operationNotSupported();
 }
 bool
-NullFieldType::operator!=(NullFieldType other) const
+NullField::operator!=(NullField other) const
 {
     return operationNotSupported();
 }
 bool
-NullFieldType::operator<(NullFieldType other) const
+NullField::operator<(NullField other) const
 {
     return operationNotSupported();
 }
 bool
-NullFieldType::operator<=(NullFieldType other) const
+NullField::operator<=(NullField other) const
 {
     return operationNotSupported();
 }
 bool
-NullFieldType::operator>(NullFieldType other) const
+NullField::operator>(NullField other) const
 {
     return operationNotSupported();
 }
 bool
-NullFieldType::operator>=(NullFieldType other) const
+NullField::operator>=(NullField other) const
 {
     return operationNotSupported();
 }
 bool
-NullFieldType::operationNotSupported() const
+NullField::operationNotSupported() const
 {
     throw std::runtime_error("Null fields should not be compared directly.");
     return false;
@@ -63,7 +63,7 @@ LiteralNode::LiteralNode(LiteralNodeType valueType, std::string const& val)
 {
     if (mType == LiteralNodeType::NULL_LITERAL)
     {
-        mValue = NullFieldType();
+        mValue = NullField();
     }
 }
 
@@ -182,12 +182,16 @@ ComparisonNode::ComparisonNode(ComparisonNodeType nodeType,
         {
         case ComparisonNodeType::LT:
             mType = ComparisonNodeType::GT;
+            break;
         case ComparisonNodeType::LE:
             mType = ComparisonNodeType::GE;
+            break;
         case ComparisonNodeType::GT:
             mType = ComparisonNodeType::LT;
+            break;
         case ComparisonNodeType::GE:
             mType = ComparisonNodeType::LE;
+            break;
         default:
             break;
         }
@@ -225,8 +229,8 @@ ComparisonNode::evalBool(FieldResolver const& fieldResolver) const
         return false;
     }
 
-    bool leftIsNull = std::holds_alternative<NullFieldType>(*leftVal);
-    bool rightIsNull = std::holds_alternative<NullFieldType>(*rightVal);
+    bool leftIsNull = std::holds_alternative<NullField>(*leftVal);
+    bool rightIsNull = std::holds_alternative<NullField>(*rightVal);
     if (leftIsNull || rightIsNull)
     {
         return compareNullFields(leftIsNull, rightIsNull);

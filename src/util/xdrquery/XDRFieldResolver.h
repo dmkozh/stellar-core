@@ -170,7 +170,7 @@ struct XDRFieldResolver
         {
             if (checkLeafField(fieldName))
             {
-                mResult = NullFieldType();
+                mResult = NullField();
                 return;
             }
             if (mValidate && matchFieldToPath(fieldName))
@@ -331,99 +331,20 @@ struct XDRFieldResolver
     bool mValidate = false;
 };
 
-struct XDRFieldValidator
-{
-    XDRFieldValidator(std::vector<std::string> const& fieldPath)
-        : mFieldPath(fieldPath), mPathIter(mFieldPath.cbegin())
-    {
-    }
-
-    bool
-    isValid() const
-    {
-        return mPathIter == mFieldPath.end();
-    }
-
-    template <typename T>
-    typename std::enable_if_t<xdr_traits<T>::is_union>
-    operator()(T const& t, char const* fieldName)
-    {
-        if (!matchFieldToPath(fieldName))
-        {
-            // Archive is first called with an empty 'virtual' XDR field
-            // representing the whole struct.
-            if (fieldName == nullptr && mPathIter == mFieldPath.begin())
-            {
-                xdr_traits<T>::save(*this, t);
-            }
-            return;
-        }
-        ++mPathIter;
-        // Call 'save' just to visit the XDR discriminant.
-        xdr_traits<T>::save(*this, t);
-        if (mPathIter == mFieldPath.end())
-        {
-            return;
-        }
-        for (auto const c : t._xdr_case_values())
-        {
-            auto unionFieldName = xdr_traits<T>::union_field_name(c);
-            if (unionFieldName == nullptr || unionFieldName != *mPathIter)
-            {
-                continue;
-            }
-            auto tCopy = t;
-            tCopy._xdr_discriminant(c, false);
-            tCopy._xdr_with_mem_ptr(field_archiver, c, *this, tCopy,
-                                    unionFieldName);
-            break;
-        }
-    }
-
-    template <typename T>
-    typename std::enable_if_t<!xdr_traits<T>::is_union &&
-                              xdr_traits<T>::is_class>
-    operator()(T const& t, char const* fieldName)
-    {
-        if (matchFieldToPath(fieldName) ||
-            (fieldName == nullptr && mPathIter == mFieldPath.begin()))
-        {
-            if (fieldName != nullptr)
-            {
-                ++mPathIter;
-            }
-            xdr_traits<T>::save(*this, t);
-            return;
-        }
-    }
-
-    // We consider everything that is not union or class to be leaf as we don't
-    // allow to expand container fields.
-    template <typename T>
-    typename std::enable_if_t<!xdr_traits<T>::is_union &&
-                              !xdr_traits<T>::is_class>
-    operator()(T const& t, char const* fieldName)
-    {
-        if (matchFieldToPath(fieldName))
-        {
-            ++mPathIter;
-            return;
-        }
-    }
-
-  private:
-    bool
-    matchFieldToPath(char const* fieldName) const
-    {
-        return fieldName != nullptr && mPathIter != mFieldPath.end() &&
-               *mPathIter == fieldName;
-    }
-
-    std::vector<std::string> const& mFieldPath;
-    std::vector<std::string>::const_iterator mPathIter;
-};
 } // namespace internal
 
+// Returns the value of the field in `xdrMessage` specified by `fieldPath`.
+// When path goes through a union option that is not selected, returns
+// std::nullopt.
+// When path ends with an optional field and the field is not set,
+// returns `NullField`.
+// Some types have special overrides, mostly consistent with XDR-to-JSON
+// representation:
+//   - enums are represented by strings
+//   - `AccountID` has a standard string representation ('GXYZ...')
+//   - Assets are simplified to {`assetCode`, `issuer`} struct (and
+//     `liquidityPoolID` for the pool shares)
+//   - Fixed size byte arrays are represented by the hex strings
 template <typename T>
 ResultType
 getXDRField(T const& xdrMessage, std::vector<std::string> const& fieldPath)
@@ -433,6 +354,8 @@ getXDRField(T const& xdrMessage, std::vector<std::string> const& fieldPath)
     return resolver.getResult();
 }
 
+// Like `getXDRField`, but throws XDRQueryError when path is not present in XDR
+// message (accounting for all the union variants and optional fields).
 template <typename T>
 ResultType
 getXDRFieldValidated(T const& xdrMessage,
@@ -463,14 +386,4 @@ template <> struct archive_adapter<xdrquery::internal::XDRFieldResolver>
     }
 };
 
-template <> struct archive_adapter<xdrquery::internal::XDRFieldValidator>
-{
-    template <typename T>
-    static void
-    apply(xdrquery::internal::XDRFieldValidator& ar, T&& t,
-          char const* fieldName)
-    {
-        ar(std::forward<T>(t), fieldName);
-    }
-};
 }
