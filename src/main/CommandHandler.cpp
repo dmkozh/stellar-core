@@ -892,6 +892,10 @@ CommandHandler::generateLoad(std::string const& params, std::string& retStr)
         cfg.spikeInterval = std::chrono::seconds(spikeIntervalInt);
         cfg.spikeSize =
             parseOptionalParamOrDefault<uint32_t>(map, "spikesize", 0);
+        cfg.maxGeneratedFeeRate =
+            parseOptionalParam<uint32_t>(map, "maxfeerate");
+        cfg.skipLowFeeTxs =
+            parseOptionalParamOrDefault<bool>(map, "skiplowfeetxs", false);
 
         if (cfg.batchSize > 100)
         {

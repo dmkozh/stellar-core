@@ -232,6 +232,7 @@ class TransactionQueue
 #ifdef BUILD_TESTS
   public:
     size_t getQueueSizeOps() const;
+    std::optional<int64_t> getInQueueSeqNum(AccountID const& account) const;
     std::function<void(TransactionFrameBasePtr&)> mTxBroadcastedEvent;
 #endif
 };
