@@ -256,7 +256,7 @@ class bulkUpsertConfigSettingsOperation
         throwIfNotConfigSetting(entry.data.type());
 
         mConfigSettingIDs.emplace_back(
-            entry.data.configSetting().configSettingID);
+            entry.data.configSetting().configSettingID());
         mConfigSettingEntries.emplace_back(toOpaqueBase64(entry));
         mLastModifieds.emplace_back(
             unsignedToSigned(entry.lastModifiedLedgerSeq));

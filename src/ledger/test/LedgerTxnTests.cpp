@@ -104,8 +104,8 @@ generateLedgerEntryWithSameKey(LedgerEntry const& leBase)
         case CONFIG_SETTING:
             le.data.configSetting() =
                 LedgerTestUtils::generateValidConfigSettingEntry();
-            le.data.configSetting().configSettingID =
-                leBase.data.configSetting().configSettingID;
+            le.data.configSetting().configSettingID(
+                leBase.data.configSetting().configSettingID());
             break;
         case CONTRACT_DATA:
             le.data.contractData() =
