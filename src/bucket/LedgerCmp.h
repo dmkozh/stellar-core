@@ -91,16 +91,14 @@ struct LedgerEntryIdCmp
                               b.contractData().key);
         case CONFIG_SETTING:
         {
-            auto getConfigSettingId = [](auto const& v) -> ConfigSettingID
-            {
+            auto getConfigSettingId = [](auto const& v) -> ConfigSettingID {
                 using ConfigT = decltype(v);
-                if constexpr
-                    (std::is_same_v<ConfigT, LedgerKey>)
-                    {
-                        return v.configSetting().configSettingID;
-                    }
-                else if constexpr
-                    (std::is_same_v<ConfigT, LedgerEntry::_data_t>)
+                if constexpr (std::is_same_v<ConfigT, LedgerKey const&>)
+                {
+                    return v.configSetting().configSettingID;
+                }
+                else if constexpr (std::is_same_v<ConfigT,
+                                                  LedgerEntry::_data_t const&>)
                 {
                     return v.configSetting().configSettingID();
                 }
