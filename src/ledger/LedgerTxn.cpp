@@ -2546,10 +2546,13 @@ BulkLedgerEntryChangeAccumulator::accumulate(EntryIterator const& iter)
         accum(iter, mContractDataToUpsert, mContractDataToDelete);
         break;
     case CONFIG_SETTING:
+    {
         // Configuration can not be deleted.
         releaseAssert(iter.entryExists());
-        accum(iter, mConfigSettingsToUpsert, std::vector<EntryIterator>{});
+        std::vector<EntryIterator> emptyEntries;
+        accum(iter, mConfigSettingsToUpsert, emptyEntries);
         break;
+    }
 #endif
     default:
         abort();

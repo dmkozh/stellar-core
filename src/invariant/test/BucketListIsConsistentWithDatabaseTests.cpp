@@ -150,11 +150,13 @@ struct BucketListGenerator
             auto index = dist(gRandomEngine);
             auto iter = live.begin();
             std::advance(iter, index);
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
             if (iter->type() == CONFIG_SETTING)
             {
                 // Configuration can not be deleted.
                 continue;
             }
+#endif
             dead.push_back(*iter);
             live.erase(iter);
         }
@@ -683,8 +685,7 @@ TEST_CASE("BucketListIsConsistentWithDatabase added entries",
 TEST_CASE("BucketListIsConsistentWithDatabase deleted entries",
           "[invariant][bucketlistconsistent][acceptance]")
 {
-    /*for (auto t : xdr::xdr_traits<LedgerEntryType>::enum_values())*/
-    for (auto t : {LedgerEntryType::CONFIG_SETTING})
+    for (auto t : xdr::xdr_traits<LedgerEntryType>::enum_values())
     {
         size_t nTests = 0;
         while (nTests < 10)

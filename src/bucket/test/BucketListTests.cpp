@@ -227,7 +227,8 @@ TEST_CASE_VERSIONS("bucket list shadowing pre/post proto 12",
             {
                 CLOG_DEBUG(Bucket, "Added batch {}, hash={}", i,
                            binToHex(bl.getHash()));
-                // Alice and bob should be in either curr or snap of level 0 and
+                // Alice and bob should be in either curr or snap of level 0
+                // and
                 // 1
                 for (uint32_t j = 0; j < 2; ++j)
                 {
@@ -244,8 +245,8 @@ TEST_CASE_VERSIONS("bucket list shadowing pre/post proto 12",
                     CHECK(hasBob);
                 }
 
-                // Alice and Bob should never occur in level 2 .. N because they
-                // were shadowed in level 0 continuously.
+                // Alice and Bob should never occur in level 2 .. N because
+                // they were shadowed in level 0 continuously.
                 for (uint32_t j = 2; j < BucketList::kNumLevels; ++j)
                 {
                     auto const& lev = bl.getLevel(j);
@@ -266,8 +267,9 @@ TEST_CASE_VERSIONS("bucket list shadowing pre/post proto 12",
                         CHECK(!hasBob);
                     }
                     // On the last iteration, when bucket list population is
-                    // complete, ensure that post-FIRST_PROTOCOL_SHADOWS_REMOVED
-                    // Alice and Bob appear on lower levels unshadowed.
+                    // complete, ensure that
+                    // post-FIRST_PROTOCOL_SHADOWS_REMOVED Alice and Bob
+                    // appear on lower levels unshadowed.
                     else if (i == totalNumEntries)
                     {
                         CHECK(hasAlice);
@@ -329,7 +331,7 @@ TEST_CASE_VERSIONS("bucket tombstones expire at bottom level",
                 auto n = mergeTimer.count();
                 bl.addBatch(
                     *app, j, getAppLedgerVersion(app), {},
-                    LedgerTestUtils::generateValidLedgerEntries(8),
+                    LedgerTestUtils::generateValidUniqueLedgerEntries(8),
                     LedgerTestUtils::generateValidLedgerEntryKeysWithExclusions(
                         {
 #ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
@@ -390,6 +392,10 @@ TEST_CASE_VERSIONS("bucket tombstones mutually-annihilate init entries",
             std::vector<LedgerKey> deadEntries;
             for (auto const& e : initEntries)
             {
+                entriesToModify.push_back(e);
+            }
+            while (entriesToModify.size() > 100)
+            {
                 LedgerEntry e = entriesToModify.front();
                 entriesToModify.pop_front();
                 if (flip()
@@ -434,9 +440,9 @@ TEST_CASE_VERSIONS("bucket tombstones mutually-annihilate init entries",
                     cfg.LEDGER_PROTOCOL_VERSION,
                     Bucket::FIRST_PROTOCOL_SUPPORTING_INITENTRY_AND_METAENTRY))
             {
-                // init/dead pairs should mutually-annihilate pretty readily as
-                // they go, empirically this test peaks at buckets around 400
-                // entries.
+                // init/dead pairs should mutually-annihilate pretty readily
+                // as they go, empirically this test peaks at buckets around
+                // 400 entries.
                 REQUIRE((currSz + snapSz) < 500);
             }
             CLOG_INFO(Bucket, "Level {} size: {}", k, (currSz + snapSz));
