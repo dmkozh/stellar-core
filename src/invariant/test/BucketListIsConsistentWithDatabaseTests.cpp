@@ -705,9 +705,9 @@ TEST_CASE("BucketListIsConsistentWithDatabase deleted entries",
             }
             else
 #endif
-            REQUIRE_THROWS_AS(
-                blg.applyBuckets<ApplyBucketsWorkDeleteEntry>(*blg.mSelected),
-                InvariantDoesNotHold);
+                REQUIRE_THROWS_AS(blg.applyBuckets<ApplyBucketsWorkDeleteEntry>(
+                                      *blg.mSelected),
+                                  InvariantDoesNotHold);
             ++nTests;
         }
     }

@@ -74,8 +74,8 @@ TEST_CASE("sponsorship invariant", "[invariant][sponsorshipcountisvalid]")
             break;
         case LIQUIDITY_POOL:
 #ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
-        case CONTRACT_DATA:            
-        case CONFIG_SETTING:            
+        case CONTRACT_DATA:
+        case CONFIG_SETTING:
 #endif
         default:
             abort();

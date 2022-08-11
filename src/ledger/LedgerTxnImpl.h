@@ -153,7 +153,7 @@ class BulkLedgerEntryChangeAccumulator
     getConfigSettingsToUpsert()
     {
         return mConfigSettingsToUpsert;
-    }    
+    }
 
     std::vector<EntryIterator>&
     getContractDataToUpsert()

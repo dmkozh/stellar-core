@@ -313,7 +313,7 @@ makeValid(LiquidityPoolEntry& lp)
 #ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
 void
 makeValid(ConfigSettingEntry& ce)
-{    
+{
     auto ids = xdr::xdr_traits<ConfigSettingID>::enum_values();
     ce.configSettingID(static_cast<ConfigSettingID>(
         ids.at(ce.configSettingID() % ids.size())));
