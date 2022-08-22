@@ -28,6 +28,7 @@ class PersistentState
         kRebuildLedger,
         kLastSCPDataXDR,
         kTxSet,
+        kConfigUpgradeSet,
         kLastEntry,
     };
 

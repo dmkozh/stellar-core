@@ -711,9 +711,8 @@ LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData)
     for (size_t i = 0; i < sv.upgrades.size(); i++)
     {
         LedgerUpgrade lupgrade;
-        auto valid = Upgrades::isValidForApply(
-            sv.upgrades[i], lupgrade, ltx.loadHeader().current(),
-            mApp.getConfig().LEDGER_PROTOCOL_VERSION);
+        auto valid = Upgrades::isValidForApply(sv.upgrades[i], lupgrade, mApp,
+                                               ltx.loadHeader().current());
         switch (valid)
         {
         case Upgrades::UpgradeValidity::VALID:
@@ -730,7 +729,7 @@ LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData)
         try
         {
             LedgerTxn ltxUpgrade(ltx);
-            Upgrades::applyTo(lupgrade, ltxUpgrade);
+            Upgrades::applyTo(lupgrade, mApp, ltxUpgrade);
 
             auto ledgerSeq = ltxUpgrade.loadHeader().current().ledgerSeq;
             LedgerEntryChanges changes = ltxUpgrade.getChanges();
