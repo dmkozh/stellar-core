@@ -49,4 +49,6 @@ bool protocolVersionEquals(uint32_t protocolVersion,
 
 constexpr ProtocolVersion GENERALIZED_TX_SET_PROTOCOL_VERSION =
     ProtocolVersion::V_20;
+constexpr ProtocolVersion CONFIGURATION_IN_LEDGER_PROTOCOL_VERSION =
+    ProtocolVersion::V_20;
 }

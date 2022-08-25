@@ -110,6 +110,7 @@ class ApplicationImpl : public Application
                               uint32_t spikeSize) override;
 
     virtual LoadGenerator& getLoadGenerator() override;
+    void resetState() override;
 #endif
 
     virtual void applyCfgCommands() override;
