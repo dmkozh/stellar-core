@@ -110,7 +110,7 @@ Upgrades::UpgradeParameters::toDebugJson() const
 {
     Json::Value upgradesJson;
     Json::Reader reader;
-    reader.parse(toJson(), upgradesJson);    
+    reader.parse(toJson(), upgradesJson);
 
 #ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
     if (mConfigUpgradeSet != nullptr)
@@ -343,8 +343,7 @@ Upgrades::toString() const
     std::stringstream r;
     bool first = true;
 
-    auto maybePrintUpgradeTime = [&]()
-    {
+    auto maybePrintUpgradeTime = [&]() {
         if (first)
         {
             r << fmt::format(
@@ -1222,8 +1221,7 @@ ConfigUpgradeSetFrame::isValidXDR(ConfigUpgradeSet const& upgradeSetXDR) const
 {
     if (upgradeSetXDR.updatedEntry.empty())
     {
-        CLOG_DEBUG(Herder,
-                   "Got bad configUpgradeSet {}: no entries updated",
+        CLOG_DEBUG(Herder, "Got bad configUpgradeSet {}: no entries updated",
                    hexAbbrev(mHash));
         return false;
     }
