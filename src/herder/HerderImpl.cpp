@@ -1142,8 +1142,8 @@ HerderImpl::triggerNextLedger(uint32_t ledgerSeqToTrigger,
     auto newUpgrades = emptyUpgradeSteps;
 
     // see if we need to include some upgrades
-    auto upgrades = mUpgrades.createUpgradesFor(
-        lcl.header, LedgerTxn(mApp.getLedgerTxnRoot()));
+    LedgerTxn ltx(mApp.getLedgerTxnRoot());
+    auto upgrades = mUpgrades.createUpgradesFor(lcl.header, ltx);
     for (auto const& upgrade : upgrades)
     {
         Value v(xdr::xdr_to_opaque(upgrade));

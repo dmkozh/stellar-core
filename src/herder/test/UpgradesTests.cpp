@@ -275,12 +275,11 @@ testListUpgrades(VirtualClock::system_time_point preferredUpgradeDatetime,
         makeTxCountUpgrade(cfg.TESTING_UPGRADE_MAX_TX_SET_SIZE);
     auto baseReserveUpgrade =
         makeBaseReserveUpgrade(cfg.TESTING_UPGRADE_RESERVE);
-
+    LedgerTxn ltx(app->getLedgerTxnRoot());
     SECTION("protocol version upgrade needed")
     {
         header.ledgerVersion--;
-        auto upgrades = Upgrades{cfg}.createUpgradesFor(
-            header, LedgerTxn(app->getLedgerTxnRoot()));
+        auto upgrades = Upgrades{cfg}.createUpgradesFor(header, ltx);
         auto expected = shouldListAny
                             ? std::vector<LedgerUpgrade>{protocolVersionUpgrade}
                             : std::vector<LedgerUpgrade>{};
@@ -290,8 +289,7 @@ testListUpgrades(VirtualClock::system_time_point preferredUpgradeDatetime,
     SECTION("base fee upgrade needed")
     {
         header.baseFee /= 2;
-        auto upgrades = Upgrades{cfg}.createUpgradesFor(
-            header, LedgerTxn(app->getLedgerTxnRoot()));
+        auto upgrades = Upgrades{cfg}.createUpgradesFor(header, ltx);
         auto expected = shouldListAny
                             ? std::vector<LedgerUpgrade>{baseFeeUpgrade}
                             : std::vector<LedgerUpgrade>{};
@@ -301,8 +299,7 @@ testListUpgrades(VirtualClock::system_time_point preferredUpgradeDatetime,
     SECTION("tx count upgrade needed")
     {
         header.maxTxSetSize /= 2;
-        auto upgrades = Upgrades{cfg}.createUpgradesFor(
-            header, LedgerTxn(app->getLedgerTxnRoot()));
+        auto upgrades = Upgrades{cfg}.createUpgradesFor(header, ltx);
         auto expected = shouldListAny
                             ? std::vector<LedgerUpgrade>{txCountUpgrade}
                             : std::vector<LedgerUpgrade>{};
@@ -312,8 +309,7 @@ testListUpgrades(VirtualClock::system_time_point preferredUpgradeDatetime,
     SECTION("base reserve upgrade needed")
     {
         header.baseReserve /= 2;
-        auto upgrades = Upgrades{cfg}.createUpgradesFor(
-            header, LedgerTxn(app->getLedgerTxnRoot()));
+        auto upgrades = Upgrades{cfg}.createUpgradesFor(header, ltx);
         auto expected = shouldListAny
                             ? std::vector<LedgerUpgrade>{baseReserveUpgrade}
                             : std::vector<LedgerUpgrade>{};
@@ -326,8 +322,7 @@ testListUpgrades(VirtualClock::system_time_point preferredUpgradeDatetime,
         header.baseFee /= 2;
         header.maxTxSetSize /= 2;
         header.baseReserve /= 2;
-        auto upgrades = Upgrades{cfg}.createUpgradesFor(
-            header, LedgerTxn(app->getLedgerTxnRoot()));
+        auto upgrades = Upgrades{cfg}.createUpgradesFor(header, ltx);
         auto expected =
             shouldListAny
                 ? std::vector<LedgerUpgrade>{protocolVersionUpgrade,
