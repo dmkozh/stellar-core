@@ -73,7 +73,6 @@ class BulkLedgerEntryChangeAccumulator
     std::vector<EntryIterator> mContractDataToUpsert;
     std::vector<EntryIterator> mContractDataToDelete;
     std::vector<EntryIterator> mConfigSettingsToUpsert;
-    std::vector<EntryIterator> mConfigSettingsToDelete;
 #endif
 
   public:
@@ -154,12 +153,6 @@ class BulkLedgerEntryChangeAccumulator
     getConfigSettingsToUpsert()
     {
         return mConfigSettingsToUpsert;
-    }
-
-    std::vector<EntryIterator>&
-    getConfigSettingsToDelete()
-    {
-        return mConfigSettingsToDelete;
     }
 
     std::vector<EntryIterator>&
@@ -377,6 +370,7 @@ class LedgerTxn::Impl
     void throwIfChild() const;
     void throwIfSealed() const;
     void throwIfNotExactConsistency() const;
+    void throwIfErasingConfig(InternalLedgerKey const& key) const;
 
     // getDeltaVotes has the basic exception safety guarantee. If it throws an
     // exception, then
@@ -788,8 +782,6 @@ class LedgerTxnRoot::Impl
     void bulkDeleteContractData(std::vector<EntryIterator> const& entries,
                                 LedgerTxnConsistency cons);
     void bulkUpsertConfigSettings(std::vector<EntryIterator> const& entries);
-    void bulkDeleteConfigSettings(std::vector<EntryIterator> const& entries,
-                                  LedgerTxnConsistency cons);
 #endif
 
     static std::string tableFromLedgerEntryType(LedgerEntryType let);
