@@ -150,6 +150,13 @@ struct BucketListGenerator
             auto index = dist(gRandomEngine);
             auto iter = live.begin();
             std::advance(iter, index);
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+            if (iter->type() == CONFIG_SETTING)
+            {
+                // Configuration can not be deleted.
+                continue;
+            }
+#endif
             dead.push_back(*iter);
             live.erase(iter);
         }
@@ -456,7 +463,7 @@ class ApplyBucketsWorkModifyEntry : public ApplyBucketsWork
         entry.data.configSetting() =
             LedgerTestUtils::generateValidConfigSettingEntry(5);
 
-        entry.data.configSetting().configSettingID = cfg.configSettingID;
+        entry.data.configSetting().configSettingID(cfg.configSettingID());
     }
 
     void
@@ -641,9 +648,20 @@ TEST_CASE("BucketListIsConsistentWithDatabase added entries",
             if (!withFilter)
             {
                 auto filter = [](auto) { return true; };
-                REQUIRE_THROWS_AS(
-                    blg.applyBuckets<ApplyBucketsWorkAddEntry>(filter, le),
-                    InvariantDoesNotHold);
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+                if (le.data.type() == CONFIG_SETTING)
+                {
+                    // Config settings would have a duplicate key due to low key
+                    // space.
+                    REQUIRE_THROWS_AS(
+                        blg.applyBuckets<ApplyBucketsWorkAddEntry>(filter, le),
+                        std::runtime_error);
+                }
+                else
+#endif
+                    REQUIRE_THROWS_AS(
+                        blg.applyBuckets<ApplyBucketsWorkAddEntry>(filter, le),
+                        InvariantDoesNotHold);
             }
             else
             {
@@ -678,9 +696,19 @@ TEST_CASE("BucketListIsConsistentWithDatabase deleted entries",
             {
                 continue;
             }
-            REQUIRE_THROWS_AS(
-                blg.applyBuckets<ApplyBucketsWorkDeleteEntry>(*blg.mSelected),
-                InvariantDoesNotHold);
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+            if (t == CONFIG_SETTING)
+            {
+                // Configuration can not be deleted.
+                REQUIRE_THROWS_AS(blg.applyBuckets<ApplyBucketsWorkDeleteEntry>(
+                                      *blg.mSelected),
+                                  std::runtime_error);
+            }
+            else
+#endif
+                REQUIRE_THROWS_AS(blg.applyBuckets<ApplyBucketsWorkDeleteEntry>(
+                                      *blg.mSelected),
+                                  InvariantDoesNotHold);
             ++nTests;
         }
     }
@@ -700,9 +728,19 @@ TEST_CASE("BucketListIsConsistentWithDatabase modified entries",
             {
                 continue;
             }
-            REQUIRE_THROWS_AS(
-                blg.applyBuckets<ApplyBucketsWorkModifyEntry>(*blg.mSelected),
-                InvariantDoesNotHold);
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+            if (t == CONFIG_SETTING)
+            {
+                // Configuration can not be deleted.
+                REQUIRE_THROWS_AS(blg.applyBuckets<ApplyBucketsWorkDeleteEntry>(
+                                      *blg.mSelected),
+                                  std::runtime_error);
+            }
+            else
+#endif
+                REQUIRE_THROWS_AS(blg.applyBuckets<ApplyBucketsWorkDeleteEntry>(
+                                      *blg.mSelected),
+                                  InvariantDoesNotHold);
             ++nTests;
         }
     }
@@ -830,6 +868,13 @@ TEST_CASE("BucketListIsConsistentWithDatabase merged LIVEENTRY and DEADENTRY",
     testutil::BucketListDepthModifier bldm(3);
     for (auto t : xdr::xdr_traits<LedgerEntryType>::enum_values())
     {
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+        if (t == CONFIG_SETTING)
+        {
+            // Merge logic is not applicable to configuration.
+            continue;
+        }
+#endif
         uint32_t nTests = 0;
         while (nTests < 5)
         {
