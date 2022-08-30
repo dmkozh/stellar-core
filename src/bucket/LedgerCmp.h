@@ -4,6 +4,8 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
+#include <type_traits>
+
 #include "overlay/StellarXDR.h"
 #include "util/XDROperators.h"
 
@@ -88,8 +90,22 @@ struct LedgerEntryIdCmp
                               b.contractData().contractID, a.contractData().key,
                               b.contractData().key);
         case CONFIG_SETTING:
-            return a.configSetting().configSettingID <
-                   b.configSetting().configSettingID;
+        {
+            auto getConfigSettingId = [](auto const& v) -> ConfigSettingID {
+                using ConfigT = decltype(v);
+                if constexpr (std::is_same_v<ConfigT, LedgerKey const&>)
+                {
+                    return v.configSetting().configSettingID;
+                }
+                else if constexpr (std::is_same_v<ConfigT,
+                                                  LedgerEntry::_data_t const&>)
+                {
+                    return v.configSetting().configSettingID();
+                }
+                throw std::runtime_error("Unexpected entry type");
+            };
+            return getConfigSettingId(a) < getConfigSettingId(b);
+        }
 #endif
         }
         return false;
