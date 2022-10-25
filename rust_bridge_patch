@@ -1,0 +1,63 @@
+7d6
+< #include <cstring>
+733a733,739
+> namespace repr {
+> struct PtrLen final {
+>   void *ptr;
+>   ::std::size_t len;
+> };
+> } // namespace repr
+> 
+743a750,757
+> 
+> class Fail final {
+>   ::rust::repr::PtrLen &throw$;
+> public:
+>   Fail(::rust::repr::PtrLen &throw$) noexcept : throw$(throw$) {}
+>   void operator()(const char *) noexcept;
+>   void operator()(const std::string &) noexcept;
+> };
+762,768d775
+< namespace repr {
+< struct PtrLen final {
+<   void *ptr;
+<   ::std::size_t len;
+< };
+< } // namespace repr
+< 
+806,809d812
+< extern "C" {
+< const char *cxxbridge1$exception(const char *, ::std::size_t);
+< } // extern "C"
+< 
+908c911
+< ::rust::repr::PtrLen stellar$rust_bridge$cxxbridge1$invoke_host_function(const ::CxxBuf &hf_buf, const ::CxxBuf &args, const ::CxxBuf &footprint, const ::CxxBuf &source_account, ::CxxLedgerInfo *ledger_info, const ::rust::Vec<::CxxBuf> &ledger_entries, ::InvokeHostFunctionOutput *return$) noexcept;
+---
+> ::rust::repr::PtrLen stellar$rust_bridge$cxxbridge1$invoke_host_function(const ::CxxBuf &hf_buf, const ::CxxBuf &footprint, const ::CxxBuf &source_account, ::CxxLedgerInfo *ledger_info, const ::rust::Vec<::CxxBuf> &ledger_entries, ::InvokeHostFunctionOutput *return$) noexcept;
+910c913
+< ::rust::repr::PtrLen stellar$rust_bridge$cxxbridge1$preflight_host_function(const ::std::vector<::std::uint8_t> &hf_buf, const ::std::vector<::std::uint8_t> &args, const ::std::vector<::std::uint8_t> &source_account, ::CxxLedgerInfo *ledger_info, ::stellar::PreflightCallbacks *cb, ::PreflightHostFunctionOutput *return$) noexcept;
+---
+> ::rust::repr::PtrLen stellar$rust_bridge$cxxbridge1$preflight_host_function(const ::std::vector<::std::uint8_t> &hf_buf, const ::std::vector<::std::uint8_t> &source_account, ::CxxLedgerInfo *ledger_info, ::stellar::PreflightCallbacks *cb, ::PreflightHostFunctionOutput *return$) noexcept;
+958,961c961
+<       [&](const char *catch$) noexcept {
+<         throw$.len = ::std::strlen(catch$);
+<         throw$.ptr = const_cast<char *>(::cxxbridge1$exception(catch$, throw$.len));
+<       });
+---
+>       ::rust::detail::Fail(throw$));
+981c981
+< ::InvokeHostFunctionOutput invoke_host_function(const ::CxxBuf &hf_buf, const ::CxxBuf &args, const ::CxxBuf &footprint, const ::CxxBuf &source_account, ::CxxLedgerInfo ledger_info, const ::rust::Vec<::CxxBuf> &ledger_entries) {
+---
+> ::InvokeHostFunctionOutput invoke_host_function(const ::CxxBuf &hf_buf, const ::CxxBuf &footprint, const ::CxxBuf &source_account, ::CxxLedgerInfo ledger_info, const ::rust::Vec<::CxxBuf> &ledger_entries) {
+984c984
+<   ::rust::repr::PtrLen error$ = stellar$rust_bridge$cxxbridge1$invoke_host_function(hf_buf, args, footprint, source_account, &ledger_info$.value, ledger_entries, &return$.value);
+---
+>   ::rust::repr::PtrLen error$ = stellar$rust_bridge$cxxbridge1$invoke_host_function(hf_buf, footprint, source_account, &ledger_info$.value, ledger_entries, &return$.value);
+991c991
+< ::PreflightHostFunctionOutput preflight_host_function(const ::std::vector<::std::uint8_t> &hf_buf, const ::std::vector<::std::uint8_t> &args, const ::std::vector<::std::uint8_t> &source_account, ::CxxLedgerInfo ledger_info, ::std::unique_ptr<::stellar::PreflightCallbacks> cb) {
+---
+> ::PreflightHostFunctionOutput preflight_host_function(const ::std::vector<::std::uint8_t> &hf_buf, const ::std::vector<::std::uint8_t> &source_account, ::CxxLedgerInfo ledger_info, ::std::unique_ptr<::stellar::PreflightCallbacks> cb) {
+994c994
+<   ::rust::repr::PtrLen error$ = stellar$rust_bridge$cxxbridge1$preflight_host_function(hf_buf, args, source_account, &ledger_info$.value, cb.release(), &return$.value);
+---
+>   ::rust::repr::PtrLen error$ = stellar$rust_bridge$cxxbridge1$preflight_host_function(hf_buf, source_account, &ledger_info$.value, cb.release(), &return$.value);
