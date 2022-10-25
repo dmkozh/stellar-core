@@ -471,6 +471,18 @@ class ApplyBucketsWorkModifyEntry : public ApplyBucketsWork
         entry.data.contractData().key = cd.key;
     }
 
+    
+    void
+    modifyContractCodeEntry(LedgerEntry& entry)
+    {
+        ContractCodeEntry const& cc = mEntry.data.contractCode();
+        entry.lastModifiedLedgerSeq = mEntry.lastModifiedLedgerSeq;
+        entry.data.contractCode() =
+            LedgerTestUtils::generateValidContractCodeEntry(5);
+
+        entry.data.contractCode().hash = cc.hash;
+    }
+
 #endif
 
   public:
@@ -521,6 +533,9 @@ class ApplyBucketsWorkModifyEntry : public ApplyBucketsWork
                     break;
                 case CONTRACT_DATA:
                     modifyContractDataEntry(entry.current());
+                    break;
+                case CONTRACT_CODE:
+                    modifyContractCodeEntry(entry.current());
                     break;
 #endif
                 default:
@@ -670,7 +685,7 @@ TEST_CASE("BucketListIsConsistentWithDatabase deleted entries",
     for (auto t : xdr::xdr_traits<LedgerEntryType>::enum_values())
     {
         size_t nTests = 0;
-        while (nTests < 10)
+        while (nTests < 2)
         {
             SelectBucketListGenerator blg(100, static_cast<LedgerEntryType>(t));
             blg.generateLedgers(100);

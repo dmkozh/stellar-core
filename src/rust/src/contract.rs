@@ -20,8 +20,8 @@ use soroban_env_host::{
     xdr,
     xdr::{
         AccountId, HostFunction, LedgerEntry, LedgerEntryData, LedgerFootprint, LedgerKey,
-        LedgerKeyAccount, LedgerKeyContractData, LedgerKeyTrustLine, ReadXdr,
-        ScHostContextErrorCode, ScUnknownErrorCode, WriteXdr, XDR_FILES_SHA256,
+        LedgerKeyAccount, LedgerKeyContractCode, LedgerKeyContractData, LedgerKeyTrustLine,
+        ReadXdr, ScHostContextErrorCode, ScUnknownErrorCode, WriteXdr, XDR_FILES_SHA256,
     },
     Host, HostError, LedgerInfo, MeteredOrdMap,
 };
@@ -109,7 +109,10 @@ fn populate_access_map(
 ) -> Result<(), CoreHostError> {
     for lk in keys {
         match lk {
-            LedgerKey::Account(_) | LedgerKey::Trustline(_) | LedgerKey::ContractData(_) => (),
+            LedgerKey::Account(_)
+            | LedgerKey::Trustline(_)
+            | LedgerKey::ContractData(_)
+            | LedgerKey::ContractCode(_) => (),
             _ => return Err(CoreHostError::General("unexpected ledger entry type")),
         };
         access.insert(Box::new(lk), ty.clone())?;
@@ -147,6 +150,9 @@ fn ledger_entry_to_ledger_key(le: &LedgerEntry) -> Result<LedgerKey, CoreHostErr
         LedgerEntryData::ContractData(cd) => Ok(LedgerKey::ContractData(LedgerKeyContractData {
             contract_id: cd.contract_id.clone(),
             key: cd.key.clone(),
+        })),
+        LedgerEntryData::ContractCode(code) => Ok(LedgerKey::ContractCode(LedgerKeyContractCode {
+            hash: code.hash.clone(),
         })),
         _ => Err(CoreHostError::General("unexpected ledger key")),
     }
@@ -389,12 +395,7 @@ pub(crate) fn preflight_host_function(
     cb: UniquePtr<PreflightCallbacks>,
 ) -> Result<PreflightHostFunctionOutput, Box<dyn Error>> {
     let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-        preflight_host_function_or_maybe_panic(
-            hf_buf,
-            source_account_buf,
-            ledger_info,
-            cb,
-        )
+        preflight_host_function_or_maybe_panic(hf_buf, source_account_buf, ledger_info, cb)
     }));
     match res {
         Err(_) => Err(CoreHostError::General("contract host panicked").into()),

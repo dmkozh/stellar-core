@@ -78,6 +78,7 @@ class InMemoryLedgerTxnRoot : public AbstractLedgerTxnParent
     void dropLiquidityPools() override;
 #ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
     void dropContractData() override;
+    void dropContractCode() override;
     void dropConfigSettings() override;
 #endif
     double getPrefetchHitRate() const override;

@@ -1303,6 +1303,9 @@
     <ClCompile Include="..\..\src\invariant\test\LedgerEntryIsValidTests.cpp">
       <Filter>invariant\tests</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\ledger\LedgerTxnContractCodeSQL.cpp">
+      <Filter>ledger</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\lib\util\cpptoml.h">
