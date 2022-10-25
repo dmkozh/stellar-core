@@ -21,7 +21,7 @@ use soroban_env_host::{
     xdr::{
         AccountId, HostFunction, LedgerEntry, LedgerEntryData, LedgerFootprint, LedgerKey,
         LedgerKeyAccount, LedgerKeyContractData, LedgerKeyTrustLine, ReadXdr,
-        ScHostContextErrorCode, ScUnknownErrorCode, ScVec, WriteXdr, XDR_FILES_SHA256,
+        ScHostContextErrorCode, ScUnknownErrorCode, WriteXdr, XDR_FILES_SHA256,
     },
     Host, HostError, LedgerInfo, MeteredOrdMap,
 };
@@ -221,15 +221,14 @@ fn log_debug_events(events: &Events) {
     }
 }
 
-/// Deserializes an [`xdr::HostFunction`] host function identifier, an [`xdr::ScVec`] XDR object of
-/// arguments, an [`xdr::Footprint`] and a sequence of [`xdr::LedgerEntry`] entries containing all
-/// the data the invocation intends to read. Then calls the host function with the specified
-/// arguments, discards the [`xdr::ScVal`] return value, and returns the [`ReadWrite`] ledger
-/// entries in serialized form. Ledger entries not returned have been deleted.
-
+/// Deserializes an [`xdr::HostFunction`] host function XDR object an
+/// [`xdr::Footprint`] and a sequence of [`xdr::LedgerEntry`] entries containing all
+/// the data the invocation intends to read. Then calls the specified host function
+/// and returns the [`InvokeHostFunctionOutput`] that contains the host function
+/// result, events and modified ledger entries. Ledger entries not returned have
+/// been deleted.
 pub(crate) fn invoke_host_function(
     hf_buf: &CxxBuf,
-    args_buf: &CxxBuf,
     footprint_buf: &CxxBuf,
     source_account_buf: &CxxBuf,
     ledger_info: CxxLedgerInfo,
@@ -238,7 +237,6 @@ pub(crate) fn invoke_host_function(
     let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
         invoke_host_function_or_maybe_panic(
             hf_buf,
-            args_buf,
             footprint_buf,
             source_account_buf,
             ledger_info,
@@ -253,7 +251,6 @@ pub(crate) fn invoke_host_function(
 
 fn invoke_host_function_or_maybe_panic(
     hf_buf: &CxxBuf,
-    args_buf: &CxxBuf,
     footprint_buf: &CxxBuf,
     source_account_buf: &CxxBuf,
     ledger_info: CxxLedgerInfo,
@@ -261,7 +258,6 @@ fn invoke_host_function_or_maybe_panic(
 ) -> Result<InvokeHostFunctionOutput, Box<dyn Error>> {
     let budget = Budget::default();
     let hf = xdr_from_cxx_buf::<HostFunction>(&hf_buf)?;
-    let args = xdr_from_cxx_buf::<ScVec>(&args_buf)?;
     let source_account = xdr_from_cxx_buf::<AccountId>(&source_account_buf)?;
 
     let footprint = build_storage_footprint_from_xdr(budget.clone(), footprint_buf)?;
@@ -278,7 +274,7 @@ fn invoke_host_function_or_maybe_panic(
         "invoking host function '{}'",
         HostFunction::name(&hf)
     );
-    let res = host.invoke_function(hf, args);
+    let res = host.invoke_function(hf);
     let (storage, budget, events) = host
         .try_finish()
         .map_err(|_h| CoreHostError::General("could not finalize host"))?;
@@ -388,7 +384,6 @@ fn storage_footprint_to_ledger_footprint(
 
 pub(crate) fn preflight_host_function(
     hf_buf: &CxxVector<u8>,
-    args_buf: &CxxVector<u8>,
     source_account_buf: &CxxVector<u8>,
     ledger_info: CxxLedgerInfo,
     cb: UniquePtr<PreflightCallbacks>,
@@ -396,7 +391,6 @@ pub(crate) fn preflight_host_function(
     let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
         preflight_host_function_or_maybe_panic(
             hf_buf,
-            args_buf,
             source_account_buf,
             ledger_info,
             cb,
@@ -410,13 +404,11 @@ pub(crate) fn preflight_host_function(
 
 fn preflight_host_function_or_maybe_panic(
     hf_buf: &CxxVector<u8>,
-    args_buf: &CxxVector<u8>,
     source_account_buf: &CxxVector<u8>,
     ledger_info: CxxLedgerInfo,
     cb: UniquePtr<PreflightCallbacks>,
 ) -> Result<PreflightHostFunctionOutput, Box<dyn Error>> {
     let hf = xdr_from_slice::<HostFunction>(hf_buf.as_slice())?;
-    let args = xdr_from_slice::<ScVec>(args_buf.as_slice())?;
     let source_account = xdr_from_slice::<AccountId>(source_account_buf.as_slice())?;
     let pfc = Rc::new(Pfc(RefCell::new(None), RefCell::new(cb)));
     let src: Rc<dyn SnapshotSource> = pfc.clone() as Rc<dyn SnapshotSource>;
@@ -439,7 +431,7 @@ fn preflight_host_function_or_maybe_panic(
     *pfc.0.try_borrow_mut()? = Some(host.clone());
 
     // Run the preflight.
-    let res = host.invoke_function(hf, args);
+    let res = host.invoke_function(hf);
 
     // Break cyclical ownership between Pfc and Host.
     *pfc.0.try_borrow_mut()? = None;
