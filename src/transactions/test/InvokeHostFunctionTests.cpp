@@ -485,10 +485,13 @@ TEST_CASE("non-refundable resource metering", "[tx][soroban]")
         // This will compute soroban fees
         REQUIRE(rootTX->checkValid(*app, ltx, 0, 0, 0));
 
-        auto actualFeePair = std::dynamic_pointer_cast<TransactionFrame>(rootTX)
-                                 ->getSorobanResourceFee();
-        REQUIRE(actualFeePair);
-        REQUIRE(expectedNonRefundableFee == actualFeePair->non_refundable_fee);
+        auto actualFeePair =
+            std::dynamic_pointer_cast<TransactionFrame>(rootTX)
+                ->computePreApplySorobanResourceFee(
+                    ltx.loadHeader().current().ledgerVersion,
+                    app->getLedgerManager().getSorobanNetworkConfig(ltx),
+                    app->getConfig());
+        REQUIRE(expectedNonRefundableFee == actualFeePair.non_refundable_fee);
 
         auto inclusionFee = getMinInclusionFee(*rootTX, ltx.getHeader());
 
@@ -790,8 +793,8 @@ TEST_CASE("basic contract invocation", "[tx][soroban]")
                             changesAfter[0].state().data.account().balance ==
                         resourceFee - nonRefundableResourceFee);
                 }
-                // The account should receive a full refund for metadata
-                // in case of tx failure.
+                // The account should receive a full refund in case of tx
+                // failure.
                 REQUIRE(root.getBalance() - balanceAfterFeeCharged ==
                         resourceFee - nonRefundableResourceFee);
             }

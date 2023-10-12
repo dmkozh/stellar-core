@@ -2430,9 +2430,10 @@ TEST_CASE("remove applied", "[herder][transactionqueue]")
         auto ledgerSeq = lcl.header.ledgerSeq + 1;
 
         root.loadSequenceNumber();
-        auto txSet = TxSetFrame::makeFromTransactions({tx1b, tx2}, *app, 0, 0);
+        auto [txSet, resolvedTxSet] =
+            TxSetFrame::makeFromTransactions({tx1b, tx2}, *app, 0, 0);
         herder.getPendingEnvelopes().putTxSet(txSet->getContentsHash(),
-                                              ledgerSeq, txSet);
+                                              ledgerSeq, txSet, resolvedTxSet);
 
         auto lastCloseTime = lcl.header.scpValue.closeTime;
         StellarValue sv = herder.makeStellarValue(
