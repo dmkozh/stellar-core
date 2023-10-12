@@ -526,10 +526,15 @@ closeLedgerOn(Application& app, uint32 ledgerSeq, TimePoint closeTime,
     }
     if (!strictOrder)
     {
+        ResolvedTxSetFrame const* resolvedTxSet = nullptr;
+        {
+            LedgerTxn ltx(app.getLedgerTxnRoot());
+            resolvedTxSet = txSet->resolve(app, ltx);
+        }
         // `strictOrder` means the txs in the txSet will be applied in the exact
         // same order as they were constructed. It could also imply the txs
         // themselves maybe intentionally invalid for testing purpose.
-        REQUIRE(txSet->checkValid(app, 0, 0));
+        REQUIRE(resolvedTxSet->checkValid(app, 0, 0));
     }
     app.getHerder().externalizeValue(txSet, ledgerSeq, closeTime,
                                      emptyUpgradeSteps);

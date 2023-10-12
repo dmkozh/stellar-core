@@ -3,6 +3,8 @@
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
 #include "herder/test/TestTxSetUtils.h"
+#include "ledger/LedgerTxn.h"
+#include "main/Application.h"
 #include "util/ProtocolVersion.h"
 
 #include <map>
@@ -67,7 +69,11 @@ makeNonValidatedTxSet(std::vector<TransactionFrameBasePtr> const& txs,
                       Application& app, Hash const& previousLedgerHash)
 {
     auto xdrTxSet = makeTxSetXDR(txs, previousLedgerHash);
-    return TxSetFrame::makeFromWire(app, xdrTxSet);
+    LedgerTxn ltx(app.getLedgerTxnRoot(), false,
+                  TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
+    auto out = TxSetFrame::makeFromWire(xdrTxSet);
+    releaseAssert(out->resolve(app, ltx));
+    return out;
 }
 } // namespace
 
@@ -77,7 +83,11 @@ makeNonValidatedGeneralizedTxSet(
     Hash const& previousLedgerHash)
 {
     auto xdrTxSet = makeGeneralizedTxSetXDR(txsPerBaseFee, previousLedgerHash);
-    return TxSetFrame::makeFromWire(app, xdrTxSet);
+    LedgerTxn ltx(app.getLedgerTxnRoot(), false,
+                  TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
+    auto out = TxSetFrame::makeFromWire(xdrTxSet);
+    releaseAssert(out->resolve(app, ltx));
+    return out;
 }
 
 TxSetFrameConstPtr

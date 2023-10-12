@@ -561,19 +561,12 @@ HerderSCPDriver::stopTimer(uint64 slotIndex, int timerID)
 // returns true if l < r
 // lh, rh are the hashes of l,h
 static bool
-compareTxSets(TxSetFrameConstPtr l, TxSetFrameConstPtr r, Hash const& lh,
-              Hash const& rh, LedgerHeader const& header, Hash const& s)
+compareTxSets(ResolvedTxSetFrame const& l, ResolvedTxSetFrame const& r,
+              Hash const& lh, Hash const& rh, LedgerHeader const& header,
+              Hash const& s)
 {
-    if (l == nullptr)
-    {
-        return r != nullptr;
-    }
-    if (r == nullptr)
-    {
-        return false;
-    }
-    auto lSize = l->size(header);
-    auto rSize = r->size(header);
+    auto lSize = l.size(header);
+    auto rSize = r.size(header);
     if (lSize != rSize)
     {
         return lSize < rSize;
@@ -581,8 +574,8 @@ compareTxSets(TxSetFrameConstPtr l, TxSetFrameConstPtr r, Hash const& lh,
     if (protocolVersionStartsFrom(header.ledgerVersion,
                                   SOROBAN_PROTOCOL_VERSION))
     {
-        auto lBids = l->getTotalInclusionFees();
-        auto rBids = r->getTotalInclusionFees();
+        auto lBids = l.getTotalInclusionFees();
+        auto rBids = r.getTotalInclusionFees();
         if (lBids != rBids)
         {
             return lBids < rBids;
@@ -590,8 +583,8 @@ compareTxSets(TxSetFrameConstPtr l, TxSetFrameConstPtr r, Hash const& lh,
     }
     if (protocolVersionStartsFrom(header.ledgerVersion, ProtocolVersion::V_11))
     {
-        auto lFee = l->getTotalFees(header);
-        auto rFee = r->getTotalFees(header);
+        auto lFee = l.getTotalFees(header);
+        auto rFee = r.getTotalFees(header);
         if (lFee != rFee)
         {
             return lFee < rFee;
@@ -600,8 +593,8 @@ compareTxSets(TxSetFrameConstPtr l, TxSetFrameConstPtr r, Hash const& lh,
     if (protocolVersionStartsFrom(header.ledgerVersion,
                                   SOROBAN_PROTOCOL_VERSION))
     {
-        auto lEncodedSize = l->encodedSize();
-        auto rEncodedSize = r->encodedSize();
+        auto lEncodedSize = l.encodedSize();
+        auto rEncodedSize = r.encodedSize();
         if (lEncodedSize != rEncodedSize)
         {
             // Look for the smallest encoded size.
@@ -707,22 +700,33 @@ HerderSCPDriver::combineCandidates(uint64_t slotIndex,
     StellarValue comp;
     // take the txSet with the biggest size, highest xored hash that we have
     {
+        LedgerTxn ltx(mApp.getLedgerTxnRoot(), false,
+                      TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
         auto highest = candidateValues.cend();
-        TxSetFrameConstPtr highestTxSet;
+        ResolvedTxSetFrame const* highestTxSet = nullptr;
         for (auto it = candidateValues.cbegin(); it != candidateValues.cend();
              ++it)
         {
             auto const& sv = *it;
             auto const cTxSet = mPendingEnvelopes.getTxSet(sv.txSetHash);
-            if (cTxSet && cTxSet->previousLedgerHash() == lcl.hash &&
-                (!highestTxSet ||
-                 compareTxSets(highestTxSet, cTxSet, highest->txSetHash,
-                               sv.txSetHash, lcl.header, candidatesHash)))
+            if (cTxSet && cTxSet->previousLedgerHash() == lcl.hash)
             {
-                highest = it;
-                highestTxSet = cTxSet;
+
+                auto resolvedCandidate = cTxSet->resolve(mApp, ltx);
+                if (!resolvedCandidate)
+                {
+                    continue;
+                }
+                if (!highestTxSet ||
+                    compareTxSets(*highestTxSet, *resolvedCandidate,
+                                  highest->txSetHash, sv.txSetHash, lcl.header,
+                                  candidatesHash))
+                {
+                    highest = it;
+                    highestTxSet = resolvedCandidate;
+                }
             }
-        };
+        }
         if (highest == candidateValues.cend())
         {
             throw std::runtime_error(
@@ -1220,7 +1224,27 @@ HerderSCPDriver::checkAndCacheTxSetValid(TxSetFrameConstPtr txSet,
     bool* pRes = mTxSetValidCache.maybeGet(key);
     if (pRes == nullptr)
     {
-        bool res = txSet->checkValid(mApp, closeTimeOffset, closeTimeOffset);
+        bool res = false;
+        // The invariant here is that we only validate tx sets nominated
+        // to be applied to the current ledger state. However, in case
+        // if we receive a bad SCP value for the current state, we still
+        // might end up with malformed tx set that doesn't refer to the
+        // LCL.
+        if (txSet->previousLedgerHash() ==
+            mApp.getLedgerManager().getLastClosedLedgerHeader().hash)
+        {
+            ResolvedTxSetFrame const* resolvedTxSet = nullptr;
+            {
+                LedgerTxn ltx(mApp.getLedgerTxnRoot(), false,
+                              TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
+                resolvedTxSet = txSet->resolve(mApp, ltx);
+            }
+
+            res = resolvedTxSet != nullptr &&
+                  resolvedTxSet->checkValid(mApp, closeTimeOffset,
+                                            closeTimeOffset);
+        }
+
         mTxSetValidCache.put(key, res);
         return res;
     }

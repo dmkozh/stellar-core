@@ -3168,11 +3168,14 @@ TEST_CASE("upgrade to generalized tx set in network", "[upgrades][overlay]")
     {
         for (auto const& node : simulation->getNodes())
         {
+            LedgerTxn ltx(node->getLedgerTxnRoot(), false,
+                          TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
             auto txSet = getLedgerTxSet(*node, ledger);
-            REQUIRE(txSet);
-            REQUIRE(txSet->sizeTxTotal() > 0);
+            auto resolvedTxSet = txSet->resolve(*node, ltx);
+            REQUIRE(resolvedTxSet);
+            REQUIRE(resolvedTxSet->sizeTxTotal() > 0);
             bool isGeneralized = ledger > *upgradeLedger;
-            REQUIRE(txSet->isGeneralizedTxSet() == isGeneralized);
+            REQUIRE(resolvedTxSet->isGeneralizedTxSet() == isGeneralized);
         }
     }
 }

@@ -33,19 +33,19 @@ TEST_CASE("generalized tx set XDR validation", "[txset]")
     GeneralizedTransactionSet xdrTxSet(1);
     xdrTxSet.v1TxSet().previousLedgerHash =
         app->getLedgerManager().getLastClosedLedgerHeader().hash;
-
+    LedgerTxn ltx(app->getLedgerTxnRoot());
     SECTION("no phases")
     {
-        auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-        REQUIRE(!txSet->checkValidStructure());
+        auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+        REQUIRE(txSet->resolve(*app, ltx) == nullptr);
     }
     SECTION("too many phases")
     {
         xdrTxSet.v1TxSet().phases.emplace_back();
         xdrTxSet.v1TxSet().phases.emplace_back();
         xdrTxSet.v1TxSet().phases.emplace_back();
-        auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-        REQUIRE(!txSet->checkValidStructure());
+        auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+        REQUIRE(txSet->resolve(*app, ltx) == nullptr);
     }
     SECTION("incorrect base fee order")
     {
@@ -103,8 +103,8 @@ TEST_CASE("generalized tx set XDR validation", "[txset]")
                         .txsMaybeDiscountedFee()
                         .txs.emplace_back();
 
-                    auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-                    REQUIRE(!txSet->checkValidStructure());
+                    auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+                    REQUIRE(txSet->resolve(*app, ltx) == nullptr);
                 }
                 SECTION("non-discounted component out of place")
                 {
@@ -142,8 +142,8 @@ TEST_CASE("generalized tx set XDR validation", "[txset]")
                     xdrTxSet.v1TxSet().phases[i].v0Components().emplace_back(
                         TXSET_COMP_TXS_MAYBE_DISCOUNTED_FEE);
 
-                    auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-                    REQUIRE(!txSet->checkValidStructure());
+                    auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+                    REQUIRE(txSet->resolve(*app, ltx) == nullptr);
                 }
                 SECTION(
                     "with non-discounted component, discounted out of place")
@@ -187,8 +187,8 @@ TEST_CASE("generalized tx set XDR validation", "[txset]")
                         .txsMaybeDiscountedFee()
                         .txs.emplace_back();
 
-                    auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-                    REQUIRE(!txSet->checkValidStructure());
+                    auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+                    REQUIRE(txSet->resolve(*app, ltx) == nullptr);
                 }
             }
         }
@@ -257,8 +257,8 @@ TEST_CASE("generalized tx set XDR validation", "[txset]")
                         .txsMaybeDiscountedFee()
                         .txs.emplace_back();
 
-                    auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-                    REQUIRE(!txSet->checkValidStructure());
+                    auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+                    REQUIRE(txSet->resolve(*app, ltx) == nullptr);
                 }
                 SECTION("duplicate non-discounted components")
                 {
@@ -296,8 +296,8 @@ TEST_CASE("generalized tx set XDR validation", "[txset]")
                         .txsMaybeDiscountedFee()
                         .txs.emplace_back();
 
-                    auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-                    REQUIRE(!txSet->checkValidStructure());
+                    auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+                    REQUIRE(txSet->resolve(*app, ltx) == nullptr);
                 }
             }
         }
@@ -314,8 +314,8 @@ TEST_CASE("generalized tx set XDR validation", "[txset]")
                 xdrTxSet.v1TxSet().phases[i].v0Components().emplace_back(
                     TXSET_COMP_TXS_MAYBE_DISCOUNTED_FEE);
 
-                auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-                REQUIRE(!txSet->checkValidStructure());
+                auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+                REQUIRE(txSet->resolve(*app, ltx) == nullptr);
             }
         }
     }
@@ -355,8 +355,8 @@ TEST_CASE("generalized tx set XDR validation", "[txset]")
             txEnv.v0().tx.operations.emplace_back();
             txEnv.v0().tx.operations.back().body.type(INVOKE_HOST_FUNCTION);
         }
-        auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-        REQUIRE(!txSet->checkValidStructure());
+        auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+        REQUIRE(txSet->resolve(*app, ltx) == nullptr);
     }
     SECTION("valid XDR")
     {
@@ -384,8 +384,8 @@ TEST_CASE("generalized tx set XDR validation", "[txset]")
                 {
                     xdrTxSet.v1TxSet().phases.emplace_back();
                     xdrTxSet.v1TxSet().phases.emplace_back();
-                    auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-                    REQUIRE(txSet->checkValidStructure());
+                    auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+                    REQUIRE(txSet->resolve(*app, ltx) == nullptr);
                 }
                 SECTION("single component")
                 {
@@ -400,8 +400,8 @@ TEST_CASE("generalized tx set XDR validation", "[txset]")
                         .txsMaybeDiscountedFee()
                         .txs.emplace_back();
                     maybeAddSorobanOp(xdrTxSet);
-                    auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-                    REQUIRE(txSet->checkValidStructure());
+                    auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+                    REQUIRE(txSet->resolve(*app, ltx) == nullptr);
                 }
                 SECTION("multiple components")
                 {
@@ -465,8 +465,8 @@ TEST_CASE("generalized tx set XDR validation", "[txset]")
                         .txs.emplace_back();
                     maybeAddSorobanOp(xdrTxSet);
 
-                    auto txSet = TxSetFrame::makeFromWire(*app, xdrTxSet);
-                    REQUIRE(txSet->checkValidStructure());
+                    auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
+                    REQUIRE(txSet->resolve(*app, ltx) == nullptr);
                 }
             }
         }
@@ -517,10 +517,16 @@ TEST_CASE("generalized tx set XDR conversion", "[txset]")
     };
 
     auto checkXdrRoundtrip = [&](GeneralizedTransactionSet const& txSetXdr) {
-        auto frame = TxSetFrame::makeFromWire(*app, txSetXdr);
-        REQUIRE(frame->checkValid(*app, 0, 0));
+        auto txSetFrame = TxSetFrame::makeFromWire(txSetXdr);
+        ResolvedTxSetFrame const* resolvedFrame = nullptr;
+        {
+            LedgerTxn ltx(app->getLedgerTxnRoot(), false,
+                          TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
+            resolvedFrame = txSetFrame->resolve(*app, ltx);
+        }
+        REQUIRE(resolvedFrame->checkValid(*app, 0, 0));
         GeneralizedTransactionSet newXdr;
-        frame->toXDR(newXdr);
+        txSetFrame->toXDR(newXdr);
         REQUIRE(newXdr == txSetXdr);
     };
 
@@ -753,7 +759,7 @@ TEST_CASE("generalized tx set with multiple txs per source account",
              {}},
             *app, app->getLedgerManager().getLastClosedLedgerHeader().hash);
 
-        REQUIRE(!txSet->checkValid(*app, 0, 0));
+        REQUIRE(!txSet->getResolvedFrame()->checkValid(*app, 0, 0));
     }
     SECTION("valid")
     {
@@ -765,7 +771,7 @@ TEST_CASE("generalized tx set with multiple txs per source account",
              {}},
             *app, app->getLedgerManager().getLastClosedLedgerHeader().hash);
 
-        REQUIRE(txSet->checkValid(*app, 0, 0));
+        REQUIRE(txSet->getResolvedFrame()->checkValid(*app, 0, 0));
     }
     SECTION("invalid, classic and soroban")
     {
@@ -789,7 +795,7 @@ TEST_CASE("generalized tx set with multiple txs per source account",
                              std::vector<TransactionFrameBasePtr>{sorobanTx})}},
             *app, app->getLedgerManager().getLastClosedLedgerHeader().hash);
 
-        REQUIRE(!txSet->checkValid(*app, 0, 0));
+        REQUIRE(!txSet->getResolvedFrame()->checkValid(*app, 0, 0));
     }
 }
 
@@ -810,7 +816,8 @@ TEST_CASE("generalized tx set fees", "[txset][soroban]")
     auto root = TestAccount::createRoot(*app);
     int accountId = 1;
 
-    auto createTx = [&](int opCnt, int inclusionFee, bool isSoroban = false) {
+    auto createTx = [&](int opCnt, int inclusionFee, bool isSoroban = false,
+                        bool validateTx = true) {
         auto source = root.create("unique " + std::to_string(accountId++),
                                   app->getLedgerManager().getLastMinBalance(2));
         if (isSoroban)
@@ -827,7 +834,10 @@ TEST_CASE("generalized tx set fees", "[txset][soroban]")
                                          resourceFee, resources);
             REQUIRE(tx->getInclusionFee() == inclusionFee);
             LedgerTxn ltx(app->getLedgerTxnRoot());
-            REQUIRE(tx->checkValid(*app, ltx, 0, 0, 0));
+            if (validateTx)
+            {
+                REQUIRE(tx->checkValid(*app, ltx, 0, 0, 0));
+            }
             return tx;
         }
         else
@@ -872,17 +882,17 @@ TEST_CASE("generalized tx set fees", "[txset][soroban]")
                                  createTx(1, 20000, /* isSoroban */ true)})}},
             *app, app->getLedgerManager().getLastClosedLedgerHeader().hash);
 
-        REQUIRE(txSet->checkValid(*app, 0, 0));
+        REQUIRE(txSet->getResolvedFrame()->checkValid(*app, 0, 0));
         for (int i = 0; i < TxSetFrame::Phase::PHASE_COUNT; ++i)
         {
             std::vector<std::optional<int64_t>> fees;
-            for (auto const& tx :
-                 txSet->getTxsForPhase(static_cast<TxSetFrame::Phase>(i)))
+            for (auto const& tx : txSet->getResolvedFrame()->getTxsForPhase(
+                     static_cast<TxSetFrame::Phase>(i)))
             {
-                fees.push_back(
-                    txSet->getTxBaseFee(tx, app->getLedgerManager()
-                                                .getLastClosedLedgerHeader()
-                                                .header));
+                fees.push_back(txSet->getResolvedFrame()->getTxBaseFee(
+                    tx, app->getLedgerManager()
+                            .getLastClosedLedgerHeader()
+                            .header));
             }
             std::sort(fees.begin(), fees.end());
             REQUIRE(fees == std::vector<std::optional<int64_t>>{
@@ -901,7 +911,7 @@ TEST_CASE("generalized tx set fees", "[txset][soroban]")
                  {}},
                 *app, app->getLedgerManager().getLastClosedLedgerHeader().hash);
 
-            REQUIRE(!txSet->checkValid(*app, 0, 0));
+            REQUIRE(!txSet->getResolvedFrame()->checkValid(*app, 0, 0));
         }
         SECTION("soroban")
         {
@@ -912,7 +922,7 @@ TEST_CASE("generalized tx set fees", "[txset][soroban]")
                                      createTx(1, 499, /* isSoroban */ true)})}},
                 *app, app->getLedgerManager().getLastClosedLedgerHeader().hash);
 
-            REQUIRE(!txSet->checkValid(*app, 0, 0));
+            REQUIRE(!txSet->getResolvedFrame()->checkValid(*app, 0, 0));
         }
     }
 
@@ -927,18 +937,18 @@ TEST_CASE("generalized tx set fees", "[txset][soroban]")
                  {}},
                 *app, app->getLedgerManager().getLastClosedLedgerHeader().hash);
 
-            REQUIRE(!txSet->checkValid(*app, 0, 0));
+            REQUIRE(!txSet->getResolvedFrame()->checkValid(*app, 0, 0));
         }
         SECTION("soroban")
         {
             auto txSet = testtxset::makeNonValidatedGeneralizedTxSet(
                 {{},
-                 {std::make_pair(
-                     std::nullopt,
-                     std::vector<TransactionFrameBasePtr>{createTx(1, 199)})}},
+                 {std::make_pair(std::nullopt,
+                                 std::vector<TransactionFrameBasePtr>{
+                                     createTx(1, 99, true, false)})}},
                 *app, app->getLedgerManager().getLastClosedLedgerHeader().hash);
 
-            REQUIRE(!txSet->checkValid(*app, 0, 0));
+            REQUIRE(!txSet->getResolvedFrame()->checkValid(*app, 0, 0));
         }
     }
 }

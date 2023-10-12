@@ -67,7 +67,7 @@ TEST_CASE("txset - correct apply order", "[tx][envelope]")
     auto txSet = TxSetFrame::makeFromTransactions(
         TxSetFrame::Transactions{tx1, tx2}, *app, 0, 0);
 
-    auto txs = txSet->getTxsInApplyOrder();
+    auto txs = txSet->getResolvedFrame()->getTxsInApplyOrder();
     REQUIRE(txs.size() == 2);
     // Sort for apply re-orders transaction set based on the contents hash
     if (lessThanXored(tx1->getFullHash(), tx2->getFullHash(),

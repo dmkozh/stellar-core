@@ -1022,10 +1022,12 @@ TEST_CASE("Catchup non-initentry buckets to initentry-supporting works",
                 auto v = xdr::xdr_to_opaque(ledgerUpgrade);
                 upgrades.push_back(UpgradeType{v.begin(), v.end()});
             }
-            CLOG_DEBUG(
-                History, "Closing synthetic ledger {} with {} txs (txhash:{})",
-                ledgerSeq, txSet->size(lm.getLastClosedLedgerHeader().header),
-                hexAbbrev(txSet->getContentsHash()));
+            CLOG_DEBUG(History,
+                       "Closing synthetic ledger {} with {} txs (txhash:{})",
+                       ledgerSeq,
+                       txSet->getResolvedFrame()->size(
+                           lm.getLastClosedLedgerHeader().header),
+                       hexAbbrev(txSet->getContentsHash()));
             StellarValue sv = a->getHerder().makeStellarValue(
                 txSet->getContentsHash(), closeTime, upgrades,
                 a->getConfig().NODE_SEED);
