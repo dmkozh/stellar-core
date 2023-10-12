@@ -92,9 +92,5 @@ class TransactionFrameBase
     virtual SorobanResources const& sorobanResources() const = 0;
     virtual xdr::xvector<DiagnosticEvent> const&
     getDiagnosticEvents() const = 0;
-    virtual void
-    maybeComputeSorobanResourceFee(uint32_t protocolVersion,
-                                   SorobanNetworkConfig const& sorobanConfig,
-                                   Config const& cfg) = 0;
 };
 }

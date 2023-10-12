@@ -181,36 +181,43 @@ PendingEnvelopes::updateMetrics()
 }
 
 TxSetFrameConstPtr
-PendingEnvelopes::putTxSet(Hash const& hash, uint64 slot,
-                           TxSetFrameConstPtr txset)
+PendingEnvelopes::putTxSet(
+    Hash const& hash, uint64 slot, TxSetFrameConstPtr txset,
+    std::optional<ResolvedTxSetFrameConstPtr> resolvedTxSet)
 {
     auto res = getKnownTxSet(hash, slot, true);
-    if (!res)
+    if (!res.first || (resolvedTxSet && !res.second))
     {
-        res = txset;
+        res = std::make_pair(txset, resolvedTxSet);
         mKnownTxSets[hash] = res;
         mTxSetCache.put(hash, std::make_pair(slot, res));
     }
-    return res;
+    return res.first;
 }
 
 // tries to find a txset in memory, setting touch also touches the LRU,
 // extending the lifetime of the result *and* updating the slot number
 // to a greater value if needed
-TxSetFrameConstPtr
+PendingEnvelopes::TxSetFramePair
 PendingEnvelopes::getKnownTxSet(Hash const& hash, uint64 slot, bool touch)
 {
     // slot is only used when `touch` is set
     releaseAssert(touch || (slot == 0));
-    TxSetFrameConstPtr res;
+    TxSetFramePair res;
     auto it = mKnownTxSets.find(hash);
     if (it != mKnownTxSets.end())
     {
-        res = it->second.lock();
+        auto const& [txSet, maybeResolvedTxSet] = it->second;
+
+        res.first = txSet.lock();
+        if (maybeResolvedTxSet)
+        {
+            res.second = maybeResolvedTxSet->lock();
+        }
     }
 
     // refresh the cache for this key
-    if (res && touch)
+    if (res.first && touch)
     {
         bool update = true;
         if (mTxSetCache.exists(hash))
@@ -227,13 +234,14 @@ PendingEnvelopes::getKnownTxSet(Hash const& hash, uint64 slot, bool touch)
 }
 
 void
-PendingEnvelopes::addTxSet(Hash const& hash, uint64 lastSeenSlotIndex,
-                           TxSetFrameConstPtr txset)
+PendingEnvelopes::addTxSet(
+    Hash const& hash, uint64 lastSeenSlotIndex, TxSetFrameConstPtr txset,
+    std::optional<ResolvedTxSetFrameConstPtr> resolvedTxSet)
 {
     ZoneScoped;
     CLOG_TRACE(Herder, "Add TxSet {}", hexAbbrev(hash));
 
-    putTxSet(hash, lastSeenSlotIndex, txset);
+    putTxSet(hash, lastSeenSlotIndex, txset, resolvedTxSet);
     mTxSetFetcher.recv(hash, mFetchTxSetTimer);
 }
 
@@ -440,7 +448,7 @@ PendingEnvelopes::cleanKnownData()
     auto it2 = mKnownTxSets.begin();
     while (it2 != mKnownTxSets.end())
     {
-        if (it2->second.expired())
+        if (it2->second.first.expired())
         {
             it2 = mKnownTxSets.erase(it2);
         }
@@ -561,7 +569,7 @@ PendingEnvelopes::isFullyFetched(SCPEnvelope const& envelope)
     auto txSetHashes = getTxSetHashes(envelope);
     return std::all_of(std::begin(txSetHashes), std::end(txSetHashes),
                        [&](Hash const& txSetHash) {
-                           return getKnownTxSet(txSetHash, 0, false);
+                           return getKnownTxSet(txSetHash, 0, false).first;
                        });
 }
 
@@ -580,7 +588,7 @@ PendingEnvelopes::startFetch(SCPEnvelope const& envelope)
 
     for (auto const& h2 : getTxSetHashes(envelope))
     {
-        if (!getKnownTxSet(h2, 0, false))
+        if (!getKnownTxSet(h2, 0, false).first)
         {
             mTxSetFetcher.fetch(h2, envelope);
             needSomething = true;
@@ -684,7 +692,7 @@ PendingEnvelopes::eraseBelow(uint64 slotIndex, uint64 slotToKeep)
 
     // 0 is special mark for data that we do not know the slot index
     // it is used for state loaded from database
-    mTxSetCache.erase_if([&](TxSetFramCacheItem const& i) {
+    mTxSetCache.erase_if([&](TxSetFrameCacheItem const& i) {
         return i.first != 0 && i.first < slotIndex && i.first != slotToKeep;
     });
 
@@ -724,6 +732,12 @@ PendingEnvelopes::forceRebuildQuorum()
 
 TxSetFrameConstPtr
 PendingEnvelopes::getTxSet(Hash const& hash)
+{
+    return getKnownTxSet(hash, 0, false).first;
+}
+
+std::pair<TxSetFrameConstPtr, std::optional<ResolvedTxSetFrameConstPtr>>
+PendingEnvelopes::getMaybeResolvedTxSet(Hash const& hash)
 {
     return getKnownTxSet(hash, 0, false);
 }
