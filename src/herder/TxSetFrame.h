@@ -53,7 +53,8 @@ using TxSetFrameConstPtr = std::shared_ptr<TxSetFrame const>;
 // 1->2/3 transition is not reversible, i.e. after `TxSetFrame` has been
 // resolved at the correct LCL, its resolved-only functionality can be used
 // at any time (e.g. for accessing the view methods).
-class TxSetFrame : public NonMovableOrCopyable
+class TxSetFrame : public NonMovableOrCopyable,
+                   public std::enable_shared_from_this<TxSetFrame>
 {
   public:
     enum Phase
@@ -281,6 +282,8 @@ class ResolvedTxSetFrame
                        TxSetFrame::TxPhases const& txs);
     ResolvedTxSetFrame(bool isGeneralized, Hash const& previousLedgerHash,
                        TxSetFrame::TxPhases const& txs);
+    ResolvedTxSetFrame(ResolvedTxSetFrame const& other) = default;
+    ResolvedTxSetFrame(ResolvedTxSetFrame&& other) = default;
     // Computes the fees for transactions in this set based on information from
     // the non-generalized tx set.
     // This has to be `const` in combination with `mutable` fee-related fields
@@ -334,7 +337,7 @@ class ResolvedTxSetFrame
                                std::optional<int64_t>>
         mTxBaseInclusionFeeSoroban;
 
-    TxSetFrame const* mTxSetFrame = nullptr;
+    std::weak_ptr<TxSetFrame const> mParentTxSetFrame{};
 #ifdef BUILD_TESTS
     mutable std::optional<TxSetFrame::Transactions> mApplyOrderOverride;
 #endif

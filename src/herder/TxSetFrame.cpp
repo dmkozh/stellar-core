@@ -252,17 +252,17 @@ TxSetFrame::makeFromTransactions(TxSetFrame::TxPhases const& txPhases,
 
         auto& invalid = invalidTxs[i];
 #ifdef BUILD_TESTS
-        if (!skipValidation)
+        if (skipValidation)
+        {
+            validatedPhases.emplace_back(txs);
+        }
+        else
         {
 #endif
             validatedPhases.emplace_back(
                 TxSetUtils::trimInvalid(txs, app, lowerBoundCloseTimeOffset,
                                         upperBoundCloseTimeOffset, invalid));
 #ifdef BUILD_TESTS
-        }
-        else
-        {
-            validatedPhases.emplace_back(txs);
         }
 #endif
     }
@@ -277,7 +277,7 @@ TxSetFrame::makeFromTransactions(TxSetFrame::TxPhases const& txPhases,
 #ifdef BUILD_TESTS
     if (skipValidation)
     {
-        resolvedTxSet.mTxSetFrame = outputTxSet.get();
+        resolvedTxSet.mParentTxSetFrame = outputTxSet;
         outputTxSet->mResolvedTxSet = std::unique_ptr<ResolvedTxSetFrame>(
             new ResolvedTxSetFrame(resolvedTxSet));
         return outputTxSet;
@@ -470,7 +470,10 @@ TxSetFrame::resolve(Application& app, AbstractLedgerTxn& ltx) const
         }
         mResolvedTxSet = std::make_optional(std::move(txSet));
     }
-    (*mResolvedTxSet)->mTxSetFrame = this;
+    // NB: `TxSetFrame` is only owned externally as
+    // `std::shared_ptr<TxSetFrame const>`, thus it's safe to use
+    // `weak_from_this`.
+    (*mResolvedTxSet)->mParentTxSetFrame = weak_from_this();
     return mResolvedTxSet->get();
 }
 
@@ -661,8 +664,9 @@ ResolvedTxSetFrame::ResolvedTxSetFrame(
 Hash const&
 ResolvedTxSetFrame::getContentsHash() const
 {
-    releaseAssert(mTxSetFrame);
-    return mTxSetFrame->getContentsHash();
+    auto parentFrame = mParentTxSetFrame.lock();
+    releaseAssert(parentFrame);
+    return parentFrame->getContentsHash();
 }
 
 TxSetFrame::Transactions const&
@@ -938,8 +942,9 @@ ResolvedTxSetFrame::sizeTxTotal() const
 size_t
 ResolvedTxSetFrame::encodedSize() const
 {
-    releaseAssert(mTxSetFrame);
-    return mTxSetFrame->encodedSize();
+    auto parentFrame = mParentTxSetFrame.lock();
+    releaseAssert(parentFrame);
+    return parentFrame->encodedSize();
 }
 
 void
