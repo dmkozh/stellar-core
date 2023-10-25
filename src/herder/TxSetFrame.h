@@ -123,8 +123,9 @@ class TxSetFrame : public NonMovableOrCopyable,
     static TxSetFrameConstPtr
     makeFromStoredTxSet(StoredTransactionSet const& storedSet);
 
-    // Creates a legacy (non-generalized) TxSetFrame from the transactions that
-    // are trusted to be valid. Validation and filtering are not performed.
+    // Creates a legacy (non-generalized) non-resolved TxSetFrame from the
+    // transactions that are trusted to be valid. Validation and filtering
+    // are not performed.
     // This should be *only* used for building the legacy TxSetFrames from
     // historical transactions.
     static TxSetFrameConstPtr
@@ -167,12 +168,12 @@ class TxSetFrame : public NonMovableOrCopyable,
     // Returns the size of this transaction set when encoded to XDR.
     size_t encodedSize() const;
 
-    // Creates transaction frames for all the transactions in the set.
+    // Creates transaction frames for all the transactions in the set, grouped
+    // by phase.
     // This is only necessary to serve a very specific use case of updating
     // the transaction queue with non-resolved tx sets. Otherwise, use
     // resolve()->getTransactionsForPhase().
-    TxSetFrame::Transactions
-    createTransactionFrames(Hash const& networkID) const;
+    TxPhases createTransactionFrames(Hash const& networkID) const;
 
 #ifdef BUILD_TESTS
     static TxSetFrameConstPtr makeFromTransactions(
@@ -330,12 +331,9 @@ class ResolvedTxSetFrame
     std::vector<TxSetFrame::Transactions> mTxPhases;
 
     mutable std::vector<bool> mFeesComputed;
-    mutable std::unordered_map<TransactionFrameBaseConstPtr,
-                               std::optional<int64_t>>
-        mTxBaseInclusionFeeClassic;
-    mutable std::unordered_map<TransactionFrameBaseConstPtr,
-                               std::optional<int64_t>>
-        mTxBaseInclusionFeeSoroban;
+    mutable std::vector<std::unordered_map<TransactionFrameBaseConstPtr,
+                                           std::optional<int64_t>>>
+        mPhaseInclusionFeeMap;
 
     std::weak_ptr<TxSetFrame const> mParentTxSetFrame{};
 #ifdef BUILD_TESTS

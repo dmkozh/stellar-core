@@ -2189,57 +2189,16 @@ HerderImpl::updateTransactionQueue(TxSetFrameConstPtr externalizedTxSet)
                    "No tx set to update tx queue - expected during bootstrap");
         return;
     }
-    TxSetFrame::Transactions const* classicTxs = nullptr;
-    TxSetFrame::Transactions const* sorobanTxs = nullptr;
-    TxSetFrame::Transactions txsForNonActiveTxSet;
-
-    // Try to extract the transactions from the tx set.
-    // These transactions are used for tx queue cleanup.
-    if (externalizedTxSet->getResolvedFrame() != nullptr ||
-        externalizedTxSet->previousLedgerHash() ==
-            mApp.getLedgerManager().getLastClosedLedgerHeader().hash)
-    {
-        LedgerTxn ltx(mApp.getLedgerTxnRoot(), false,
-                      TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
-        auto const* resolvedTxSet = externalizedTxSet->resolve(mApp, ltx);
-        releaseAssert(resolvedTxSet);
-        classicTxs = &resolvedTxSet->getTxsForPhase(TxSetFrame::Phase::CLASSIC);
-        if (resolvedTxSet->numPhases() >
-                static_cast<size_t>(TxSetFrame::Phase::SOROBAN) &&
-            mSorobanTransactionQueue != nullptr)
-        {
-            sorobanTxs =
-                &resolvedTxSet->getTxsForPhase(TxSetFrame::Phase::SOROBAN);
-        }
-    }
-    else
-    {
-        // In some cases the externalized tx set may not be possible to
-        // resolve, e.g. when the node is catching up. In such case we still
-        // may remove the externalized transactions from the queue, but we
-        // need to generate them directly from XDR. We also don't
-        // distinguish phases here for simplicity, as tx queues will just
-        // skip unknown transactions.
-        txsForNonActiveTxSet =
-            externalizedTxSet->createTransactionFrames(mApp.getNetworkID());
-        classicTxs = &txsForNonActiveTxSet;
-        if (mSorobanTransactionQueue != nullptr)
-        {
-            sorobanTxs = &txsForNonActiveTxSet;
-        }
-    }
+    auto txsPerPhase =
+        externalizedTxSet->createTransactionFrames(mApp.getNetworkID());
 
     // Generate a transaction set from a random hash and drop invalid
     auto lhhe = mLedgerManager.getLastClosedLedgerHeader();
     lhhe.hash = HashUtils::random();
 
-    auto updateQueue = [&](auto& queue, auto const* applied) {
-        if (applied != nullptr)
-        {
-            queue.removeApplied(*applied);
-        }
+    auto updateQueue = [&](auto& queue, auto const& applied) {
+        queue.removeApplied(applied);
         queue.shift();
-
         queue.maybeVersionUpgraded();
 
         auto txSet = queue.getTransactions(lhhe.header);
@@ -2252,14 +2211,19 @@ HerderImpl::updateTransactionQueue(TxSetFrameConstPtr externalizedTxSet)
 
         queue.rebroadcast();
     };
-    updateQueue(mTransactionQueue, classicTxs);
+    if (txsPerPhase.size() > TxSetFrame::Phase::CLASSIC)
+    {
+        updateQueue(mTransactionQueue, txsPerPhase[TxSetFrame::Phase::CLASSIC]);
+    }
 
     // Even if we're in protocol 20, still check for number of phases, in case
     // we're dealing with the upgrade ledger that contains old-style transaction
     // set
-    if (mSorobanTransactionQueue != nullptr)
+    if (mSorobanTransactionQueue != nullptr &&
+        txsPerPhase.size() > TxSetFrame::Phase::SOROBAN)
     {
-        updateQueue(*mSorobanTransactionQueue, sorobanTxs);
+        updateQueue(*mSorobanTransactionQueue,
+                    txsPerPhase[TxSetFrame::Phase::SOROBAN]);
     }
 }
 

@@ -156,6 +156,73 @@ computePerOpFee(TransactionFrameBase const& tx, uint32_t ledgerVersion)
                             static_cast<int64_t>(txOps), rounding);
 }
 
+void
+transactionsToTransactionSetXDR(TxSetFrame::Transactions const& txs,
+                                Hash const& previousLedgerHash,
+                                TransactionSet& txSet)
+{
+    ZoneScoped;
+    txSet.txs.resize(xdr::size32(txs.size()));
+    auto sortedTxs = TxSetUtils::sortTxsInHashOrder(txs);
+    for (unsigned int n = 0; n < sortedTxs.size(); n++)
+    {
+        txSet.txs[n] = sortedTxs[n]->getEnvelope();
+    }
+    txSet.previousLedgerHash = previousLedgerHash;
+}
+
+void
+transactionsToGeneralizedTransactionSetXDR(
+    TxSetFrame::TxPhases const& phaseTxs,
+    std::vector<std::unordered_map<TransactionFrameBaseConstPtr,
+                                   std::optional<int64_t>>> const&
+        phaseInclusionFeeMap,
+    Hash const& previousLedgerHash, GeneralizedTransactionSet& generalizedTxSet)
+{
+    ZoneScoped;
+    releaseAssert(phaseTxs.size() == phaseInclusionFeeMap.size());
+
+    generalizedTxSet.v(1);
+    generalizedTxSet.v1TxSet().previousLedgerHash = previousLedgerHash;
+
+    for (int i = 0; i < phaseTxs.size(); ++i)
+    {
+        auto const& txPhase = phaseTxs[i];
+        auto& phase =
+            generalizedTxSet.v1TxSet().phases.emplace_back().v0Components();
+
+        auto const& feeMap =
+            phaseInclusionFeeMap[static_cast<TxSetFrame::Phase>(i)];
+        std::map<std::optional<int64_t>, size_t> feeTxCount;
+        for (auto const& [tx, fee] : feeMap)
+        {
+            ++feeTxCount[fee];
+        }
+        // Reserve a component per unique base fee in order to have the correct
+        // pointers in componentPerBid map.
+        phase.reserve(feeTxCount.size());
+
+        std::map<std::optional<int64_t>, xdr::xvector<TransactionEnvelope>*>
+            componentPerBid;
+        for (auto const& [fee, txCount] : feeTxCount)
+        {
+            phase.emplace_back(TXSET_COMP_TXS_MAYBE_DISCOUNTED_FEE);
+            auto& discountedFeeComponent = phase.back().txsMaybeDiscountedFee();
+            if (fee)
+            {
+                discountedFeeComponent.baseFee.activate() = *fee;
+            }
+            componentPerBid[fee] = &discountedFeeComponent.txs;
+            componentPerBid[fee]->reserve(txCount);
+        }
+        auto sortedTxs = TxSetUtils::sortTxsInHashOrder(txPhase);
+        for (auto const& tx : sortedTxs)
+        {
+            componentPerBid[feeMap.find(tx)->second]->push_back(
+                tx->getEnvelope());
+        }
+    }
+}
 } // namespace
 
 TxSetFrame::TxSetFrame(TransactionSet const& xdrTxSet)
@@ -321,26 +388,31 @@ TxSetFrame::makeFromTransactions(TxSetFrame::TxPhases const& txPhases,
 TxSetFrameConstPtr
 TxSetFrame::makeEmpty(LedgerHeaderHistoryEntry const& lclHeader)
 {
-    TxPhases phases;
-    phases.resize(protocolVersionStartsFrom(lclHeader.header.ledgerVersion,
-                                            SOROBAN_PROTOCOL_VERSION)
-                      ? static_cast<size_t>(Phase::PHASE_COUNT)
-                      : 1);
-    ResolvedTxSetFrame txSet(lclHeader, phases);
-    for (int i = 0; i < txSet.mFeesComputed.size(); i++)
+    if (protocolVersionStartsFrom(lclHeader.header.ledgerVersion,
+                                  SOROBAN_PROTOCOL_VERSION))
     {
-        txSet.mFeesComputed[i] = true;
+        TxSetFrame::TxPhases emptyPhases(
+            static_cast<size_t>(Phase::PHASE_COUNT));
+        std::vector<std::unordered_map<TransactionFrameBaseConstPtr,
+                                       std::optional<int64_t>>>
+            emptyFeeMap(static_cast<size_t>(Phase::PHASE_COUNT));
+        GeneralizedTransactionSet txSet;
+        transactionsToGeneralizedTransactionSetXDR(emptyPhases, emptyFeeMap,
+                                                   lclHeader.hash, txSet);
+        return TxSetFrame::makeFromWire(txSet);
     }
-    return txSet.toWireTxSetFrame();
+    TransactionSet txSet;
+    transactionsToTransactionSetXDR({}, lclHeader.hash, txSet);
+    return TxSetFrame::makeFromWire(txSet);
 }
 
 TxSetFrameConstPtr
 TxSetFrame::makeFromHistoryTransactions(Hash const& previousLedgerHash,
                                         TxSetFrame::Transactions const& txs)
 {
-    ResolvedTxSetFrame resolvedTxSet(false, previousLedgerHash,
-                                     TxSetFrame::TxPhases{txs});
-    return resolvedTxSet.toWireTxSetFrame();
+    TransactionSet txSet;
+    transactionsToTransactionSetXDR(txs, previousLedgerHash, txSet);
+    return TxSetFrame::makeFromWire(txSet);
 }
 
 #ifdef BUILD_TESTS
@@ -573,16 +645,17 @@ TxSetFrame::sizeOpTotal() const
     }
 }
 
-TxSetFrame::Transactions
+TxSetFrame::TxPhases
 TxSetFrame::createTransactionFrames(Hash const& networkID) const
 {
-    TxSetFrame::Transactions txs;
+    TxPhases phaseTxs;
     if (isGeneralizedTxSet())
     {
         auto const& txSet =
             std::get<GeneralizedTransactionSet>(mXDRTxSet).v1TxSet();
         for (auto const& phase : txSet.phases)
         {
+            auto& txs = phaseTxs.emplace_back();
             for (auto const& component : phase.v0Components())
             {
                 for (auto const& tx : component.txsMaybeDiscountedFee().txs)
@@ -596,6 +669,7 @@ TxSetFrame::createTransactionFrames(Hash const& networkID) const
     }
     else
     {
+        auto& txs = phaseTxs.emplace_back();
         auto const& txSet = std::get<TransactionSet>(mXDRTxSet).txs;
         for (auto const& tx : txSet)
         {
@@ -603,7 +677,7 @@ TxSetFrame::createTransactionFrames(Hash const& networkID) const
                 TransactionFrameBase::makeTransactionFromWire(networkID, tx));
         }
     }
-    return txs;
+    return phaseTxs;
 }
 
 size_t
@@ -648,8 +722,9 @@ ResolvedTxSetFrame::ResolvedTxSetFrame(bool isGeneralized,
     : mIsGeneralized(isGeneralized)
     , mPreviousLedgerHash(previousLedgerHash)
     , mTxPhases(txs)
+    , mFeesComputed(mTxPhases.size(), false)
+    , mPhaseInclusionFeeMap(mTxPhases.size())
 {
-    mFeesComputed.resize(mTxPhases.size(), false);
 }
 
 ResolvedTxSetFrame::ResolvedTxSetFrame(
@@ -995,11 +1070,13 @@ ResolvedTxSetFrame::computeTxFeesForNonGeneralizedSet(
     }
 
     releaseAssert(mTxPhases.size() == 1);
-    auto const& phase = mTxPhases[0];
-
+    releaseAssert(mPhaseInclusionFeeMap.size() == 1);
+    auto const& phase =
+        mTxPhases[static_cast<size_t>(TxSetFrame::Phase::CLASSIC)];
+    auto& feeMap = getInclusionFeeMap(TxSetFrame::Phase::CLASSIC);
     for (auto const& tx : phase)
     {
-        mTxBaseInclusionFeeClassic[tx] = baseFee;
+        feeMap[tx] = baseFee;
     }
     mFeesComputed[0] = true;
 }
@@ -1067,16 +1144,15 @@ ResolvedTxSetFrame::getTxBaseFee(TransactionFrameBaseConstPtr const& tx,
         releaseAssert(!isGeneralizedTxSet());
         computeTxFeesForNonGeneralizedSet(lclHeader);
     }
-    auto it = mTxBaseInclusionFeeClassic.find(tx);
-    if (it == mTxBaseInclusionFeeClassic.end())
+    for (auto const& phaseMap : mPhaseInclusionFeeMap)
     {
-        it = mTxBaseInclusionFeeSoroban.find(tx);
-        if (it == mTxBaseInclusionFeeSoroban.end())
+        if (auto it = phaseMap.find(tx); it != phaseMap.end())
         {
-            throw std::runtime_error("Transaction not found in tx set");
+            return it->second;
         }
     }
-    return it->second;
+    throw std::runtime_error("Transaction not found in tx set");
+    return std::nullopt;
 }
 
 std::optional<Resource>
@@ -1142,66 +1218,65 @@ ResolvedTxSetFrame::summary() const
     {
         return "empty tx set";
     }
-    if (isGeneralizedTxSet())
+    if (!isGeneralizedTxSet())
     {
-        auto feeStats = [&](auto const& feeMap) {
-            std::map<std::optional<int64_t>, std::pair<int, int>>
-                componentStats;
-            for (auto const& [tx, fee] : feeMap)
-            {
-                ++componentStats[fee].first;
-                componentStats[fee].second += tx->getNumOperations();
-            }
-            std::string res = fmt::format(FMT_STRING("{} component(s): ["),
-                                          componentStats.size());
+        return fmt::format(
+            FMT_STRING("txs:{}, ops:{}, base_fee:{}"), sizeTxTotal(),
+            sizeOpTotal(),
+            // NB: fee map can't be empty at this stage (checked above).
+            getInclusionFeeMap(TxSetFrame::Phase::CLASSIC)
+                .begin()
+                ->second.value_or(0));
+    }
 
-            for (auto const& [fee, stats] : componentStats)
-            {
-                if (fee != componentStats.begin()->first)
-                {
-                    res += ", ";
-                }
-                if (fee)
-                {
-                    res += fmt::format(
-                        FMT_STRING(
-                            "{{discounted txs:{}, ops:{}, base_fee:{}}}"),
-                        stats.first, stats.second, *fee);
-                }
-                else
-                {
-                    res += fmt::format(
-                        FMT_STRING("{{non-discounted txs:{}, ops:{}}}"),
-                        stats.first, stats.second);
-                }
-            }
-            res += "]";
-            return res;
-        };
-
-        std::string status;
-        releaseAssert(mTxPhases.size() <=
-                      static_cast<size_t>(TxSetFrame::Phase::PHASE_COUNT));
-        for (auto i = 0; i != mTxPhases.size(); i++)
+    auto feeStats = [&](auto const& feeMap) {
+        std::map<std::optional<int64_t>, std::pair<int, int>> componentStats;
+        for (auto const& [tx, fee] : feeMap)
         {
-            if (!status.empty())
-            {
-                status += ", ";
-            }
-            status += fmt::format(
-                FMT_STRING("{} phase: {}"),
-                TxSetFrame::getPhaseName(static_cast<TxSetFrame::Phase>(i)),
-                feeStats(
-                    getInclusionFeeMap(static_cast<TxSetFrame::Phase>(i))));
+            ++componentStats[fee].first;
+            componentStats[fee].second += tx->getNumOperations();
         }
-        return status;
-    }
-    else
+        std::string res = fmt::format(FMT_STRING("{} component(s): ["),
+                                      componentStats.size());
+
+        for (auto const& [fee, stats] : componentStats)
+        {
+            if (fee != componentStats.begin()->first)
+            {
+                res += ", ";
+            }
+            if (fee)
+            {
+                res += fmt::format(
+                    FMT_STRING("{{discounted txs:{}, ops:{}, base_fee:{}}}"),
+                    stats.first, stats.second, *fee);
+            }
+            else
+            {
+                res +=
+                    fmt::format(FMT_STRING("{{non-discounted txs:{}, ops:{}}}"),
+                                stats.first, stats.second);
+            }
+        }
+        res += "]";
+        return res;
+    };
+
+    std::string status;
+    releaseAssert(mTxPhases.size() <=
+                  static_cast<size_t>(TxSetFrame::Phase::PHASE_COUNT));
+    for (auto i = 0; i != mTxPhases.size(); i++)
     {
-        return fmt::format(FMT_STRING("txs:{}, ops:{}, base_fee:{}"),
-                           sizeTxTotal(), sizeOpTotal(),
-                           *mTxBaseInclusionFeeClassic.begin()->second);
+        if (!status.empty())
+        {
+            status += ", ";
+        }
+        status += fmt::format(
+            FMT_STRING("{} phase: {}"),
+            TxSetFrame::getPhaseName(static_cast<TxSetFrame::Phase>(i)),
+            feeStats(getInclusionFeeMap(static_cast<TxSetFrame::Phase>(i))));
     }
+    return status;
 }
 
 void
@@ -1210,14 +1285,7 @@ ResolvedTxSetFrame::toXDR(TransactionSet& txSet) const
     ZoneScoped;
     releaseAssert(!isGeneralizedTxSet());
     releaseAssert(mTxPhases.size() == 1);
-    auto& txs = mTxPhases[0];
-    txSet.txs.resize(xdr::size32(txs.size()));
-    auto sortedTxs = TxSetUtils::sortTxsInHashOrder(txs);
-    for (unsigned int n = 0; n < sortedTxs.size(); n++)
-    {
-        txSet.txs[n] = sortedTxs[n]->getEnvelope();
-    }
-    txSet.previousLedgerHash = mPreviousLedgerHash;
+    transactionsToTransactionSetXDR(mTxPhases[0], mPreviousLedgerHash, txSet);
 }
 
 void
@@ -1229,47 +1297,9 @@ ResolvedTxSetFrame::toXDR(GeneralizedTransactionSet& generalizedTxSet) const
                               [](bool comp) { return comp; }));
     releaseAssert(mTxPhases.size() <=
                   static_cast<size_t>(TxSetFrame::Phase::PHASE_COUNT));
-
-    generalizedTxSet.v(1);
-    generalizedTxSet.v1TxSet().previousLedgerHash = mPreviousLedgerHash;
-
-    for (int i = 0; i < mTxPhases.size(); ++i)
-    {
-        auto const& txPhase = mTxPhases[i];
-        auto& phase =
-            generalizedTxSet.v1TxSet().phases.emplace_back().v0Components();
-
-        auto const& feeMap =
-            getInclusionFeeMap(static_cast<TxSetFrame::Phase>(i));
-        std::map<std::optional<int64_t>, size_t> feeTxCount;
-        for (auto const& [tx, fee] : feeMap)
-        {
-            ++feeTxCount[fee];
-        }
-        // Reserve a component per unique base fee in order to have the correct
-        // pointers in componentPerBid map.
-        phase.reserve(feeTxCount.size());
-
-        std::map<std::optional<int64_t>, xdr::xvector<TransactionEnvelope>*>
-            componentPerBid;
-        for (auto const& [fee, txCount] : feeTxCount)
-        {
-            phase.emplace_back(TXSET_COMP_TXS_MAYBE_DISCOUNTED_FEE);
-            auto& discountedFeeComponent = phase.back().txsMaybeDiscountedFee();
-            if (fee)
-            {
-                discountedFeeComponent.baseFee.activate() = *fee;
-            }
-            componentPerBid[fee] = &discountedFeeComponent.txs;
-            componentPerBid[fee]->reserve(txCount);
-        }
-        auto sortedTxs = TxSetUtils::sortTxsInHashOrder(txPhase);
-        for (auto const& tx : sortedTxs)
-        {
-            componentPerBid[feeMap.find(tx)->second]->push_back(
-                tx->getEnvelope());
-        }
-    }
+    transactionsToGeneralizedTransactionSetXDR(mTxPhases, mPhaseInclusionFeeMap,
+                                               mPreviousLedgerHash,
+                                               generalizedTxSet);
 }
 
 TxSetFrameConstPtr
@@ -1456,12 +1486,9 @@ ResolvedTxSetFrame::applySurgePricing(Application& app)
 std::unordered_map<TransactionFrameBaseConstPtr, std::optional<int64_t>>&
 ResolvedTxSetFrame::getInclusionFeeMap(TxSetFrame::Phase phase) const
 {
-    if (phase == TxSetFrame::Phase::SOROBAN)
-    {
-        return mTxBaseInclusionFeeSoroban;
-    }
-    releaseAssert(phase == TxSetFrame::Phase::CLASSIC);
-    return mTxBaseInclusionFeeClassic;
+    size_t phaseId = static_cast<size_t>(phase);
+    releaseAssert(phaseId < mPhaseInclusionFeeMap.size());
+    return mPhaseInclusionFeeMap[phaseId];
 }
 
 std::string
