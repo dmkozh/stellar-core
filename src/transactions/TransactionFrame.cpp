@@ -999,7 +999,6 @@ TransactionFrame::commonValidPreSeqNum(
     }
     if (isSoroban())
     {
-        releaseAssertOrThrow(sorobanResourceFee);
         if (protocolVersionIsBefore(ledgerVersion, SOROBAN_PROTOCOL_VERSION))
         {
             getResult().result.code(txMALFORMED);
@@ -1031,6 +1030,7 @@ TransactionFrame::commonValidPreSeqNum(
             getResult().result.code(txSOROBAN_INVALID);
             return false;
         }
+        releaseAssertOrThrow(sorobanResourceFee);
         if (sorobanData.resourceFee <
             sorobanResourceFee->refundable_fee +
                 sorobanResourceFee->non_refundable_fee)
