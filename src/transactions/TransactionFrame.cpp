@@ -1403,7 +1403,8 @@ TransactionFrame::checkValidWithOptionallyChargedFee(
 
     std::optional<FeePair> sorobanResourceFee;
     if (protocolVersionStartsFrom(ltx.loadHeader().current().ledgerVersion,
-                                  SOROBAN_PROTOCOL_VERSION))
+                                  SOROBAN_PROTOCOL_VERSION) &&
+        isSoroban())
     {
         sorobanResourceFee = computePreApplySorobanResourceFee(
             ltx.loadHeader().current().ledgerVersion,
@@ -1718,7 +1719,7 @@ TransactionFrame::apply(Application& app, AbstractLedgerTxn& ltx,
         {
             sorobanResourceFee = computePreApplySorobanResourceFee(
                 ledgerVersion,
-                app.getLedgerManager().getSorobanNetworkConfig(ltx),
+                app.getLedgerManager().getSorobanNetworkConfig(ltxTx),
                 app.getConfig());
         }
         auto cv = commonValid(app, signatureChecker, ltxTx, 0, true, chargeFee,
