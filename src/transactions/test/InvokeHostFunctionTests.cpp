@@ -793,8 +793,8 @@ TEST_CASE("basic contract invocation", "[tx][soroban]")
                             changesAfter[0].state().data.account().balance ==
                         resourceFee - nonRefundableResourceFee);
                 }
-                // The account should receive a full refund for metadata
-                // in case of tx failure.
+                // The account should receive a full refund in case of tx
+                // failure.
                 REQUIRE(root.getBalance() - balanceAfterFeeCharged ==
                         resourceFee - nonRefundableResourceFee);
             }

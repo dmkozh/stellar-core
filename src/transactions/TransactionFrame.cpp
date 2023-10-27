@@ -1613,13 +1613,14 @@ TransactionFrame::applyOperations(SignatureChecker& signatureChecker,
         {
             markResultFailed();
             if (protocolVersionStartsFrom(ledgerVersion,
-                                          SOROBAN_PROTOCOL_VERSION))
+                                          SOROBAN_PROTOCOL_VERSION) &&
+                isSoroban())
             {
                 // If transaction fails, we don't charge for any
                 // refundable resources.
                 auto preApplyFee = computePreApplySorobanResourceFee(
-                    ltx.loadHeader().current().ledgerVersion,
-                    app.getLedgerManager().getSorobanNetworkConfig(ltx),
+                    ledgerVersion,
+                    app.getLedgerManager().getSorobanNetworkConfig(ltxTx),
                     app.getConfig());
                 mFeeRefund = declaredSorobanResourceFee() -
                              preApplyFee.non_refundable_fee;
