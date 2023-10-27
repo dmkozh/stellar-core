@@ -485,10 +485,13 @@ TEST_CASE("non-refundable resource metering", "[tx][soroban]")
         // This will compute soroban fees
         REQUIRE(rootTX->checkValid(*app, ltx, 0, 0, 0));
 
-        auto actualFeePair = std::dynamic_pointer_cast<TransactionFrame>(rootTX)
-                                 ->getSorobanResourceFee();
-        REQUIRE(actualFeePair);
-        REQUIRE(expectedNonRefundableFee == actualFeePair->non_refundable_fee);
+        auto actualFeePair =
+            std::dynamic_pointer_cast<TransactionFrame>(rootTX)
+                ->computePreApplySorobanResourceFee(
+                    ltx.loadHeader().current().ledgerVersion,
+                    app->getLedgerManager().getSorobanNetworkConfig(ltx),
+                    app->getConfig());
+        REQUIRE(expectedNonRefundableFee == actualFeePair.non_refundable_fee);
 
         auto inclusionFee = getMinInclusionFee(*rootTX, ltx.getHeader());
 

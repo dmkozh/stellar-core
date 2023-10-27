@@ -2160,16 +2160,18 @@ TEST_CASE("surge pricing with DEX separation holds invariants",
     }
 }
 
-TEST_CASE("generalized tx set applied to ledger", "[herder][txset]")
+TEST_CASE("generalized tx set applied to ledger", "[herder][txset][soroban]")
 {
     Config cfg(getTestConfig());
     cfg.TESTING_UPGRADE_LEDGER_PROTOCOL_VERSION =
         static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION);
     cfg.LEDGER_PROTOCOL_VERSION =
         static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION);
+    cfg.ENABLE_SOROBAN_DIAGNOSTIC_EVENTS = true;
     VirtualClock clock;
     Application::pointer app = createTestApplication(clock, cfg);
     auto root = TestAccount::createRoot(*app);
+    overrideSorobanNetworkConfigForTest(*app);
     int64 startingBalance =
         app->getLedgerManager().getLastMinBalance(0) + 10000000;
 
@@ -2181,9 +2183,34 @@ TEST_CASE("generalized tx set applied to ledger", "[herder][txset]")
         return makeSelfPayment(account, nbOps, fee);
     };
 
+    SorobanResources resources;
+    resources.instructions = 3'000'000;
+    resources.readBytes = 0;
+    resources.writeBytes = 2000;
+    auto dummyAccount = root.create("dummy", startingBalance);
+    auto dummyUploadTx =
+        createUploadWasmTx(*app, dummyAccount, 100, 1000, resources);
+    resources.footprint.readWrite.emplace_back();
+    // TODO: currently transactions created by `createUploadWasmTx` always
+    // fail due to additional host-side validation. Thus no refundable
+    // fees are charged and event fee is set to `0`.
+    uint32_t resourceFee = sorobanResourceFee(
+        *app, resources, xdr::xdr_size(dummyUploadTx->getEnvelope()), 0);
+    resources.footprint.readWrite.pop_back();
+    auto addSorobanTx = [&](uint32_t inclusionFee) {
+        auto account = root.create(std::to_string(txCnt++), startingBalance);
+        accounts.push_back(account);
+        return createUploadWasmTx(*app, account, inclusionFee, resourceFee,
+                                  resources);
+    };
+
     auto checkFees = [&](TxSetFrameConstPtr txSet,
-                         std::vector<int64_t> const& expectedFeeCharged) {
-        REQUIRE(txSet->getResolvedFrame()->checkValid(*app, 0, 0));
+                         std::vector<int64_t> const& expectedFeeCharged,
+                         bool validateTxSet = true) {
+        if (validateTxSet)
+        {
+            REQUIRE(txSet->getResolvedFrame()->checkValid(*app, 0, 0));
+        }
 
         auto getBalances = [&]() {
             std::vector<int64_t> balances;
@@ -2250,6 +2277,30 @@ TEST_CASE("generalized tx set applied to ledger", "[herder][txset]")
             {components, {}}, *app,
             app->getLedgerManager().getLastClosedLedgerHeader().hash);
         checkFees(txSet, {3000, 2000, 500, 2500, 8000, 35000, 10000});
+    }
+    SECTION("soroban")
+    {
+        auto txSet = testtxset::makeNonValidatedGeneralizedTxSet(
+            {
+                {std::make_pair(1000,
+                                std::vector<TransactionFrameBasePtr>{
+                                    addTx(3, 3500), addTx(2, 5000)})},
+                {std::make_pair(2000,
+                                std::vector<TransactionFrameBasePtr>{
+                                    addSorobanTx(5000), addSorobanTx(10000)})},
+            },
+            *app, app->getLedgerManager().getLastClosedLedgerHeader().hash);
+        SECTION("with validation")
+        {
+            checkFees(txSet,
+                      {3000, 2000, 2000 + resourceFee, 2000 + resourceFee});
+        }
+        SECTION("without validation")
+        {
+            checkFees(txSet,
+                      {3000, 2000, 2000 + resourceFee, 2000 + resourceFee},
+                      /* validateTxSet */ false);
+        }
     }
 }
 
