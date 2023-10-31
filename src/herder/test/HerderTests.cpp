@@ -4037,8 +4037,8 @@ TEST_CASE("herder externalizes values", "[herder]")
     qset.validators.push_back(validatorBKey.getPublicKey());
     qset.validators.push_back(validatorCKey.getPublicKey());
 
-    simulation->addNode(validatorAKey, qset);
-    simulation->addNode(validatorBKey, qset);
+    auto A = simulation->addNode(validatorAKey, qset);
+    auto B = simulation->addNode(validatorBKey, qset);
     simulation->addNode(validatorCKey, qset);
 
     simulation->addPendingConnection(validatorAKey.getPublicKey(),
@@ -4060,9 +4060,6 @@ TEST_CASE("herder externalizes values", "[herder]")
     REQUIRE(getC()->getHerder().getState() ==
             Herder::State::HERDER_TRACKING_NETWORK_STATE);
 
-    auto A = simulation->getNode(validatorAKey.getPublicKey());
-    auto B = simulation->getNode(validatorBKey.getPublicKey());
-
     auto currentALedger = [&]() {
         return A->getLedgerManager().getLastClosedLedgerNum();
     };
@@ -4083,10 +4080,26 @@ TEST_CASE("herder externalizes values", "[herder]")
         return std::min(currentALedger(), currentCLedger());
     };
 
+    HerderImpl& herderA = *static_cast<HerderImpl*>(&A->getHerder());
+    HerderImpl& herderB = *static_cast<HerderImpl*>(&B->getHerder());
+    HerderImpl& herderC = *static_cast<HerderImpl*>(&getC()->getHerder());
+    auto const& lmC = getC()->getLedgerManager();
+
     auto waitForAB = [&](int nLedgers, bool waitForB) {
         auto destinationLedger = currentALedger() + nLedgers;
+        bool submitted = false;
         simulation->crankUntil(
             [&]() {
+                if (currentALedger() == (destinationLedger - 1) && !submitted)
+                {
+                    auto root = TestAccount::createRoot(*A);
+                    SorobanResources resources;
+                    auto sorobanTx = createUploadWasmTx(
+                        *A, root, 100, DEFAULT_TEST_RESOURCE_FEE, resources);
+                    REQUIRE(herderA.recvTransaction(sorobanTx, true) ==
+                            TransactionQueue::AddResult::ADD_STATUS_PENDING);
+                    submitted = true;
+                }
                 return currentALedger() >= destinationLedger &&
                        (!waitForB || currentBLedger() >= destinationLedger);
             },
@@ -4110,16 +4123,33 @@ TEST_CASE("herder externalizes values", "[herder]")
     simulation->dropConnection(validatorAKey.getPublicKey(),
                                validatorCKey.getPublicKey());
 
-    HerderImpl& herderA = *static_cast<HerderImpl*>(&A->getHerder());
-    HerderImpl& herderB = *static_cast<HerderImpl*>(&B->getHerder());
-    HerderImpl& herderC = *static_cast<HerderImpl*>(&getC()->getHerder());
-    auto const& lmC = getC()->getLedgerManager();
-
     // Advance A and B a bit further, and collect externalize messages
-    std::map<uint32_t, std::pair<SCPEnvelope, TxSetFrameConstPtr>>
+    std::map<uint32_t, std::pair<SCPEnvelope, StellarMessage>>
         validatorSCPMessagesA;
-    std::map<uint32_t, std::pair<SCPEnvelope, TxSetFrameConstPtr>>
+    std::map<uint32_t, std::pair<SCPEnvelope, StellarMessage>>
         validatorSCPMessagesB;
+
+    for (auto& node : {A, B, getC()})
+    {
+        ConfigUpgradeSetFrameConstPtr configUpgradeSet;
+        LedgerTxn ltx(node->getLedgerTxnRoot());
+        ConfigUpgradeSet configUpgradeSetXdr;
+        auto& configEntry = configUpgradeSetXdr.updatedEntry.emplace_back();
+        configEntry.configSettingID(CONFIG_SETTING_CONTRACT_HISTORICAL_DATA_V0);
+        configEntry.contractHistoricalData().feeHistorical1KB = 1234;
+        configUpgradeSet = makeConfigUpgradeSet(ltx, configUpgradeSetXdr);
+
+        Upgrades::UpgradeParameters scheduledUpgrades;
+        scheduledUpgrades.mUpgradeTime =
+            VirtualClock::from_time_t(node->getLedgerManager()
+                                          .getLastClosedLedgerHeader()
+                                          .header.scpValue.closeTime +
+                                      5);
+        scheduledUpgrades.mConfigUpgradeSetKey = configUpgradeSet->getKey();
+        // C won't upgrade until it's on the right LCL
+        node->getHerder().setUpgrades(scheduledUpgrades);
+        ltx.commit();
+    }
 
     auto destinationLedger = waitForAB(4, true);
     for (auto start = currentLedger + 1; start <= destinationLedger; start++)
@@ -4134,7 +4164,10 @@ TEST_CASE("herder externalizes values", "[herder]")
                     env.statement.pledges.externalize().commit.value, sv);
                 auto txset = pe.getTxSet(sv.txSetHash);
                 REQUIRE(txset);
-                validatorSCPMessagesA[start] = std::make_pair(env, txset);
+                StellarMessage newMsg;
+                newMsg.type(GENERALIZED_TX_SET);
+                txset->toXDR(newMsg.generalizedTxSet());
+                validatorSCPMessagesA[start] = std::make_pair(env, newMsg);
             }
         }
 
@@ -4148,7 +4181,10 @@ TEST_CASE("herder externalizes values", "[herder]")
                     env.statement.pledges.externalize().commit.value, sv);
                 auto txset = pe.getTxSet(sv.txSetHash);
                 REQUIRE(txset);
-                validatorSCPMessagesB[start] = std::make_pair(env, txset);
+                StellarMessage newMsg;
+                newMsg.type(GENERALIZED_TX_SET);
+                txset->toXDR(newMsg.generalizedTxSet());
+                validatorSCPMessagesB[start] = std::make_pair(env, newMsg);
             }
         }
     }
@@ -4181,6 +4217,8 @@ TEST_CASE("herder externalizes values", "[herder]")
 
         // Externalize future ledger
         // This should trigger CatchupManager to start buffering ledgers
+        // Ensure C processes future tx set and its fees correctly (even though
+        // its own ledger state isn't upgraded yet)
         receiveLedger(fourth, herderC);
 
         // Wait until C goes out of sync, and processes future slots
@@ -4255,6 +4293,12 @@ TEST_CASE("herder externalizes values", "[herder]")
                 return false;
             },
             2 * Herder::EXP_LEDGER_TIMESPAN_SECONDS, false);
+
+        // C landed on the same hash as A and B
+        REQUIRE(A->getLedgerManager().getLastClosedLedgerHeader().hash ==
+                getC()->getLedgerManager().getLastClosedLedgerHeader().hash);
+        REQUIRE(B->getLedgerManager().getLastClosedLedgerHeader().hash ==
+                getC()->getLedgerManager().getLastClosedLedgerHeader().hash);
     };
 
     SECTION("newer ledgers externalize in order")

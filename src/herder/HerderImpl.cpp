@@ -818,6 +818,18 @@ HerderImpl::recvSCPEnvelope(SCPEnvelope const& envelope,
     return recvSCPEnvelope(envelope);
 }
 
+Herder::EnvelopeStatus
+HerderImpl::recvSCPEnvelope(SCPEnvelope const& envelope,
+                            const SCPQuorumSet& qset,
+                            StellarMessage const& txset)
+{
+    auto txSetFrame =
+        txset.type() == TX_SET
+            ? TxSetFrame::makeFromWire(mApp, txset.txSet())
+            : TxSetFrame::makeFromWire(mApp, txset.generalizedTxSet());
+    return recvSCPEnvelope(envelope, qset, txSetFrame);
+}
+
 void
 HerderImpl::externalizeValue(TxSetFrameConstPtr txSet, uint32_t ledgerSeq,
                              uint64_t closeTime,
