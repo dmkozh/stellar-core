@@ -185,6 +185,7 @@ class TxSetFrame : public NonMovableOrCopyable,
                          uint64_t upperBoundCloseTimeOffset,
                          Transactions& invalidTxs,
                          bool enforceTxsApplyOrder = false);
+    mutable ResolvedTxSetFrameConstPtr mResolvedTxSetOverride;
 #endif
 
   private:

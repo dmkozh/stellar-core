@@ -2027,8 +2027,8 @@ TEST_CASE("upgrade to version 13", "[upgrades]")
         auto ledgerSeq = lcl.header.ledgerSeq + 1;
 
         auto emptyTxSet = TxSetFrame::makeEmpty(lcl);
-        herder.getPendingEnvelopes().putTxSet(
-            emptyTxSet->getContentsHash(), ledgerSeq, emptyTxSet);
+        herder.getPendingEnvelopes().putTxSet(emptyTxSet->getContentsHash(),
+                                              ledgerSeq, emptyTxSet);
 
         auto upgrade = toUpgradeType(makeProtocolVersionUpgrade(13));
         StellarValue sv =

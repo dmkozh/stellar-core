@@ -1401,6 +1401,11 @@ TransactionFrame::checkValidWithOptionallyChargedFee(
         minBaseFee = 0;
     }
 
+    resetResults(ltx.loadHeader().current(), minBaseFee, false);
+
+    SignatureChecker signatureChecker{ltx.loadHeader().current().ledgerVersion,
+                                      getContentsHash(),
+                                      getSignatures(mEnvelope)};
     std::optional<FeePair> sorobanResourceFee;
     if (protocolVersionStartsFrom(ltx.loadHeader().current().ledgerVersion,
                                   SOROBAN_PROTOCOL_VERSION) &&
@@ -1411,12 +1416,6 @@ TransactionFrame::checkValidWithOptionallyChargedFee(
             app.getLedgerManager().getSorobanNetworkConfig(ltx),
             app.getConfig());
     }
-
-    resetResults(ltx.loadHeader().current(), minBaseFee, false);
-
-    SignatureChecker signatureChecker{ltx.loadHeader().current().ledgerVersion,
-                                      getContentsHash(),
-                                      getSignatures(mEnvelope)};
     bool res =
         commonValid(app, signatureChecker, ltx, current, false, chargeFee,
                     lowerBoundCloseTimeOffset, upperBoundCloseTimeOffset,
@@ -1715,7 +1714,9 @@ TransactionFrame::apply(Application& app, AbstractLedgerTxn& ltx,
         //  we'll skip trying to apply operations but we'll still
         //  process the sequence number if needed
         std::optional<FeePair> sorobanResourceFee;
-        if (protocolVersionStartsFrom(ledgerVersion, SOROBAN_PROTOCOL_VERSION))
+        if (protocolVersionStartsFrom(ledgerVersion,
+                                      SOROBAN_PROTOCOL_VERSION) &&
+            isSoroban())
         {
             sorobanResourceFee = computePreApplySorobanResourceFee(
                 ledgerVersion,

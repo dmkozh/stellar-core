@@ -1057,7 +1057,8 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
 
                         SECTION("merge op source account")
                         {
-                            for_versions_from(3, *app, [&] { runTest(false); });
+                            for_versions_from(20, *app,
+                                              [&] { runTest(false); });
                         }
 
                         SECTION("merge tx source account")

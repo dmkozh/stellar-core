@@ -341,7 +341,7 @@ TxSetFrame::makeFromTransactions(TxSetFrame::TxPhases const& txPhases,
     // Do the roundtrip through XDR to ensure we never build an incorrect tx set
     // for nomination.
     auto outputTxSet = resolvedTxSet->toWireTxSetFrame();
-
+    resolvedTxSet->mHash = outputTxSet->getContentsHash();
 #ifdef BUILD_TESTS
     if (skipValidation)
     {
@@ -380,7 +380,7 @@ TxSetFrame::makeFromTransactions(TxSetFrame::TxPhases const& txPhases,
     {
         throw std::runtime_error("Created invalid tx set frame");
     }
-    resolvedTxSet->mHash = outputTxSet->getContentsHash();
+
     return std::make_pair(outputTxSet, resolvedTxSet);
 }
 
@@ -452,6 +452,7 @@ TxSetFrame::makeFromTransactions(Transactions txs, Application& app,
     {
         res.second->mApplyOrderOverride = txs;
     }
+    res.first->mResolvedTxSetOverride = res.second;
     invalidTxs = invalid[0];
     return res;
 }
@@ -460,6 +461,12 @@ TxSetFrame::makeFromTransactions(Transactions txs, Application& app,
 ResolvedTxSetFrameConstPtr
 TxSetFrame::resolve(Application& app, AbstractLedgerTxn& ltx) const
 {
+#ifdef BUILD_TESTS
+    if (mResolvedTxSetOverride)
+    {
+        return mResolvedTxSetOverride;
+    }
+#endif
     ZoneScoped;
     releaseAssert(previousLedgerHash() ==
                   app.getLedgerManager().getLastClosedLedgerHeader().hash);

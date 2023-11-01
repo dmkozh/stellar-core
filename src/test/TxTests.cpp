@@ -532,7 +532,7 @@ closeLedgerOn(Application& app, uint32 ledgerSeq, TimePoint closeTime,
         REQUIRE(txSet.second->checkValid(app, 0, 0));
     }
     app.getHerder().externalizeValue(txSet.first, ledgerSeq, closeTime,
-                                     emptyUpgradeSteps);
+                                     emptyUpgradeSteps, std::nullopt);
     auto z1 = getTransactionHistoryResults(app.getDatabase(), ledgerSeq);
     auto z2 = getTransactionFeeMeta(app.getDatabase(), ledgerSeq);
 
