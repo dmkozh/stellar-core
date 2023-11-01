@@ -770,7 +770,7 @@ LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData)
     ltx.loadHeader().current().scpValue = sv;
 
     maybeResetLedgerCloseMetaDebugStream(ltx.loadHeader().current().ledgerSeq);
-    auto const* resolvedTxSet = txSet->resolve(mApp, ltx);
+    auto resolvedTxSet = txSet->resolve(mApp, ltx);
 
     if (resolvedTxSet == nullptr)
     {

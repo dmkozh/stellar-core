@@ -73,7 +73,7 @@ TEST_CASE("PendingEnvelopes recvSCPEnvelope", "[herder]")
         std::vector<TransactionFrameBasePtr> txs(n);
         std::generate(std::begin(txs), std::end(txs),
                       [&]() { return accs[index++].tx({payment(root, 1)}); });
-        return TxSetFrame::makeFromTransactions(txs, *app, 0, 0);
+        return TxSetFrame::makeFromTransactions(txs, *app, 0, 0).first;
     };
 
     auto makePublicKey = [](int i) {

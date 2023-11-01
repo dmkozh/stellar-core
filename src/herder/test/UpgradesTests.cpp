@@ -1787,10 +1787,11 @@ TEST_CASE("upgrade to version 11", "[upgrades]")
         uint64_t minBalance = lm.getLastMinBalance(5);
         uint64_t big = minBalance + ledgerSeq;
         uint64_t closeTime = 60 * 5 * ledgerSeq;
-        TxSetFrameConstPtr txSet = TxSetFrame::makeFromTransactions(
-            TxSetFrame::Transactions{
-                root.tx({txtest::createAccount(stranger, big)})},
-            *app, 0, 0);
+        auto txSet = TxSetFrame::makeFromTransactions(
+                         TxSetFrame::Transactions{
+                             root.tx({txtest::createAccount(stranger, big)})},
+                         *app, 0, 0)
+                         .first;
 
         // On 4th iteration of advance (a.k.a. ledgerSeq 5), perform a
         // ledger-protocol version upgrade to the new protocol, to activate
@@ -1910,10 +1911,12 @@ TEST_CASE("upgrade to version 12", "[upgrades]")
         uint64_t minBalance = lm.getLastMinBalance(5);
         uint64_t big = minBalance + ledgerSeq;
         uint64_t closeTime = 60 * 5 * ledgerSeq;
-        TxSetFrameConstPtr txSet = TxSetFrame::makeFromTransactions(
-            TxSetFrame::Transactions{
-                root.tx({txtest::createAccount(stranger, big)})},
-            *app, 0, 0);
+        TxSetFrameConstPtr txSet =
+            TxSetFrame::makeFromTransactions(
+                TxSetFrame::Transactions{
+                    root.tx({txtest::createAccount(stranger, big)})},
+                *app, 0, 0)
+                .first;
 
         // On 4th iteration of advance (a.k.a. ledgerSeq 5), perform a
         // ledger-protocol version upgrade to the new protocol, to
@@ -2024,8 +2027,8 @@ TEST_CASE("upgrade to version 13", "[upgrades]")
         auto ledgerSeq = lcl.header.ledgerSeq + 1;
 
         auto emptyTxSet = TxSetFrame::makeEmpty(lcl);
-        herder.getPendingEnvelopes().putTxSet(emptyTxSet->getContentsHash(),
-                                              ledgerSeq, emptyTxSet);
+        herder.getPendingEnvelopes().putTxSet(
+            emptyTxSet->getContentsHash(), ledgerSeq, emptyTxSet);
 
         auto upgrade = toUpgradeType(makeProtocolVersionUpgrade(13));
         StellarValue sv =
@@ -3051,14 +3054,18 @@ TEST_CASE("upgrade to generalized tx set changes TxSetFrame format",
 
     auto root = TestAccount::createRoot(*app);
     TxSetFrame::Transactions txs = {root.tx({payment(root, 1)})};
-    auto txSet = TxSetFrame::makeFromTransactions(txs, *app, 0, 0);
+    auto [txSet, resolvedTxSet] =
+        TxSetFrame::makeFromTransactions(txs, *app, 0, 0);
     REQUIRE(!txSet->isGeneralizedTxSet());
+    REQUIRE(!resolvedTxSet->isGeneralizedTxSet());
 
     executeUpgrade(*app, makeProtocolVersionUpgrade(
                              static_cast<int>(SOROBAN_PROTOCOL_VERSION)));
 
-    txSet = TxSetFrame::makeFromTransactions(txs, *app, 0, 0);
-    REQUIRE(txSet->isGeneralizedTxSet());
+    auto [newTxSet, newResolvedTxSet] =
+        TxSetFrame::makeFromTransactions(txs, *app, 0, 0);
+    REQUIRE(!newTxSet->isGeneralizedTxSet());
+    REQUIRE(!newResolvedTxSet->isGeneralizedTxSet());
 }
 
 TEST_CASE("upgrade to generalized tx set in network", "[upgrades][overlay]")

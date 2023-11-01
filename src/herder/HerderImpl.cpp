@@ -1324,7 +1324,7 @@ HerderImpl::triggerNextLedger(uint32_t ledgerSeqToTrigger,
     TxSetFrame::TxPhases invalidTxPhases;
     invalidTxPhases.resize(txPhases.size());
 
-    auto proposedSet = TxSetFrame::makeFromTransactions(
+    auto [proposedSet, resolvedProposedSet] = TxSetFrame::makeFromTransactions(
         txPhases, mApp, lowerBoundCloseTimeOffset, upperBoundCloseTimeOffset,
         invalidTxPhases);
 
@@ -1348,7 +1348,8 @@ HerderImpl::triggerNextLedger(uint32_t ledgerSeqToTrigger,
     // Inform the item fetcher so queries from other peers about his txSet
     // can be answered. Note this can trigger SCP callbacks, externalize, etc
     // if we happen to build a txset that we were trying to download.
-    mPendingEnvelopes.addTxSet(txSetHash, slotIndex, proposedSet);
+    mPendingEnvelopes.addTxSet(txSetHash, slotIndex, proposedSet,
+                               resolvedProposedSet);
 
     // no point in sending out a prepare:
     // externalize was triggered on a more recent ledger

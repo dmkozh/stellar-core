@@ -23,6 +23,7 @@ class Application;
 class TxSetFrame;
 class ResolvedTxSetFrame;
 using TxSetFrameConstPtr = std::shared_ptr<TxSetFrame const>;
+using ResolvedTxSetFrameConstPtr = std::shared_ptr<ResolvedTxSetFrame const>;
 
 // `TxSetFrame` is a wrapper around `TransactionSet` or
 // `GeneralizedTransactionSet` XDR.
@@ -82,7 +83,8 @@ class TxSetFrame : public NonMovableOrCopyable,
     //
     // **Note**: the output `TxSetFrame` will *not* contain the input
     // transaction pointers.
-    static TxSetFrameConstPtr makeFromTransactions(
+    static std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+    makeFromTransactions(
         TxPhases const& txPhases, Application& app,
         uint64_t lowerBoundCloseTimeOffset,
         uint64_t upperBoundCloseTimeOffset
@@ -94,7 +96,8 @@ class TxSetFrame : public NonMovableOrCopyable,
         bool skipValidation = false
 #endif
     );
-    static TxSetFrameConstPtr makeFromTransactions(
+    static std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+    makeFromTransactions(
         TxPhases const& txPhases, Application& app,
         uint64_t lowerBoundCloseTimeOffset, uint64_t upperBoundCloseTimeOffset,
         TxPhases& invalidTxsPerPhase
@@ -146,13 +149,8 @@ class TxSetFrame : public NonMovableOrCopyable,
     //
     // The returned value has the same lifetime as this `TxSetFrame` and
     // is cached, so it's safe and cheap to call this multiple times.
-    ResolvedTxSetFrame const* resolve(Application& app,
-                                      AbstractLedgerTxn& ltx) const;
-
-    // Gets the resolved tx set frame corresponding to this tx set, if any.
-    // If this tx set is not resolved yet, returns `nullptr`.
-    // Prefer using `resolve` directly to get the resolved tx set frame.
-    ResolvedTxSetFrame const* getResolvedFrame() const;
+    ResolvedTxSetFrameConstPtr resolve(Application& app,
+                                       AbstractLedgerTxn& ltx) const;
 
     bool isGeneralizedTxSet() const;
 
@@ -176,13 +174,17 @@ class TxSetFrame : public NonMovableOrCopyable,
     TxPhases createTransactionFrames(Hash const& networkID) const;
 
 #ifdef BUILD_TESTS
-    static TxSetFrameConstPtr makeFromTransactions(
-        Transactions txs, Application& app, uint64_t lowerBoundCloseTimeOffset,
-        uint64_t upperBoundCloseTimeOffset, bool enforceTxsApplyOrder = false);
-    static TxSetFrameConstPtr makeFromTransactions(
-        Transactions txs, Application& app, uint64_t lowerBoundCloseTimeOffset,
-        uint64_t upperBoundCloseTimeOffset, Transactions& invalidTxs,
-        bool enforceTxsApplyOrder = false);
+    static std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+    makeFromTransactions(Transactions txs, Application& app,
+                         uint64_t lowerBoundCloseTimeOffset,
+                         uint64_t upperBoundCloseTimeOffset,
+                         bool enforceTxsApplyOrder = false);
+    static std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+    makeFromTransactions(Transactions txs, Application& app,
+                         uint64_t lowerBoundCloseTimeOffset,
+                         uint64_t upperBoundCloseTimeOffset,
+                         Transactions& invalidTxs,
+                         bool enforceTxsApplyOrder = false);
 #endif
 
   private:
@@ -192,8 +194,6 @@ class TxSetFrame : public NonMovableOrCopyable,
     std::variant<TransactionSet, GeneralizedTransactionSet> mXDRTxSet;
     size_t mEncodedSize{};
     Hash mHash;
-
-    mutable std::optional<std::unique_ptr<ResolvedTxSetFrame>> mResolvedTxSet{};
 };
 
 // Interface for the functionality only available for resolved
@@ -213,8 +213,6 @@ class ResolvedTxSetFrame
     // transaction is not discounted.
     std::optional<int64_t> getTxBaseFee(TransactionFrameBaseConstPtr const& tx,
                                         LedgerHeader const& lclHeader) const;
-
-    Hash const& getContentsHash() const;
 
     // Gets all the transactions belonging to this frame in arbitrary order.
     TxSetFrame::Transactions const&
@@ -259,9 +257,6 @@ class ResolvedTxSetFrame
     size_t sizeOp(TxSetFrame::Phase phase) const;
     size_t sizeOpTotal() const;
 
-    // Returns the size of this transaction set when encoded to XDR.
-    size_t encodedSize() const;
-
     // Returns the sum of all fees that this transaction set would take.
     int64_t getTotalFees(LedgerHeader const& lh) const;
 
@@ -275,6 +270,15 @@ class ResolvedTxSetFrame
 
     // Returns a short description of this transaction set.
     std::string summary() const;
+
+    Hash const& getContentsHash() const;
+
+    // This shouldn't be needed for the regular flows, but is useful
+    // to cover XDR roundtrips in tests.
+#ifndef BUILD_TESTS
+  private:
+#endif
+    TxSetFrameConstPtr toWireTxSetFrame() const;
 
   private:
     friend class TxSetFrame;
@@ -319,12 +323,12 @@ class ResolvedTxSetFrame
     std::unordered_map<TransactionFrameBaseConstPtr, std::optional<int64_t>>&
     getInclusionFeeMap(TxSetFrame::Phase phase) const;
 
-    TxSetFrameConstPtr toWireTxSetFrame() const;
     void toXDR(TransactionSet& set) const;
     void toXDR(GeneralizedTransactionSet& generalizedTxSet) const;
 
-    bool const mIsGeneralized;
+    std::optional<Hash> mHash;
 
+    bool const mIsGeneralized;
     Hash const mPreviousLedgerHash;
     // There can only be 1 phase (classic) prior to protocol 20.
     // Starting protocol 20, there will be 2 phases (classic and soroban).
@@ -335,7 +339,6 @@ class ResolvedTxSetFrame
                                            std::optional<int64_t>>>
         mPhaseInclusionFeeMap;
 
-    std::weak_ptr<TxSetFrame const> mParentTxSetFrame{};
 #ifdef BUILD_TESTS
     mutable std::optional<TxSetFrame::Transactions> mApplyOrderOverride;
 #endif
