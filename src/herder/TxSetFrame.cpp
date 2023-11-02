@@ -451,8 +451,8 @@ TxSetFrame::makeFromTransactions(Transactions txs, Application& app,
     if (enforceTxsApplyOrder)
     {
         res.second->mApplyOrderOverride = txs;
+        res.first->mResolvedTxSetOverride = res.second;
     }
-    res.first->mResolvedTxSetOverride = res.second;
     invalidTxs = invalid[0];
     return res;
 }
