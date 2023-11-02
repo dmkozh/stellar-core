@@ -825,8 +825,8 @@ HerderImpl::recvSCPEnvelope(SCPEnvelope const& envelope,
 {
     auto txSetFrame =
         txset.type() == TX_SET
-            ? TxSetFrame::makeFromWire(mApp, txset.txSet())
-            : TxSetFrame::makeFromWire(mApp, txset.generalizedTxSet());
+            ? TxSetFrame::makeFromWire(txset.txSet())
+            : TxSetFrame::makeFromWire(txset.generalizedTxSet());
     return recvSCPEnvelope(envelope, qset, txSetFrame);
 }
 

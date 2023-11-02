@@ -45,6 +45,7 @@
 #include "xdrpp/marshal.h"
 #include <algorithm>
 #include <fmt/format.h>
+#include <numeric>
 #include <optional>
 
 using namespace stellar;
@@ -1623,17 +1624,17 @@ TEST_CASE("tx set hits overlay byte limit during construction")
             phases = TxSetFrame::TxPhases{txs, {}};
         }
 
-        TxSetFrameConstPtr txSet =
+        auto [txSet, resolvedTxSet] =
             TxSetFrame::makeFromTransactions(phases, *app, 0, 0, invalidPhases);
+        REQUIRE(txSet->encodedSize() <= MAX_MESSAGE_SIZE);
 
         REQUIRE(invalidPhases[static_cast<size_t>(phase)].empty());
-        auto const& phaseTxs = txSet->getTxsForPhase(phase);
+        auto const& phaseTxs = resolvedTxSet->getTxsForPhase(phase);
         auto trimmedSize =
             std::accumulate(phaseTxs.begin(), phaseTxs.end(), size_t(0),
                             [&](size_t a, TransactionFrameBasePtr const& tx) {
                                 return a += xdr::xdr_size(tx->getEnvelope());
                             });
-        REQUIRE(txSet->encodedSize() <= MAX_MESSAGE_SIZE);
 
         auto byteAllowance = phase == TxSetFrame::Phase::SOROBAN
                                  ? MAX_SOROBAN_BYTE_ALLOWANCE
