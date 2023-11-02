@@ -21,43 +21,26 @@ namespace stellar
 {
 class Application;
 class TxSetFrame;
-class ResolvedTxSetFrame;
+class ApplicableTxSetFrame;
 using TxSetFrameConstPtr = std::shared_ptr<TxSetFrame const>;
-using ResolvedTxSetFrameConstPtr = std::shared_ptr<ResolvedTxSetFrame const>;
+using ApplicableTxSetFrameConstPtr =
+    std::shared_ptr<ApplicableTxSetFrame const>;
 
 // `TxSetFrame` is a wrapper around `TransactionSet` or
 // `GeneralizedTransactionSet` XDR.
 //
-// `TxSetFrame` generally doesn't try to interpret the XDR it wraps
-// and might even store structurally invalid XDR and thus its safe to use at
-// overlay layer to simply exchange the messages, cache it etc.
-// In order to interpret (or 'resolve') the `TxSetFrame` use `resolve`
-// function. This function is only valid when `TxSetFrame` corresponds to
-// the correct ledger state, i.e. it points at the LCL hash.
+// TxSetFrame doesn't try to interpret the XDR it wraps and might even
+// store structurally invalid XDR. Thus its safe to use at
+// overlay layer to simply exchange the messages, cache them etc.
 //
-// Here are the states of the `TxSetFrame` lifecycle:
-//
-// 1.  Non-resolved - wraps an arbitrary TxSetFrame XDR. Can be created at
-//     any time.
-// 2.  Resolved - the XDR has been interpreted using the valid ledger state.
-//     Can only transition from (1) when `previousLedgerHash` equals to
-//     the current LCL's hash.
-// 2b. Resolved, invalid XDR - the XDR is structurally invalid and thus
-//     can't be properly interpreted. Can't transition to any other states
-//     from this.
-// 3.  Resolved, fully validated - `checkValid()` == true for the resolved
-//     frame. Can only transition from 2 when `previousLedgerHash` equals to
-//     the current LCL's hash. Can be nominated/voted for/applied.
-// 3b. Resolved, not valid - `checkValid()` == false for the resolved frame.
-//     Can't be nominated/voted for/applied.
-//
-// 1->2/3 transition is not reversible, i.e. after `TxSetFrame` has been
-// resolved at the correct LCL, its resolved-only functionality can be used
-// at any time (e.g. for accessing the view methods).
+// Before even trying to validate and apply a TxSetFrame it has
+// to be interpreted and prepared for apply using the ledger state
+// this TxSetFrame refers to. This is typically performed by
+// `prepareForApply` method.
 class TxSetFrame : public NonMovableOrCopyable
 {
   public:
-    enum Phase
+    enum class Phase
     {
         CLASSIC,
         SOROBAN,
@@ -69,10 +52,8 @@ class TxSetFrame : public NonMovableOrCopyable
 
     static std::string getPhaseName(Phase phase);
 
-    // Creates a valid TxSetFrame from the provided transactions.
-    //
-    // The returned TxSetFrame is resolved thus the `resolve` calls on it
-    // just return the already cached value.
+    // Creates a valid ApplicableTxSetFrame and corresponding TxSetFrame
+    // from the provided transactions.
     //
     // Not all the transactions will be included in the result: invalid
     // transactions are trimmed and optionally returned via `invalidTxs` and if
@@ -80,9 +61,9 @@ class TxSetFrame : public NonMovableOrCopyable
     // The result is guaranteed to pass `checkValid` check with the same
     // arguments as in this method, so additional validation is not needed.
     //
-    // **Note**: the output `TxSetFrame` will *not* contain the input
+    // **Note**: the output `ApplicableTxSetFrame` will *not* contain the input
     // transaction pointers.
-    static std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+    static std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr>
     makeFromTransactions(
         TxPhases const& txPhases, Application& app,
         uint64_t lowerBoundCloseTimeOffset,
@@ -95,7 +76,7 @@ class TxSetFrame : public NonMovableOrCopyable
         bool skipValidation = false
 #endif
     );
-    static std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+    static std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr>
     makeFromTransactions(
         TxPhases const& txPhases, Application& app,
         uint64_t lowerBoundCloseTimeOffset, uint64_t upperBoundCloseTimeOffset,
@@ -110,14 +91,11 @@ class TxSetFrame : public NonMovableOrCopyable
     );
 
     // Creates a valid empty TxSetFrame pointing at provided `lclHeader`.
-    // The output TxSetFrame is not resolved as `lclHeader` doesn't necessarily
-    // match the real LCL.
     static TxSetFrameConstPtr
     makeEmpty(LedgerHeaderHistoryEntry const& lclHeader);
 
     // `makeFromWire` methods create a TxSetFrame from the XDR messages.
-    // These methods don't perform any validation on the XDR. They have to
-    // be `resolve`d first, then validated with `checkValid`.
+    // These methods don't perform any validation on the XDR.
     static TxSetFrameConstPtr makeFromWire(TransactionSet const& xdrTxSet);
     static TxSetFrameConstPtr
     makeFromWire(GeneralizedTransactionSet const& xdrTxSet);
@@ -125,7 +103,7 @@ class TxSetFrame : public NonMovableOrCopyable
     static TxSetFrameConstPtr
     makeFromStoredTxSet(StoredTransactionSet const& storedSet);
 
-    // Creates a legacy (non-generalized) non-resolved TxSetFrame from the
+    // Creates a legacy (non-generalized) TxSetFrame from the
     // transactions that are trusted to be valid. Validation and filtering
     // are not performed.
     // This should be *only* used for building the legacy TxSetFrames from
@@ -140,16 +118,21 @@ class TxSetFrame : public NonMovableOrCopyable
 
     ~TxSetFrame() = default;
 
-    // Resolves this transaction set using the current ledger set.
-    // The resolution includes any logic dependent on the protocol version
-    // and network configuration state, i.e. any logic that depends on
-    // the current ledger state. That's why this may *only* be called
-    // when LCL hash matches the `previousLedgerHash` of this TxSetFrame.
+    // Interprets this transaction set using the current ledger state and
+    // returns a frame suitable for being applied to the ledger.
     //
-    // The returned value has the same lifetime as this `TxSetFrame` and
-    // is cached, so it's safe and cheap to call this multiple times.
-    ResolvedTxSetFrameConstPtr resolve(Application& app,
-                                       AbstractLedgerTxn& ltx) const;
+    // Returns `nullptr` in case if transaction set can't be interpreted,
+    // for example if XDR of this `TxSetFrame` is malformed.
+    //
+    // Note, that the output tx set is still not necessarily valid; it is
+    // only truly safe to be applied when `applicableTxSetFrame->checkValid()`
+    // returns `true`.
+    //
+    // This may *only* be called when LCL hash matches the `previousLedgerHash`
+    // of this `TxSetFrame` - tx sets with a wrong ledger hash shouldn't even
+    // be attempted to be interpreted.
+    ApplicableTxSetFrameConstPtr prepareForApply(Application& app,
+                                                 AbstractLedgerTxn& ltx) const;
 
     bool isGeneralizedTxSet() const;
 
@@ -168,23 +151,23 @@ class TxSetFrame : public NonMovableOrCopyable
     // Creates transaction frames for all the transactions in the set, grouped
     // by phase.
     // This is only necessary to serve a very specific use case of updating
-    // the transaction queue with non-resolved tx sets. Otherwise, use
-    // resolve()->getTransactionsForPhase().
+    // the transaction queue with wired tx sets. Otherwise, use
+    // getTransactionsForPhase() in `ApplicableTxSetFrame`.
     TxPhases createTransactionFrames(Hash const& networkID) const;
 
 #ifdef BUILD_TESTS
-    static std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+    static std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr>
     makeFromTransactions(Transactions txs, Application& app,
                          uint64_t lowerBoundCloseTimeOffset,
                          uint64_t upperBoundCloseTimeOffset,
                          bool enforceTxsApplyOrder = false);
-    static std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+    static std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr>
     makeFromTransactions(Transactions txs, Application& app,
                          uint64_t lowerBoundCloseTimeOffset,
                          uint64_t upperBoundCloseTimeOffset,
                          Transactions& invalidTxs,
                          bool enforceTxsApplyOrder = false);
-    mutable ResolvedTxSetFrameConstPtr mResolvedTxSetOverride;
+    mutable ApplicableTxSetFrameConstPtr mApplicableTxSetOverride;
 #endif
 
   private:
@@ -196,17 +179,16 @@ class TxSetFrame : public NonMovableOrCopyable
     Hash mHash;
 };
 
-// Interface for the functionality only available for resolved
-// `TransactionSetFrame`.
+// Transaction set that is suitable for being applied to the ledger.
 //
-// This can't exist without the corresponding 'parent' `TxSetFrame`.
+// This is not necessarily a fully *valid* transaction set: further validation
+// should typically be performed via `checkValid` before actual application.
 //
-// Note: `ResolvedTxSetFrame` is intentionally not a subclass of
-// `TxSetFrame`, as we'd need to convert a shared_ptr to
-// as non-resolved `TxSetFrame const` to `ResolvedTxSetFrame const`,
-// which doesn't work well with passing `TxSetFrameConstPtr` by value,
-// which the code base does a lot.
-class ResolvedTxSetFrame : public NonMovableOrCopyable
+// `ApplicableTxSetFrame` can only be built from `TxSetFrame`, either via
+// constructing it with `makeFromTransactions` (for the transaction sets
+// generated for nomination), or via `prepareForApply` (for arbitrary
+// transaction sets).
+class ApplicableTxSetFrame : public NonMovableOrCopyable
 {
   public:
     // Returns the base fee for the transaction or std::nullopt when the
@@ -238,7 +220,7 @@ class ResolvedTxSetFrame : public NonMovableOrCopyable
     size_t
     sizeTx(TxSetFrame::Phase phase) const
     {
-        return mTxPhases.at(phase).size();
+        return mTxPhases.at(static_cast<size_t>(phase)).size();
     }
     size_t sizeTxTotal() const;
 
@@ -283,12 +265,12 @@ class ResolvedTxSetFrame : public NonMovableOrCopyable
   private:
     friend class TxSetFrame;
 
-    ResolvedTxSetFrame(LedgerHeaderHistoryEntry const& lclHeader,
-                       TxSetFrame::TxPhases const& txs,
-                       std::optional<Hash> contentsHash);
-    ResolvedTxSetFrame(bool isGeneralized, Hash const& previousLedgerHash,
-                       TxSetFrame::TxPhases const& txs,
-                       std::optional<Hash> contentsHash);
+    ApplicableTxSetFrame(LedgerHeaderHistoryEntry const& lclHeader,
+                         TxSetFrame::TxPhases const& txs,
+                         std::optional<Hash> contentsHash);
+    ApplicableTxSetFrame(bool isGeneralized, Hash const& previousLedgerHash,
+                         TxSetFrame::TxPhases const& txs,
+                         std::optional<Hash> contentsHash);
     // Computes the fees for transactions in this set based on information from
     // the non-generalized tx set.
     // This has to be `const` in combination with `mutable` fee-related fields

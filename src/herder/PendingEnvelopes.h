@@ -60,15 +60,17 @@ class PendingEnvelopes
     ItemFetcher mTxSetFetcher;
     ItemFetcher mQuorumSetFetcher;
 
-    using TxSetFramePair = std::pair<TxSetFrameConstPtr,
-                                     std::optional<ResolvedTxSetFrameConstPtr>>;
+    using TxSetFramePair =
+        std::pair<TxSetFrameConstPtr,
+                  std::optional<ApplicableTxSetFrameConstPtr>>;
     using TxSetFrameCacheItem = std::pair<uint64, TxSetFramePair>;
     // recent txsets
     RandomEvictionCache<Hash, TxSetFrameCacheItem> mTxSetCache;
     // weak references to all known txsets
     UnorderedMap<
-        Hash, std::pair<std::weak_ptr<TxSetFrame const>,
-                        std::optional<std::weak_ptr<ResolvedTxSetFrame const>>>>
+        Hash,
+        std::pair<std::weak_ptr<TxSetFrame const>,
+                  std::optional<std::weak_ptr<ApplicableTxSetFrame const>>>>
         mKnownTxSets;
 
     // keep track of txset/qset hash -> size pairs for quick access
@@ -157,19 +159,23 @@ class PendingEnvelopes
      * @see ItemFetcher about that event - it may cause calls to Herder's
      * recvSCPEnvelope which in turn may cause calls to @see recvSCPEnvelope
      * in PendingEnvelopes.
+     * Also adds the respective `applicableTxSet` to cache when provided.
      */
-    void addTxSet(
-        Hash const& hash, uint64 lastSeenSlotIndex, TxSetFrameConstPtr txset,
-        std::optional<ResolvedTxSetFrameConstPtr> resolvedTxSet = std::nullopt);
+    void addTxSet(Hash const& hash, uint64 lastSeenSlotIndex,
+                  TxSetFrameConstPtr txset,
+                  std::optional<ApplicableTxSetFrameConstPtr> applicableTxSet =
+                      std::nullopt);
 
     /**
-        Adds @p txset to the cache and returns the txset referenced by the cache
+        Adds @p txset to the cache and returns the txset referenced by the
+       cache. Also adds the respective `applicableTxSet` to cache when provided.
         NB: if caller wants to continue using txset after the call, it should
        use the returned value instead
     */
-    TxSetFrameConstPtr putTxSet(
-        Hash const& hash, uint64 slot, TxSetFrameConstPtr txset,
-        std::optional<ResolvedTxSetFrameConstPtr> resolvedTxSet = std::nullopt);
+    TxSetFrameConstPtr
+    putTxSet(Hash const& hash, uint64 slot, TxSetFrameConstPtr txset,
+             std::optional<ApplicableTxSetFrameConstPtr> applicableTxSet =
+                 std::nullopt);
 
     /**
      * Check if @p txset identified by @p hash was requested before from peers.
@@ -196,8 +202,10 @@ class PendingEnvelopes
     Json::Value getJsonInfo(size_t limit);
 
     TxSetFrameConstPtr getTxSet(Hash const& hash);
-    std::pair<TxSetFrameConstPtr, std::optional<ResolvedTxSetFrameConstPtr>>
-    getMaybeResolvedTxSet(Hash const& hash);
+
+    std::pair<TxSetFrameConstPtr, std::optional<ApplicableTxSetFrameConstPtr>>
+    getTxSetAndMaybeApplicableTxSet(Hash const& hash);
+
     SCPQuorumSetPtr getQSet(Hash const& hash);
 
     // returns true if we think that the node is in the transitive quorum for

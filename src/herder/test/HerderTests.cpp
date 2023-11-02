@@ -1158,9 +1158,9 @@ TEST_CASE("txset base fee", "[herder][txset]")
             auto tx = makeMultiPayment(aI, aI, 2, 1000, k, 100);
             txs.push_back(tx);
         }
-        auto [txSet, resolvedTxSet] =
+        auto [txSet, applicableTxSet] =
             TxSetFrame::makeFromTransactions(txs, *app, 0, 0);
-        REQUIRE(resolvedTxSet->size(lhCopy) == lim);
+        REQUIRE(applicableTxSet->size(lhCopy) == lim);
         REQUIRE(extraAccounts >= 2);
 
         // fetch balances
@@ -1624,12 +1624,12 @@ TEST_CASE("tx set hits overlay byte limit during construction")
             phases = TxSetFrame::TxPhases{txs, {}};
         }
 
-        auto [txSet, resolvedTxSet] =
+        auto [txSet, applicableTxSet] =
             TxSetFrame::makeFromTransactions(phases, *app, 0, 0, invalidPhases);
         REQUIRE(txSet->encodedSize() <= MAX_MESSAGE_SIZE);
 
         REQUIRE(invalidPhases[static_cast<size_t>(phase)].empty());
-        auto const& phaseTxs = resolvedTxSet->getTxsForPhase(phase);
+        auto const& phaseTxs = applicableTxSet->getTxsForPhase(phase);
         auto trimmedSize =
             std::accumulate(phaseTxs.begin(), phaseTxs.end(), size_t(0),
                             [&](size_t a, TransactionFrameBasePtr const& tx) {
@@ -2321,11 +2321,13 @@ TEST_CASE("generalized tx set applied to ledger", "[herder][txset][soroban]")
     auto dummyUploadTx =
         createUploadWasmTx(*app, dummyAccount, 100, 1000, resources);
     resources.footprint.readWrite.emplace_back();
-    // TODO: currently transactions created by `createUploadWasmTx` always
-    // fail due to additional host-side validation. Thus no refundable
-    // fees are charged and event fee is set to `0`.
     uint32_t resourceFee = sorobanResourceFee(
-        *app, resources, xdr::xdr_size(dummyUploadTx->getEnvelope()), 0);
+        *app, resources, xdr::xdr_size(dummyUploadTx->getEnvelope()), 40);
+    // This value should not be changed for the test setup, but if it ever
+    // is changed,/ then we'd need to compute the rent fee via the rust bridge
+    // function (which is a bit verbose).
+    uint32_t const rentFee = 20'048;
+    resourceFee += rentFee;
     resources.footprint.readWrite.pop_back();
     auto addSorobanTx = [&](uint32_t inclusionFee) {
         auto account = root.create(std::to_string(txCnt++), startingBalance);
@@ -2335,7 +2337,7 @@ TEST_CASE("generalized tx set applied to ledger", "[herder][txset][soroban]")
     };
 
     auto checkFees =
-        [&](std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr> txSet,
+        [&](std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr> txSet,
             std::vector<int64_t> const& expectedFeeCharged,
             bool validateTxSet = true) {
             if (validateTxSet)
@@ -2553,11 +2555,11 @@ testSCPDriver(uint32 protocolVersion, uint32_t maxTxSetSize, size_t expectedOps)
             // candidates so far.  (We're using base fees simply as one example
             // of a type of upgrade, whose expected result is the maximum of all
             // candidates'.)
-            auto [txSet, resolvedTxSet] =
+            auto [txSet, applicableTxSet] =
                 makeTransactions(spec.n, spec.nbOps, spec.feeMulti);
             txSetHashes.push_back(txSet->getContentsHash());
-            txSetSizes.push_back(resolvedTxSet->size(lcl.header));
-            txSetOpSizes.push_back(resolvedTxSet->sizeOpTotal());
+            txSetSizes.push_back(applicableTxSet->size(lcl.header));
+            txSetOpSizes.push_back(applicableTxSet->sizeOpTotal());
             closeTimes.push_back(spec.closeTime);
             if (spec.baseFeeIncrement)
             {
@@ -2743,7 +2745,7 @@ testSCPDriver(uint32 protocolVersion, uint32_t maxTxSetSize, size_t expectedOps)
                             : tx->getEnvelope().v1().signatures;
             sig.clear();
             tx->addSignature(root.getSecretKey());
-            auto [txSet, resolvedTxSet] =
+            auto [txSet, applicableTxSet] =
                 testtxset::makeNonValidatedTxSetBasedOnLedgerVersion(
                     protocolVersion, {tx}, *app,
                     app->getLedgerManager().getLastClosedLedgerHeader().hash);
@@ -2768,8 +2770,8 @@ testSCPDriver(uint32 protocolVersion, uint32_t maxTxSetSize, size_t expectedOps)
             auto closeTimeOffset = nextCloseTime - lclCloseTime;
             TxSetFrame::Transactions removed;
             TxSetUtils::trimInvalid(
-                resolvedTxSet->getTxsForPhase(TxSetFrame::Phase::CLASSIC), *app,
-                closeTimeOffset, closeTimeOffset, removed);
+                applicableTxSet->getTxsForPhase(TxSetFrame::Phase::CLASSIC),
+                *app, closeTimeOffset, closeTimeOffset, removed);
             REQUIRE(removed.size() == (expectValid ? 0 : 1));
         };
 
@@ -3657,8 +3659,12 @@ TEST_CASE("soroban txs each parameter surge priced")
                                           ->getLedgerManager()
                                           .getLastClosedLedgerHeader()
                                           .header;
-                    auto txSet = nodes[0]->getHerder().getTxSet(
-                        lclHeader.scpValue.txSetHash);
+                    auto& pe = static_cast<HerderImpl&>(nodes[0]->getHerder())
+                                   .getPendingEnvelopes();
+                    auto [_, maybeApplicableTxSet] =
+                        pe.getTxSetAndMaybeApplicableTxSet(
+                            lclHeader.scpValue.txSetHash);
+                    auto txSet = *maybeApplicableTxSet;
                     auto const& sorobanTxs =
                         txSet->getTxsForPhase(TxSetFrame::Phase::SOROBAN);
                     if (!sorobanTxs.empty())
@@ -4770,10 +4776,10 @@ externalize(SecretKey const& sk, LedgerManager& lm, HerderImpl& herder,
 
     txsPhases.emplace_back(sorobanTxs);
 
-    auto [txSet, resolvedTxSet] =
+    auto [txSet, applicableTxSet] =
         TxSetFrame::makeFromTransactions(txsPhases, app, 0, 0);
     herder.getPendingEnvelopes().putTxSet(txSet->getContentsHash(), ledgerSeq,
-                                          txSet, resolvedTxSet);
+                                          txSet, applicableTxSet);
 
     auto lastCloseTime = lcl.header.scpValue.closeTime;
 

@@ -306,8 +306,8 @@ HerderSCPDriver::validateValueHelper(uint64_t slotIndex, StellarValue const& b,
     }
 
     Hash const& txSetHash = b.txSetHash;
-    auto [txSet, maybeResolvedTxSet] =
-        mPendingEnvelopes.getMaybeResolvedTxSet(txSetHash);
+    auto [txSet, maybeApplicableTxSet] =
+        mPendingEnvelopes.getTxSetAndMaybeApplicableTxSet(txSetHash);
 
     SCPDriver::ValidationLevel res;
 
@@ -320,10 +320,8 @@ HerderSCPDriver::validateValueHelper(uint64_t slotIndex, StellarValue const& b,
 
         return SCPDriver::kInvalidValue;
     }
-    if (!maybeResolvedTxSet)
+    if (!maybeApplicableTxSet)
     {
-        LedgerTxn ltx(mApp.getLedgerTxnRoot(), false,
-                      TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
         // The invariant here is that we only validate tx sets nominated
         // to be applied to the current ledger state. However, in case
         // if we receive a bad SCP value for the current state, we still
@@ -332,22 +330,21 @@ HerderSCPDriver::validateValueHelper(uint64_t slotIndex, StellarValue const& b,
         if (txSet->previousLedgerHash() ==
             mApp.getLedgerManager().getLastClosedLedgerHeader().hash)
         {
-            maybeResolvedTxSet = txSet->resolve(mApp, ltx);
+            LedgerTxn ltx(mApp.getLedgerTxnRoot(), false,
+                          TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
+            maybeApplicableTxSet = txSet->prepareForApply(mApp, ltx);
             mPendingEnvelopes.putTxSet(txSet->getContentsHash(), slotIndex,
-                                       txSet, maybeResolvedTxSet);
-        }
-        else
-        {
-            maybeResolvedTxSet = nullptr;
-        }
-        if (*maybeResolvedTxSet == nullptr)
-        {
-            CLOG_ERROR(Herder, "validateValue i:{} can't resolve txSet {}",
-                       slotIndex, hexAbbrev(txSetHash));
-            return SCPDriver::kInvalidValue;
+                                       txSet, maybeApplicableTxSet);
         }
     }
-    if (!checkAndCacheTxSetValid(**maybeResolvedTxSet, closeTimeOffset))
+    if (!maybeApplicableTxSet || *maybeApplicableTxSet == nullptr)
+    {
+        CLOG_ERROR(Herder,
+                   "validateValue i:{} can't prepare txSet {} for apply",
+                   slotIndex, hexAbbrev(txSetHash));
+        res = SCPDriver::kInvalidValue;
+    }
+    else if (!checkAndCacheTxSetValid(**maybeApplicableTxSet, closeTimeOffset))
     {
         CLOG_DEBUG(Herder,
                    "HerderSCPDriver::validateValue i: {} invalid txSet {}",
@@ -589,7 +586,7 @@ HerderSCPDriver::stopTimer(uint64 slotIndex, int timerID)
 // returns true if l < r
 // lh, rh are the hashes of l,h
 static bool
-compareTxSets(ResolvedTxSetFrame const& l, ResolvedTxSetFrame const& r,
+compareTxSets(ApplicableTxSetFrame const& l, ApplicableTxSetFrame const& r,
               Hash const& lh, Hash const& rh, size_t lEncodedSize,
               size_t rEncodedSize, LedgerHeader const& header, Hash const& s)
 {
@@ -730,22 +727,21 @@ HerderSCPDriver::combineCandidates(uint64_t slotIndex,
                       TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
         auto highest = candidateValues.cend();
         TxSetFrameConstPtr highestTxSet;
-        ResolvedTxSetFrameConstPtr highestResolvedTxSet;
+        ApplicableTxSetFrameConstPtr highestApplicableTxSet;
         for (auto it = candidateValues.cbegin(); it != candidateValues.cend();
              ++it)
         {
             auto const& sv = *it;
-            auto const [cTxSet, cResolvedTxSet] =
-                mPendingEnvelopes.getMaybeResolvedTxSet(sv.txSetHash);
-            // We should only select among valid resolved tx sets should be
-            // combined.
+            auto const [cTxSet, cApplicableTxSet] =
+                mPendingEnvelopes.getTxSetAndMaybeApplicableTxSet(sv.txSetHash);
+            // Only valid applicable tx sets should be combined.
             releaseAssert(cTxSet);
-            releaseAssert(cResolvedTxSet && *cResolvedTxSet);
+            releaseAssert(cApplicableTxSet && *cApplicableTxSet);
             if (cTxSet->previousLedgerHash() == lcl.hash)
             {
 
                 if (!highestTxSet ||
-                    compareTxSets(*highestResolvedTxSet, **cResolvedTxSet,
+                    compareTxSets(*highestApplicableTxSet, **cApplicableTxSet,
                                   highest->txSetHash, sv.txSetHash,
                                   highestTxSet->encodedSize(),
                                   cTxSet->encodedSize(), lcl.header,
@@ -753,7 +749,7 @@ HerderSCPDriver::combineCandidates(uint64_t slotIndex,
                 {
                     highest = it;
                     highestTxSet = cTxSet;
-                    highestResolvedTxSet = *cResolvedTxSet;
+                    highestApplicableTxSet = *cApplicableTxSet;
                 }
             }
         }
@@ -1244,7 +1240,7 @@ HerderSCPDriver::wrapStellarValue(StellarValue const& sv)
 }
 
 bool
-HerderSCPDriver::checkAndCacheTxSetValid(ResolvedTxSetFrame const& txSet,
+HerderSCPDriver::checkAndCacheTxSetValid(ApplicableTxSetFrame const& txSet,
                                          uint64_t closeTimeOffset) const
 {
     auto key = TxSetValidityKey{

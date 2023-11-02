@@ -3223,18 +3223,18 @@ TEST_CASE("upgrade to generalized tx set changes TxSetFrame format",
 
     auto root = TestAccount::createRoot(*app);
     TxSetFrame::Transactions txs = {root.tx({payment(root, 1)})};
-    auto [txSet, resolvedTxSet] =
+    auto [txSet, applicableTxSet] =
         TxSetFrame::makeFromTransactions(txs, *app, 0, 0);
     REQUIRE(!txSet->isGeneralizedTxSet());
-    REQUIRE(!resolvedTxSet->isGeneralizedTxSet());
+    REQUIRE(!applicableTxSet->isGeneralizedTxSet());
 
     executeUpgrade(*app, makeProtocolVersionUpgrade(
                              static_cast<int>(SOROBAN_PROTOCOL_VERSION)));
 
-    auto [newTxSet, newResolvedTxSet] =
+    auto [newTxSet, newApplicableTxSet] =
         TxSetFrame::makeFromTransactions(txs, *app, 0, 0);
     REQUIRE(newTxSet->isGeneralizedTxSet());
-    REQUIRE(newResolvedTxSet->isGeneralizedTxSet());
+    REQUIRE(newApplicableTxSet->isGeneralizedTxSet());
 }
 
 TEST_CASE("upgrade to generalized tx set in network", "[upgrades][overlay]")
@@ -3332,10 +3332,10 @@ TEST_CASE("upgrade to generalized tx set in network", "[upgrades][overlay]")
                 auto& pe = herder.getPendingEnvelopes();
                 herder.getHerderSCPDriver().toStellarValue(
                     env.statement.pledges.externalize().commit.value, sv);
-                return *pe.getMaybeResolvedTxSet(sv.txSetHash).second;
+                return *pe.getTxSetAndMaybeApplicableTxSet(sv.txSetHash).second;
             }
         }
-        return ResolvedTxSetFrameConstPtr{};
+        return ApplicableTxSetFrameConstPtr{};
     };
 
     // Make sure tx set format switches to generalized after upgrade.
@@ -3345,11 +3345,11 @@ TEST_CASE("upgrade to generalized tx set in network", "[upgrades][overlay]")
         {
             LedgerTxn ltx(node->getLedgerTxnRoot(), false,
                           TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
-            auto resolvedTxSet = getLedgerTxSet(*node, ledger);
-            REQUIRE(resolvedTxSet);
-            REQUIRE(resolvedTxSet->sizeTxTotal() > 0);
+            auto applicableTxSet = getLedgerTxSet(*node, ledger);
+            REQUIRE(applicableTxSet);
+            REQUIRE(applicableTxSet->sizeTxTotal() > 0);
             bool isGeneralized = ledger > *upgradeLedger;
-            REQUIRE(resolvedTxSet->isGeneralizedTxSet() == isGeneralized);
+            REQUIRE(applicableTxSet->isGeneralizedTxSet() == isGeneralized);
         }
     }
 }

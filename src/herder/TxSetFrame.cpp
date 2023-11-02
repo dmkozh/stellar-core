@@ -192,8 +192,7 @@ transactionsToGeneralizedTransactionSetXDR(
         auto& phase =
             generalizedTxSet.v1TxSet().phases.emplace_back().v0Components();
 
-        auto const& feeMap =
-            phaseInclusionFeeMap[static_cast<TxSetFrame::Phase>(i)];
+        auto const& feeMap = phaseInclusionFeeMap[i];
         std::map<std::optional<int64_t>, size_t> feeTxCount;
         for (auto const& [tx, fee] : feeMap)
         {
@@ -266,7 +265,7 @@ TxSetFrame::makeFromStoredTxSet(StoredTransactionSet const& storedSet)
     return TxSetFrame::makeFromWire(storedSet.generalizedTxSet());
 }
 
-std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr>
 TxSetFrame::makeFromTransactions(TxSetFrame::TxPhases const& txPhases,
                                  Application& app,
                                  uint64_t lowerBoundCloseTimeOffset,
@@ -288,7 +287,7 @@ TxSetFrame::makeFromTransactions(TxSetFrame::TxPhases const& txPhases,
     );
 }
 
-std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr>
 TxSetFrame::makeFromTransactions(TxSetFrame::TxPhases const& txPhases,
                                  Application& app,
                                  uint64_t lowerBoundCloseTimeOffset,
@@ -336,59 +335,60 @@ TxSetFrame::makeFromTransactions(TxSetFrame::TxPhases const& txPhases,
     }
 
     auto const& lclHeader = app.getLedgerManager().getLastClosedLedgerHeader();
-    // Preliminary resolved frame - we don't know the contents hash yet, but
+    // Preliminary applicable frame - we don't know the contents hash yet, but
     // we also don't return this.
-    std::shared_ptr<ResolvedTxSetFrame> preliminaryResolvedTxSet(
-        new ResolvedTxSetFrame(lclHeader, validatedPhases, std::nullopt));
-    preliminaryResolvedTxSet->applySurgePricing(app);
+    std::shared_ptr<ApplicableTxSetFrame> preliminaryApplicableTxSet(
+        new ApplicableTxSetFrame(lclHeader, validatedPhases, std::nullopt));
+    preliminaryApplicableTxSet->applySurgePricing(app);
     // Do the roundtrip through XDR to ensure we never build an incorrect tx set
     // for nomination.
-    auto outputTxSet = preliminaryResolvedTxSet->toWireTxSetFrame();
+    auto outputTxSet = preliminaryApplicableTxSet->toWireTxSetFrame();
 #ifdef BUILD_TESTS
     if (skipValidation)
     {
-        // Fill in the contents hash if we're skipping the normal resolution
+        // Fill in the contents hash if we're skipping the normal roundtrip
         // and validation flow.
-        preliminaryResolvedTxSet->mContentsHash =
+        preliminaryApplicableTxSet->mContentsHash =
             outputTxSet->getContentsHash();
-        return std::make_pair(outputTxSet, preliminaryResolvedTxSet);
+        return std::make_pair(outputTxSet, preliminaryApplicableTxSet);
     }
 #endif
 
-    ResolvedTxSetFrameConstPtr outputResolvedTxSet{};
+    ApplicableTxSetFrameConstPtr outputApplicableTxSet{};
     {
         LedgerTxn ltx(app.getLedgerTxnRoot(), false,
                       TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
-        outputResolvedTxSet = outputTxSet->resolve(app, ltx);
+        outputApplicableTxSet = outputTxSet->prepareForApply(app, ltx);
     }
-    if (!outputResolvedTxSet)
+    if (!outputApplicableTxSet)
     {
-        throw std::runtime_error("Couldn't resolve created tx set frame");
+        throw std::runtime_error(
+            "Couldn't prepare created tx set frame for apply");
     }
 
     // Make sure no transactions were lost during the roundtrip and the output
     // tx set is valid.
-    bool valid = preliminaryResolvedTxSet->numPhases() ==
-                 outputResolvedTxSet->numPhases();
+    bool valid = preliminaryApplicableTxSet->numPhases() ==
+                 outputApplicableTxSet->numPhases();
     if (valid)
     {
-        for (int i = 0; i < preliminaryResolvedTxSet->numPhases(); ++i)
+        for (int i = 0; i < preliminaryApplicableTxSet->numPhases(); ++i)
         {
             valid = valid &&
-                    preliminaryResolvedTxSet->sizeTx(static_cast<Phase>(i)) ==
-                        outputResolvedTxSet->sizeTx(static_cast<Phase>(i));
+                    preliminaryApplicableTxSet->sizeTx(static_cast<Phase>(i)) ==
+                        outputApplicableTxSet->sizeTx(static_cast<Phase>(i));
         }
     }
 
-    valid =
-        valid && outputResolvedTxSet->checkValid(app, lowerBoundCloseTimeOffset,
-                                                 upperBoundCloseTimeOffset);
+    valid = valid &&
+            outputApplicableTxSet->checkValid(app, lowerBoundCloseTimeOffset,
+                                              upperBoundCloseTimeOffset);
     if (!valid)
     {
         throw std::runtime_error("Created invalid tx set frame");
     }
 
-    return std::make_pair(outputTxSet, outputResolvedTxSet);
+    return std::make_pair(outputTxSet, outputApplicableTxSet);
 }
 
 TxSetFrameConstPtr
@@ -422,7 +422,7 @@ TxSetFrame::makeFromHistoryTransactions(Hash const& previousLedgerHash,
 }
 
 #ifdef BUILD_TESTS
-std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr>
 TxSetFrame::makeFromTransactions(TxSetFrame::Transactions txs, Application& app,
                                  uint64_t lowerBoundCloseTimeOffset,
                                  uint64_t upperBoundCloseTimeOffset,
@@ -434,7 +434,7 @@ TxSetFrame::makeFromTransactions(TxSetFrame::Transactions txs, Application& app,
                                             enforceTxsApplyOrder);
 }
 
-std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr>
 TxSetFrame::makeFromTransactions(Transactions txs, Application& app,
                                  uint64_t lowerBoundCloseTimeOffset,
                                  uint64_t upperBoundCloseTimeOffset,
@@ -458,26 +458,26 @@ TxSetFrame::makeFromTransactions(Transactions txs, Application& app,
     if (enforceTxsApplyOrder)
     {
         res.second->mApplyOrderOverride = txs;
-        res.first->mResolvedTxSetOverride = res.second;
+        res.first->mApplicableTxSetOverride = res.second;
     }
     invalidTxs = invalid[0];
     return res;
 }
 #endif
 
-ResolvedTxSetFrameConstPtr
-TxSetFrame::resolve(Application& app, AbstractLedgerTxn& ltx) const
+ApplicableTxSetFrameConstPtr
+TxSetFrame::prepareForApply(Application& app, AbstractLedgerTxn& ltx) const
 {
 #ifdef BUILD_TESTS
-    if (mResolvedTxSetOverride)
+    if (mApplicableTxSetOverride)
     {
-        return mResolvedTxSetOverride;
+        return mApplicableTxSetOverride;
     }
 #endif
     ZoneScoped;
     releaseAssert(previousLedgerHash() ==
                   app.getLedgerManager().getLastClosedLedgerHeader().hash);
-    std::shared_ptr<ResolvedTxSetFrame> txSet{};
+    std::shared_ptr<ApplicableTxSetFrame> txSet{};
     if (isGeneralizedTxSet())
     {
         auto const& xdrTxSet = std::get<GeneralizedTransactionSet>(mXDRTxSet);
@@ -491,7 +491,7 @@ TxSetFrame::resolve(Application& app, AbstractLedgerTxn& ltx) const
         TxSetFrame::TxPhases defaultPhases;
         defaultPhases.resize(phases.size());
 
-        txSet = std::shared_ptr<ResolvedTxSetFrame>(new ResolvedTxSetFrame(
+        txSet = std::shared_ptr<ApplicableTxSetFrame>(new ApplicableTxSetFrame(
             true, xdrTxSet.v1TxSet().previousLedgerHash, defaultPhases, mHash));
         // Mark fees as already computed as we read them from the XDR.
         for (int i = 0; i < txSet->mFeesComputed.size(); i++)
@@ -534,9 +534,9 @@ TxSetFrame::resolve(Application& app, AbstractLedgerTxn& ltx) const
     else
     {
         auto const& xdrTxSet = std::get<TransactionSet>(mXDRTxSet);
-        txSet = std::shared_ptr<ResolvedTxSetFrame>(
-            new ResolvedTxSetFrame(false, xdrTxSet.previousLedgerHash,
-                                   {TxSetFrame::Transactions{}}, mHash));
+        txSet = std::shared_ptr<ApplicableTxSetFrame>(
+            new ApplicableTxSetFrame(false, xdrTxSet.previousLedgerHash,
+                                     {TxSetFrame::Transactions{}}, mHash));
         if (!txSet->addTxsFromXdr(app, ltx, xdrTxSet.txs, false, std::nullopt,
                                   TxSetFrame::Phase::CLASSIC))
         {
@@ -707,10 +707,10 @@ TxSetFrame::storeXDR(StoredTransactionSet& txSet) const
     }
 }
 
-ResolvedTxSetFrame::ResolvedTxSetFrame(bool isGeneralized,
-                                       Hash const& previousLedgerHash,
-                                       TxSetFrame::TxPhases const& txs,
-                                       std::optional<Hash> contentsHash)
+ApplicableTxSetFrame::ApplicableTxSetFrame(bool isGeneralized,
+                                           Hash const& previousLedgerHash,
+                                           TxSetFrame::TxPhases const& txs,
+                                           std::optional<Hash> contentsHash)
     : mIsGeneralized(isGeneralized)
     , mPreviousLedgerHash(previousLedgerHash)
     , mTxPhases(txs)
@@ -720,10 +720,10 @@ ResolvedTxSetFrame::ResolvedTxSetFrame(bool isGeneralized,
 {
 }
 
-ResolvedTxSetFrame::ResolvedTxSetFrame(
+ApplicableTxSetFrame::ApplicableTxSetFrame(
     LedgerHeaderHistoryEntry const& lclHeader, TxSetFrame::TxPhases const& txs,
     std::optional<Hash> contentsHash)
-    : ResolvedTxSetFrame(
+    : ApplicableTxSetFrame(
           protocolVersionStartsFrom(lclHeader.header.ledgerVersion,
                                     SOROBAN_PROTOCOL_VERSION),
           lclHeader.hash, txs, contentsHash)
@@ -731,21 +731,21 @@ ResolvedTxSetFrame::ResolvedTxSetFrame(
 }
 
 Hash const&
-ResolvedTxSetFrame::getContentsHash() const
+ApplicableTxSetFrame::getContentsHash() const
 {
     releaseAssert(mContentsHash);
     return *mContentsHash;
 }
 
 TxSetFrame::Transactions const&
-ResolvedTxSetFrame::getTxsForPhase(TxSetFrame::Phase phase) const
+ApplicableTxSetFrame::getTxsForPhase(TxSetFrame::Phase phase) const
 {
     releaseAssert(static_cast<size_t>(phase) < mTxPhases.size());
     return mTxPhases.at(static_cast<size_t>(phase));
 }
 
 TxSetFrame::Transactions
-ResolvedTxSetFrame::getTxsInApplyOrder() const
+ApplicableTxSetFrame::getTxsInApplyOrder() const
 {
 #ifdef BUILD_TESTS
     if (mApplyOrderOverride)
@@ -810,9 +810,9 @@ ResolvedTxSetFrame::getTxsInApplyOrder() const
 // the fees of all the tx it has submitted in this set
 // check seq num
 bool
-ResolvedTxSetFrame::checkValid(Application& app,
-                               uint64_t lowerBoundCloseTimeOffset,
-                               uint64_t upperBoundCloseTimeOffset) const
+ApplicableTxSetFrame::checkValid(Application& app,
+                                 uint64_t lowerBoundCloseTimeOffset,
+                                 uint64_t upperBoundCloseTimeOffset) const
 {
     ZoneScoped;
     auto& lcl = app.getLedgerManager().getLastClosedLedgerHeader();
@@ -948,8 +948,8 @@ ResolvedTxSetFrame::checkValid(Application& app,
 }
 
 size_t
-ResolvedTxSetFrame::size(LedgerHeader const& lh,
-                         std::optional<TxSetFrame::Phase> phase) const
+ApplicableTxSetFrame::size(LedgerHeader const& lh,
+                           std::optional<TxSetFrame::Phase> phase) const
 {
     size_t sz = 0;
     if (!phase)
@@ -973,7 +973,7 @@ ResolvedTxSetFrame::size(LedgerHeader const& lh,
 }
 
 size_t
-ResolvedTxSetFrame::sizeOp(TxSetFrame::Phase phase) const
+ApplicableTxSetFrame::sizeOp(TxSetFrame::Phase phase) const
 {
     ZoneScoped;
     auto const& txs = mTxPhases.at(static_cast<size_t>(phase));
@@ -984,7 +984,7 @@ ResolvedTxSetFrame::sizeOp(TxSetFrame::Phase phase) const
 }
 
 size_t
-ResolvedTxSetFrame::sizeOpTotal() const
+ApplicableTxSetFrame::sizeOpTotal() const
 {
     ZoneScoped;
     size_t total = 0;
@@ -996,7 +996,7 @@ ResolvedTxSetFrame::sizeOpTotal() const
 }
 
 size_t
-ResolvedTxSetFrame::sizeTxTotal() const
+ApplicableTxSetFrame::sizeTxTotal() const
 {
     ZoneScoped;
     size_t total = 0;
@@ -1008,7 +1008,7 @@ ResolvedTxSetFrame::sizeTxTotal() const
 }
 
 void
-ResolvedTxSetFrame::computeTxFeesForNonGeneralizedSet(
+ApplicableTxSetFrame::computeTxFeesForNonGeneralizedSet(
     LedgerHeader const& lclHeader) const
 {
     ZoneScoped;
@@ -1025,7 +1025,7 @@ ResolvedTxSetFrame::computeTxFeesForNonGeneralizedSet(
 }
 
 void
-ResolvedTxSetFrame::computeTxFeesForNonGeneralizedSet(
+ApplicableTxSetFrame::computeTxFeesForNonGeneralizedSet(
     LedgerHeader const& lclHeader, int64_t lowestBaseFee,
     bool enableLogging) const
 {
@@ -1067,13 +1067,13 @@ ResolvedTxSetFrame::computeTxFeesForNonGeneralizedSet(
 }
 
 void
-ResolvedTxSetFrame::computeTxFees(
+ApplicableTxSetFrame::computeTxFees(
     TxSetFrame::Phase phase, LedgerHeader const& ledgerHeader,
     SurgePricingLaneConfig const& surgePricingConfig,
     std::vector<int64_t> const& lowestLaneFee,
     std::vector<bool> const& hadTxNotFittingLane)
 {
-    releaseAssert(!mFeesComputed[phase]);
+    releaseAssert(!mFeesComputed[static_cast<size_t>(phase)]);
     releaseAssert(isGeneralizedTxSet());
     releaseAssert(lowestLaneFee.size() == hadTxNotFittingLane.size());
     std::vector<int64_t> laneBaseFee(lowestLaneFee.size(),
@@ -1110,18 +1110,18 @@ ResolvedTxSetFrame::computeTxFees(
         }
     }
 
-    auto const& txs = mTxPhases.at(phase);
+    auto const& txs = mTxPhases.at(static_cast<size_t>(phase));
     auto& feeMap = getInclusionFeeMap(phase);
     for (auto const& tx : txs)
     {
         feeMap[tx] = laneBaseFee[surgePricingConfig.getLane(*tx)];
     }
-    mFeesComputed[phase] = true;
+    mFeesComputed[static_cast<size_t>(phase)] = true;
 }
 
 std::optional<int64_t>
-ResolvedTxSetFrame::getTxBaseFee(TransactionFrameBaseConstPtr const& tx,
-                                 LedgerHeader const& lclHeader) const
+ApplicableTxSetFrame::getTxBaseFee(TransactionFrameBaseConstPtr const& tx,
+                                   LedgerHeader const& lclHeader) const
 {
     if (std::any_of(mFeesComputed.begin(), mFeesComputed.end(),
                     [](bool comp) { return !comp; }))
@@ -1141,7 +1141,7 @@ ResolvedTxSetFrame::getTxBaseFee(TransactionFrameBaseConstPtr const& tx,
 }
 
 std::optional<Resource>
-ResolvedTxSetFrame::getTxSetSorobanResource() const
+ApplicableTxSetFrame::getTxSetSorobanResource() const
 {
     releaseAssert(mTxPhases.size() >
                   static_cast<size_t>(TxSetFrame::Phase::SOROBAN));
@@ -1162,7 +1162,7 @@ ResolvedTxSetFrame::getTxSetSorobanResource() const
 }
 
 int64_t
-ResolvedTxSetFrame::getTotalFees(LedgerHeader const& lh) const
+ApplicableTxSetFrame::getTotalFees(LedgerHeader const& lh) const
 {
     ZoneScoped;
     int64_t total{0};
@@ -1180,7 +1180,7 @@ ResolvedTxSetFrame::getTotalFees(LedgerHeader const& lh) const
 }
 
 int64_t
-ResolvedTxSetFrame::getTotalInclusionFees() const
+ApplicableTxSetFrame::getTotalInclusionFees() const
 {
     ZoneScoped;
     int64_t total{0};
@@ -1197,7 +1197,7 @@ ResolvedTxSetFrame::getTotalInclusionFees() const
 }
 
 std::string
-ResolvedTxSetFrame::summary() const
+ApplicableTxSetFrame::summary() const
 {
     if (empty())
     {
@@ -1265,7 +1265,7 @@ ResolvedTxSetFrame::summary() const
 }
 
 void
-ResolvedTxSetFrame::toXDR(TransactionSet& txSet) const
+ApplicableTxSetFrame::toXDR(TransactionSet& txSet) const
 {
     ZoneScoped;
     releaseAssert(!isGeneralizedTxSet());
@@ -1274,7 +1274,7 @@ ResolvedTxSetFrame::toXDR(TransactionSet& txSet) const
 }
 
 void
-ResolvedTxSetFrame::toXDR(GeneralizedTransactionSet& generalizedTxSet) const
+ApplicableTxSetFrame::toXDR(GeneralizedTransactionSet& generalizedTxSet) const
 {
     ZoneScoped;
     releaseAssert(isGeneralizedTxSet());
@@ -1288,7 +1288,7 @@ ResolvedTxSetFrame::toXDR(GeneralizedTransactionSet& generalizedTxSet) const
 }
 
 TxSetFrameConstPtr
-ResolvedTxSetFrame::toWireTxSetFrame() const
+ApplicableTxSetFrame::toWireTxSetFrame() const
 {
     TxSetFrameConstPtr outputTxSet;
     if (mIsGeneralized)
@@ -1307,17 +1307,16 @@ ResolvedTxSetFrame::toWireTxSetFrame() const
 }
 
 bool
-ResolvedTxSetFrame::isGeneralizedTxSet() const
+ApplicableTxSetFrame::isGeneralizedTxSet() const
 {
     return mIsGeneralized;
 }
 
 bool
-ResolvedTxSetFrame::addTxsFromXdr(Application& app, AbstractLedgerTxn& rootLtx,
-                                  xdr::xvector<TransactionEnvelope> const& txs,
-                                  bool useBaseFee,
-                                  std::optional<int64_t> baseFee,
-                                  TxSetFrame::Phase phase)
+ApplicableTxSetFrame::addTxsFromXdr(
+    Application& app, AbstractLedgerTxn& rootLtx,
+    xdr::xvector<TransactionEnvelope> const& txs, bool useBaseFee,
+    std::optional<int64_t> baseFee, TxSetFrame::Phase phase)
 {
     auto& phaseTxs = mTxPhases.at(static_cast<int>(phase));
     size_t oldSize = phaseTxs.size();
@@ -1347,7 +1346,7 @@ ResolvedTxSetFrame::addTxsFromXdr(Application& app, AbstractLedgerTxn& rootLtx,
 }
 
 void
-ResolvedTxSetFrame::applySurgePricing(Application& app)
+ApplicableTxSetFrame::applySurgePricing(Application& app)
 {
     ZoneScoped;
 
@@ -1470,7 +1469,7 @@ ResolvedTxSetFrame::applySurgePricing(Application& app)
 }
 
 std::unordered_map<TransactionFrameBaseConstPtr, std::optional<int64_t>>&
-ResolvedTxSetFrame::getInclusionFeeMap(TxSetFrame::Phase phase) const
+ApplicableTxSetFrame::getInclusionFeeMap(TxSetFrame::Phase phase) const
 {
     size_t phaseId = static_cast<size_t>(phase);
     releaseAssert(phaseId < mPhaseInclusionFeeMap.size());

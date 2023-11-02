@@ -183,12 +183,12 @@ PendingEnvelopes::updateMetrics()
 TxSetFrameConstPtr
 PendingEnvelopes::putTxSet(
     Hash const& hash, uint64 slot, TxSetFrameConstPtr txset,
-    std::optional<ResolvedTxSetFrameConstPtr> resolvedTxSet)
+    std::optional<ApplicableTxSetFrameConstPtr> applicableTxSet)
 {
     auto res = getKnownTxSet(hash, slot, true);
-    if (!res.first || (resolvedTxSet && !res.second))
+    if (!res.first || (applicableTxSet && !res.second))
     {
-        res = std::make_pair(txset, resolvedTxSet);
+        res = std::make_pair(txset, applicableTxSet);
         mKnownTxSets[hash] = res;
         mTxSetCache.put(hash, std::make_pair(slot, res));
     }
@@ -207,12 +207,12 @@ PendingEnvelopes::getKnownTxSet(Hash const& hash, uint64 slot, bool touch)
     auto it = mKnownTxSets.find(hash);
     if (it != mKnownTxSets.end())
     {
-        auto const& [txSet, maybeResolvedTxSet] = it->second;
+        auto const& [txSet, maybeApplicableTxSet] = it->second;
 
         res.first = txSet.lock();
-        if (maybeResolvedTxSet)
+        if (maybeApplicableTxSet)
         {
-            res.second = maybeResolvedTxSet->lock();
+            res.second = maybeApplicableTxSet->lock();
         }
     }
 
@@ -236,12 +236,12 @@ PendingEnvelopes::getKnownTxSet(Hash const& hash, uint64 slot, bool touch)
 void
 PendingEnvelopes::addTxSet(
     Hash const& hash, uint64 lastSeenSlotIndex, TxSetFrameConstPtr txset,
-    std::optional<ResolvedTxSetFrameConstPtr> resolvedTxSet)
+    std::optional<ApplicableTxSetFrameConstPtr> applicableTxSet)
 {
     ZoneScoped;
     CLOG_TRACE(Herder, "Add TxSet {}", hexAbbrev(hash));
 
-    putTxSet(hash, lastSeenSlotIndex, txset, resolvedTxSet);
+    putTxSet(hash, lastSeenSlotIndex, txset, applicableTxSet);
     mTxSetFetcher.recv(hash, mFetchTxSetTimer);
 }
 
@@ -736,8 +736,8 @@ PendingEnvelopes::getTxSet(Hash const& hash)
     return getKnownTxSet(hash, 0, false).first;
 }
 
-std::pair<TxSetFrameConstPtr, std::optional<ResolvedTxSetFrameConstPtr>>
-PendingEnvelopes::getMaybeResolvedTxSet(Hash const& hash)
+std::pair<TxSetFrameConstPtr, std::optional<ApplicableTxSetFrameConstPtr>>
+PendingEnvelopes::getTxSetAndMaybeApplicableTxSet(Hash const& hash)
 {
     return getKnownTxSet(hash, 0, false);
 }

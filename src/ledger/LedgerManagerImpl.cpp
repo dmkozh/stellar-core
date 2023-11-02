@@ -766,13 +766,15 @@ LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData)
     ltx.loadHeader().current().scpValue = sv;
 
     maybeResetLedgerCloseMetaDebugStream(ltx.loadHeader().current().ledgerSeq);
-    auto resolvedTxSet = txSet->resolve(mApp, ltx);
+    auto applicableTxSet = txSet->prepareForApply(mApp, ltx);
 
-    if (resolvedTxSet == nullptr)
+    if (applicableTxSet == nullptr)
     {
-        CLOG_ERROR(Ledger, "Corrupt transaction set: TxSet cannot be resolved",
-                   binToHex(txSet->getContentsHash()),
-                   binToHex(ledgerData.getValue().txSetHash));
+        CLOG_ERROR(
+            Ledger,
+            "Corrupt transaction set: TxSet cannot be prepared for apply",
+            binToHex(txSet->getContentsHash()),
+            binToHex(ledgerData.getValue().txSetHash));
         CLOG_ERROR(Ledger, "{}", POSSIBLY_CORRUPTED_QUORUM_SET);
         throw std::runtime_error("transaction set cannot be processed");
     }
@@ -796,7 +798,7 @@ LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData)
         // this method throw.
         ledgerCloseMeta = std::make_unique<LedgerCloseMetaFrame>(
             ltx.loadHeader().current().ledgerVersion);
-        ledgerCloseMeta->reserveTxProcessing(resolvedTxSet->sizeTxTotal());
+        ledgerCloseMeta->reserveTxProcessing(applicableTxSet->sizeTxTotal());
         ledgerCloseMeta->populateTxSet(*txSet);
     }
 
@@ -804,15 +806,15 @@ LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData)
     // was sorted by hash; we reorder it so that transactions are
     // sorted such that sequence numbers are respected
     std::vector<TransactionFrameBasePtr> const txs =
-        resolvedTxSet->getTxsInApplyOrder();
+        applicableTxSet->getTxsInApplyOrder();
 
     // first, prefetch source accounts for txset, then charge fees
     prefetchTxSourceIds(txs);
-    processFeesSeqNums(txs, ltx, *resolvedTxSet, ledgerCloseMeta);
+    processFeesSeqNums(txs, ltx, *applicableTxSet, ledgerCloseMeta);
 
     TransactionResultSet txResultSet;
     txResultSet.results.reserve(txs.size());
-    applyTransactions(*resolvedTxSet, txs, ltx, txResultSet, ledgerCloseMeta);
+    applyTransactions(*applicableTxSet, txs, ltx, txResultSet, ledgerCloseMeta);
     if (mApp.getConfig().MODE_STORES_HISTORY_MISC)
     {
         storeTxSet(mApp.getDatabase(), ltx.loadHeader().current().ledgerSeq,
@@ -954,7 +956,7 @@ LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData)
             mApp.getConfig().OP_APPLY_SLEEP_TIME_WEIGHT_FOR_TESTING.begin(),
             mApp.getConfig().OP_APPLY_SLEEP_TIME_WEIGHT_FOR_TESTING.end());
         std::chrono::microseconds sleepFor{0};
-        auto txSetSizeOp = resolvedTxSet->sizeOpTotal();
+        auto txSetSizeOp = applicableTxSet->sizeOpTotal();
         for (size_t i = 0; i < txSetSizeOp; i++)
         {
             sleepFor +=
@@ -1224,7 +1226,7 @@ mergeOpInTx(std::vector<Operation> const& ops)
 void
 LedgerManagerImpl::processFeesSeqNums(
     std::vector<TransactionFrameBasePtr> const& txs,
-    AbstractLedgerTxn& ltxOuter, ResolvedTxSetFrame const& txSet,
+    AbstractLedgerTxn& ltxOuter, ApplicableTxSetFrame const& txSet,
     std::unique_ptr<LedgerCloseMetaFrame> const& ledgerCloseMeta)
 {
     ZoneScoped;
@@ -1356,7 +1358,7 @@ LedgerManagerImpl::prefetchTransactionData(
 
 void
 LedgerManagerImpl::applyTransactions(
-    ResolvedTxSetFrame const& txSet,
+    ApplicableTxSetFrame const& txSet,
     std::vector<TransactionFrameBasePtr> const& txs, AbstractLedgerTxn& ltx,
     TransactionResultSet& txResultSet,
     std::unique_ptr<LedgerCloseMetaFrame> const& ledgerCloseMeta)

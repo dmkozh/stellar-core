@@ -494,7 +494,7 @@ closeLedgerOn(Application& app, uint32 ledgerSeq, TimePoint closeTime,
         closeTime = lastCloseTime;
     }
 
-    std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr> txSet;
+    std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr> txSet;
     if (strictOrder)
     {
         txSet = TxSetFrame::makeFromTransactions(txs, app, 0, 0, true);

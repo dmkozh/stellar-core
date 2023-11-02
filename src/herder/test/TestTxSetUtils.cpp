@@ -64,7 +64,7 @@ makeGeneralizedTxSetXDR(std::vector<ComponentPhases> const& txsPerBaseFeePhases,
     return xdrTxSet;
 }
 
-std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr>
 makeNonValidatedTxSet(std::vector<TransactionFrameBasePtr> const& txs,
                       Application& app, Hash const& previousLedgerHash)
 {
@@ -72,12 +72,12 @@ makeNonValidatedTxSet(std::vector<TransactionFrameBasePtr> const& txs,
     LedgerTxn ltx(app.getLedgerTxnRoot(), false,
                   TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
     auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
-    auto resolvedTxSet = txSet->resolve(app, ltx);
-    return std::make_pair(txSet, resolvedTxSet);
+    auto applicableTxSet = txSet->prepareForApply(app, ltx);
+    return std::make_pair(txSet, applicableTxSet);
 }
 } // namespace
 
-std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr>
 makeNonValidatedGeneralizedTxSet(
     std::vector<ComponentPhases> const& txsPerBaseFee, Application& app,
     Hash const& previousLedgerHash)
@@ -86,11 +86,11 @@ makeNonValidatedGeneralizedTxSet(
     LedgerTxn ltx(app.getLedgerTxnRoot(), false,
                   TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
     auto txSet = TxSetFrame::makeFromWire(xdrTxSet);
-    auto resolvedTxSet = txSet->resolve(app, ltx);
-    return std::make_pair(txSet, resolvedTxSet);
+    auto applicableTxSet = txSet->prepareForApply(app, ltx);
+    return std::make_pair(txSet, applicableTxSet);
 }
 
-std::pair<TxSetFrameConstPtr, ResolvedTxSetFrameConstPtr>
+std::pair<TxSetFrameConstPtr, ApplicableTxSetFrameConstPtr>
 makeNonValidatedTxSetBasedOnLedgerVersion(
     uint32_t ledgerVersion, std::vector<TransactionFrameBasePtr> const& txs,
     Application& app, Hash const& previousLedgerHash)

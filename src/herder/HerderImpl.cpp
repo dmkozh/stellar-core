@@ -1335,9 +1335,10 @@ HerderImpl::triggerNextLedger(uint32_t ledgerSeqToTrigger,
     TxSetFrame::TxPhases invalidTxPhases;
     invalidTxPhases.resize(txPhases.size());
 
-    auto [proposedSet, resolvedProposedSet] = TxSetFrame::makeFromTransactions(
-        txPhases, mApp, lowerBoundCloseTimeOffset, upperBoundCloseTimeOffset,
-        invalidTxPhases);
+    auto [proposedSet, applicableProposedSet] =
+        TxSetFrame::makeFromTransactions(
+            txPhases, mApp, lowerBoundCloseTimeOffset,
+            upperBoundCloseTimeOffset, invalidTxPhases);
 
     if (protocolVersionStartsFrom(lcl.header.ledgerVersion,
                                   SOROBAN_PROTOCOL_VERSION))
@@ -1360,7 +1361,7 @@ HerderImpl::triggerNextLedger(uint32_t ledgerSeqToTrigger,
     // can be answered. Note this can trigger SCP callbacks, externalize, etc
     // if we happen to build a txset that we were trying to download.
     mPendingEnvelopes.addTxSet(txSetHash, slotIndex, proposedSet,
-                               resolvedProposedSet);
+                               applicableProposedSet);
 
     // no point in sending out a prepare:
     // externalize was triggered on a more recent ledger
@@ -2223,19 +2224,22 @@ HerderImpl::updateTransactionQueue(TxSetFrameConstPtr externalizedTxSet)
 
         queue.rebroadcast();
     };
-    if (txsPerPhase.size() > TxSetFrame::Phase::CLASSIC)
+    if (txsPerPhase.size() > static_cast<size_t>(TxSetFrame::Phase::CLASSIC))
     {
-        updateQueue(mTransactionQueue, txsPerPhase[TxSetFrame::Phase::CLASSIC]);
+        updateQueue(
+            mTransactionQueue,
+            txsPerPhase[static_cast<size_t>(TxSetFrame::Phase::CLASSIC)]);
     }
 
     // Even if we're in protocol 20, still check for number of phases, in case
     // we're dealing with the upgrade ledger that contains old-style transaction
     // set
     if (mSorobanTransactionQueue != nullptr &&
-        txsPerPhase.size() > TxSetFrame::Phase::SOROBAN)
+        txsPerPhase.size() > static_cast<size_t>(TxSetFrame::Phase::SOROBAN))
     {
-        updateQueue(*mSorobanTransactionQueue,
-                    txsPerPhase[TxSetFrame::Phase::SOROBAN]);
+        updateQueue(
+            *mSorobanTransactionQueue,
+            txsPerPhase[static_cast<size_t>(TxSetFrame::Phase::SOROBAN)]);
     }
 }
 
