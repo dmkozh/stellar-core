@@ -602,13 +602,17 @@ TxSetFrame::sizeOpTotal() const
 {
     auto accumulateTxsFn = [](size_t sz, TransactionEnvelope const& tx) {
         size_t txOps = 0;
-        if (tx.type() == 0)
+        switch (tx.type())
         {
+        case ENVELOPE_TYPE_TX_V0:
             txOps = tx.v0().tx.operations.size();
-        }
-        else
-        {
+            break;
+        case ENVELOPE_TYPE_TX:
             txOps = tx.v1().tx.operations.size();
+            break;
+        case ENVELOPE_TYPE_TX_FEE_BUMP:
+            txOps = tx.feeBump().tx.innerTx.v1().tx.operations.size();
+            break;
         }
         return sz + txOps;
     };
