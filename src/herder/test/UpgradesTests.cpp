@@ -3155,7 +3155,6 @@ TEST_CASE("upgrade to generalized tx set in network", "[upgrades][overlay]")
 
     auto getLedgerTxSet = [](Application& node, uint32_t ledger) {
         auto& herder = *static_cast<HerderImpl*>(&node.getHerder());
-        TxSetFrameConstPtr txSet;
         for (auto const& env : herder.getSCP().getLatestMessagesSend(ledger))
         {
             if (env.statement.pledges.type() == SCP_ST_EXTERNALIZE)
@@ -3164,10 +3163,10 @@ TEST_CASE("upgrade to generalized tx set in network", "[upgrades][overlay]")
                 auto& pe = herder.getPendingEnvelopes();
                 herder.getHerderSCPDriver().toStellarValue(
                     env.statement.pledges.externalize().commit.value, sv);
-                return pe.getTxSet(sv.txSetHash);
+                return *pe.getMaybeResolvedTxSet(sv.txSetHash).second;
             }
         }
-        return txSet;
+        return ResolvedTxSetFrameConstPtr{};
     };
 
     // Make sure tx set format switches to generalized after upgrade.
@@ -3177,8 +3176,7 @@ TEST_CASE("upgrade to generalized tx set in network", "[upgrades][overlay]")
         {
             LedgerTxn ltx(node->getLedgerTxnRoot(), false,
                           TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
-            auto txSet = getLedgerTxSet(*node, ledger);
-            auto resolvedTxSet = txSet->resolve(*node, ltx);
+            auto resolvedTxSet = getLedgerTxSet(*node, ledger);
             REQUIRE(resolvedTxSet);
             REQUIRE(resolvedTxSet->sizeTxTotal() > 0);
             bool isGeneralized = ledger > *upgradeLedger;
