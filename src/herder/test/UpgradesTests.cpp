@@ -3064,8 +3064,8 @@ TEST_CASE("upgrade to generalized tx set changes TxSetFrame format",
 
     auto [newTxSet, newResolvedTxSet] =
         TxSetFrame::makeFromTransactions(txs, *app, 0, 0);
-    REQUIRE(!newTxSet->isGeneralizedTxSet());
-    REQUIRE(!newResolvedTxSet->isGeneralizedTxSet());
+    REQUIRE(newTxSet->isGeneralizedTxSet());
+    REQUIRE(newResolvedTxSet->isGeneralizedTxSet());
 }
 
 TEST_CASE("upgrade to generalized tx set in network", "[upgrades][overlay]")
