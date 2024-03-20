@@ -25,6 +25,10 @@ TransactionMetaFrame::TransactionMetaFrame(uint32_t protocolVersion)
         mVersion = 3;
     }
     mTransactionMeta.v(mVersion);
+    if (mVersion == 3)
+    {
+        mTransactionMeta.v3().sorobanMeta.activate().ext.v(1);
+    }
 }
 
 template <typename T>
@@ -216,6 +220,29 @@ TransactionMetaFrame::setReturnValue(SCVal&& returnValue)
         mTransactionMeta.v3().sorobanMeta.activate().returnValue =
             std::move(returnValue);
         break;
+    default:
+        releaseAssert(false);
+    }
+}
+
+void
+TransactionMetaFrame::setSorobanFeeInfo(int64_t nonRefundableFeeSpent,
+                                        int64_t totalRefundableFeeSpent,
+                                        int64_t rentFeeCharged)
+{
+    switch (mTransactionMeta.v())
+    {
+    case 2:
+        // Do nothing, until v3 we don't call into contracts.
+        break;
+    case 3:
+    {
+        auto& ext = mTransactionMeta.v3().sorobanMeta.activate().ext.v1();
+        ext.totalNonRefundableResourceFeeCharged = nonRefundableFeeSpent;
+        ext.totalRefundableResourceFeeCharged = totalRefundableFeeSpent;
+        ext.rentFeeCharged = rentFeeCharged;
+        break;
+    }
     default:
         releaseAssert(false);
     }

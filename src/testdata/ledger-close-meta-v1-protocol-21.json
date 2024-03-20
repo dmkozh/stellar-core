@@ -535,7 +535,25 @@
                                 }
                             ],
                             "txChangesAfter": [],
-                            "sorobanMeta": null
+                            "sorobanMeta": {
+                                "ext": {
+                                    "v": 1,
+                                    "v1": {
+                                        "ext": {
+                                            "v": 0
+                                        },
+                                        "totalNonRefundableResourceFeeCharged": 0,
+                                        "totalRefundableResourceFeeCharged": 0,
+                                        "rentFeeCharged": 0
+                                    }
+                                },
+                                "events": [],
+                                "returnValue": {
+                                    "type": "SCV_BOOL",
+                                    "b": "FALSE"
+                                },
+                                "diagnosticEvents": []
+                            }
                         }
                     }
                 },
@@ -980,7 +998,25 @@
                                 }
                             ],
                             "txChangesAfter": [],
-                            "sorobanMeta": null
+                            "sorobanMeta": {
+                                "ext": {
+                                    "v": 1,
+                                    "v1": {
+                                        "ext": {
+                                            "v": 0
+                                        },
+                                        "totalNonRefundableResourceFeeCharged": 0,
+                                        "totalRefundableResourceFeeCharged": 0,
+                                        "rentFeeCharged": 0
+                                    }
+                                },
+                                "events": [],
+                                "returnValue": {
+                                    "type": "SCV_BOOL",
+                                    "b": "FALSE"
+                                },
+                                "diagnosticEvents": []
+                            }
                         }
                     }
                 }
