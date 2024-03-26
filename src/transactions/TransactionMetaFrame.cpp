@@ -25,10 +25,6 @@ TransactionMetaFrame::TransactionMetaFrame(uint32_t protocolVersion)
         mVersion = 3;
     }
     mTransactionMeta.v(mVersion);
-    if (mVersion == 3)
-    {
-        mTransactionMeta.v3().sorobanMeta.activate().ext.v(1);
-    }
 }
 
 template <typename T>
@@ -237,7 +233,9 @@ TransactionMetaFrame::setSorobanFeeInfo(int64_t nonRefundableFeeSpent,
         break;
     case 3:
     {
-        auto& ext = mTransactionMeta.v3().sorobanMeta.activate().ext.v1();
+        auto& sorobanMeta = mTransactionMeta.v3().sorobanMeta.activate();
+        sorobanMeta.ext.v(1);
+        auto& ext = sorobanMeta.ext.v1();
         ext.totalNonRefundableResourceFeeCharged = nonRefundableFeeSpent;
         ext.totalRefundableResourceFeeCharged = totalRefundableFeeSpent;
         ext.rentFeeCharged = rentFeeCharged;
