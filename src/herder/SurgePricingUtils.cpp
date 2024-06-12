@@ -70,21 +70,22 @@ computeBetterFee(TransactionFrameBase const& tx, int64_t refFeeBid,
     return minFee;
 }
 
-SurgePricingPriorityQueue::TxStackComparator::TxStackComparator(bool isGreater,
-                                                                size_t seed)
+SurgePricingPriorityQueue::TxComparator::TxComparator(bool isGreater,
+                                                      size_t seed)
     : mIsGreater(isGreater), mSeed(seed)
 {
 }
 
 bool
-SurgePricingPriorityQueue::TxStackComparator::operator()(
-    TxStackPtr const& txStack1, TxStackPtr const& txStack2) const
+SurgePricingPriorityQueue::TxComparator::operator()(
+    SurgePricingQueueTxBasePtr const& tx1,
+    SurgePricingQueueTxBasePtr const& tx2) const
 {
-    return txStackLessThan(*txStack1, *txStack2) ^ mIsGreater;
+    return txLessThan(*tx1, *tx2) ^ mIsGreater;
 }
 
 bool
-SurgePricingPriorityQueue::TxStackComparator::compareFeeOnly(
+SurgePricingPriorityQueue::TxComparator::compareFeeOnly(
     TransactionFrameBase const& tx1, TransactionFrameBase const& tx2) const
 {
     return compareFeeOnly(tx1.getInclusionFee(), tx1.getNumOperations(),
@@ -92,42 +93,31 @@ SurgePricingPriorityQueue::TxStackComparator::compareFeeOnly(
 }
 
 bool
-SurgePricingPriorityQueue::TxStackComparator::compareFeeOnly(
-    int64_t tx1Bid, uint32_t tx1Ops, int64_t tx2Bid, uint32_t tx2Ops) const
+SurgePricingPriorityQueue::TxComparator::compareFeeOnly(int64_t tx1Bid,
+                                                        uint32_t tx1Ops,
+                                                        int64_t tx2Bid,
+                                                        uint32_t tx2Ops) const
 {
     bool isLess = feeRate3WayCompare(tx1Bid, tx1Ops, tx2Bid, tx2Ops) < 0;
     return isLess ^ mIsGreater;
 }
 
 bool
-SurgePricingPriorityQueue::TxStackComparator::isGreater() const
+SurgePricingPriorityQueue::TxComparator::isGreater() const
 {
     return mIsGreater;
 }
 
 bool
-SurgePricingPriorityQueue::TxStackComparator::txStackLessThan(
-    TxStack const& txStack1, TxStack const& txStack2) const
+SurgePricingPriorityQueue::TxComparator::txLessThan(
+    SurgePricingQueueTxBase const& queueTx1,
+    SurgePricingQueueTxBase const& queueTx2) const
 {
-    if (txStack1.empty())
-    {
-        return !txStack2.empty();
-    }
-    if (txStack2.empty())
-    {
-        return false;
-    }
-    return txLessThan(txStack1.getTopTx(), txStack2.getTopTx(), true);
-}
-
-bool
-SurgePricingPriorityQueue::TxStackComparator::txLessThan(
-    TransactionFrameBaseConstPtr const& tx1,
-    TransactionFrameBaseConstPtr const& tx2, bool breakTiesWithHash) const
-{
+    auto tx1 = queueTx1.getTx();
+    auto tx2 = queueTx2.getTx();
     auto cmp3 = feeRate3WayCompare(*tx1, *tx2);
 
-    if (cmp3 != 0 || !breakTiesWithHash)
+    if (cmp3 != 0)
     {
         return cmp3 < 0;
     }
@@ -143,7 +133,7 @@ SurgePricingPriorityQueue::SurgePricingPriorityQueue(
     : mComparator(isHighestPriority, comparisonSeed)
     , mLaneConfig(settings)
     , mLaneLimits(mLaneConfig->getLaneLimits())
-    , mTxStackSets(mLaneLimits.size(), TxStackSet(mComparator))
+    , mTxSets(mLaneLimits.size(), TxSet(mComparator))
 {
     releaseAssert(!mLaneLimits.empty());
     mLaneCurrentCount = std::vector<Resource>(
@@ -153,7 +143,7 @@ SurgePricingPriorityQueue::SurgePricingPriorityQueue(
 
 std::vector<TransactionFrameBasePtr>
 SurgePricingPriorityQueue::getMostTopTxsWithinLimits(
-    std::vector<TxStackPtr> const& txStacks,
+    std::vector<SurgePricingQueueTxBasePtr> const& txs,
     std::shared_ptr<SurgePricingLaneConfig> laneConfig,
     std::vector<bool>& hadTxNotFittingLane)
 {
@@ -162,32 +152,32 @@ SurgePricingPriorityQueue::getMostTopTxsWithinLimits(
     SurgePricingPriorityQueue queue(
         /* isHighestPriority */ true, laneConfig,
         stellar::rand_uniform<size_t>(0, std::numeric_limits<size_t>::max()));
-    for (auto txStack : txStacks)
+    for (auto const& tx : txs)
     {
-        queue.add(txStack);
+        queue.add(tx);
     }
-    std::vector<TransactionFrameBasePtr> txs;
-    auto visitor = [&txs](TxStack const& txStack) {
-        txs.push_back(txStack.getTopTx());
-        return VisitTxStackResult::TX_PROCESSED;
+    std::vector<TransactionFrameBasePtr> outTxs;
+    auto visitor = [&outTxs](SurgePricingQueueTxBase const& tx) {
+        outTxs.push_back(tx.getTx());
+        return VisitTxResult::PROCESSED;
     };
     std::vector<Resource> laneLeftUntilLimit;
     queue.popTopTxs(/* allowGaps */ true, visitor, laneLeftUntilLimit,
                     hadTxNotFittingLane);
-    return txs;
+    return outTxs;
 }
 
 void
 SurgePricingPriorityQueue::visitTopTxs(
-    std::vector<TxStackPtr> const& txStacks,
-    std::function<VisitTxStackResult(TxStack const&)> const& visitor,
+    std::vector<SurgePricingQueueTxBasePtr> const& txs,
+    std::function<VisitTxResult(SurgePricingQueueTxBase const&)> const& visitor,
     std::vector<Resource>& laneLeftUntilLimit)
 {
     ZoneScoped;
 
-    for (auto txStack : txStacks)
+    for (auto const& tx : txs)
     {
-        add(txStack);
+        add(tx);
     }
     std::vector<bool> hadTxNotFittingLane;
     popTopTxs(/* allowGaps */ false, visitor, laneLeftUntilLimit,
@@ -195,24 +185,25 @@ SurgePricingPriorityQueue::visitTopTxs(
 }
 
 void
-SurgePricingPriorityQueue::add(TxStackPtr txStack)
+SurgePricingPriorityQueue::add(SurgePricingQueueTxBasePtr tx)
 {
-    releaseAssert(txStack != nullptr);
-    auto lane = mLaneConfig->getLane(*txStack->getTopTx());
-    bool inserted = mTxStackSets[lane].insert(txStack).second;
+    releaseAssert(tx != nullptr);
+    auto txFrame = tx->getTx();
+    auto lane = mLaneConfig->getLane(*txFrame);
+    bool inserted = mTxSets[lane].insert(tx).second;
     if (inserted)
     {
-        mLaneCurrentCount[lane] += txStack->getResources();
+        mLaneCurrentCount[lane] += mLaneConfig->getTxResources(*txFrame);
     }
 }
 
 void
-SurgePricingPriorityQueue::erase(TxStackPtr txStack)
+SurgePricingPriorityQueue::erase(SurgePricingQueueTxBasePtr tx)
 {
-    releaseAssert(txStack != nullptr);
-    auto lane = mLaneConfig->getLane(*txStack->getTopTx());
-    auto it = mTxStackSets[lane].find(txStack);
-    if (it != mTxStackSets[lane].end())
+    releaseAssert(tx != nullptr);
+    auto lane = mLaneConfig->getLane(*tx->getTx());
+    auto it = mTxSets[lane].find(tx);
+    if (it != mTxSets[lane].end())
     {
         erase(lane, it);
     }
@@ -227,18 +218,18 @@ SurgePricingPriorityQueue::erase(Iterator const& it)
 
 void
 SurgePricingPriorityQueue::erase(
-    size_t lane, SurgePricingPriorityQueue::TxStackSet::iterator iter)
+    size_t lane, SurgePricingPriorityQueue::TxSet::iterator iter)
 {
-    auto res = (*iter)->getResources();
+    auto res = mLaneConfig->getTxResources(*(*iter)->getTx());
     releaseAssert(res <= mLaneCurrentCount[lane]);
     mLaneCurrentCount[lane] -= res;
-    mTxStackSets[lane].erase(iter);
+    mTxSets[lane].erase(iter);
 }
 
 void
 SurgePricingPriorityQueue::popTopTxs(
     bool allowGaps,
-    std::function<VisitTxStackResult(TxStack const&)> const& visitor,
+    std::function<VisitTxResult(SurgePricingQueueTxBase const&)> const& visitor,
     std::vector<Resource>& laneLeftUntilLimit,
     std::vector<bool>& hadTxNotFittingLane)
 {
@@ -255,7 +246,7 @@ SurgePricingPriorityQueue::popTopTxs(
         // Try to find a lane in the top iterator that hasn't reached limit yet.
         while (!currIt.isEnd())
         {
-            auto const& currTx = *(*currIt)->getTopTx();
+            auto const& currTx = *(*currIt)->getTx();
             auto curr = mLaneConfig->getTxResources(currTx);
             auto lane = mLaneConfig->getLane(currTx);
             if (anyGreater(curr, laneLeftUntilLimit[lane]) ||
@@ -314,13 +305,13 @@ SurgePricingPriorityQueue::popTopTxs(
         // At this point, `currIt` points at the top transaction in the queue
         // (within the allowed lanes) that is still within resource limits, so
         // we can visit it and remove it from the queue.
-        auto const& txStack = *currIt;
-        auto visitRes = visitor(*txStack);
-        auto res = mLaneConfig->getTxResources(*(txStack->getTopTx()));
-        auto lane = mLaneConfig->getLane(*txStack->getTopTx());
+        auto const& tx = *currIt;
+        auto visitRes = visitor(*tx);
+        auto res = mLaneConfig->getTxResources(*(tx->getTx()));
+        auto lane = mLaneConfig->getLane(*tx->getTx());
         // Only account for resource counts when transaction was actually
         // processed by the visitor.
-        if (visitRes == VisitTxStackResult::TX_PROCESSED)
+        if (visitRes == VisitTxResult::PROCESSED)
         {
             // 'Generic' lane's limit is shared between all the transactions.
             // Resources left must be greater than or equal to the tx subtracted
@@ -331,23 +322,21 @@ SurgePricingPriorityQueue::popTopTxs(
                 laneLeftUntilLimit[lane] -= res;
             }
         }
-        // Pop the tx from current iterator, unless the whole tx stack is
-        // skipped.
-        if (visitRes == VisitTxStackResult::TX_STACK_SKIPPED)
+        else if (visitRes == VisitTxResult::REJECTED)
         {
-            erase(currIt);
+            // If a transaction hasn't been processed, then it is considered to
+            // be not fitting the lane.
+            hadTxNotFittingLane[GENERIC_LANE] = true;
+            hadTxNotFittingLane[lane] = true;
         }
-        else
-        {
-            popTopTx(currIt);
-        }
+        erase(currIt);
     }
 }
 
 std::pair<bool, int64_t>
 SurgePricingPriorityQueue::canFitWithEviction(
     TransactionFrameBase const& tx, std::optional<Resource> txDiscount,
-    std::vector<std::pair<TxStackPtr, bool>>& txStacksToEvict) const
+    std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>>& txsToEvict) const
 {
     ZoneScoped;
 
@@ -411,11 +400,11 @@ SurgePricingPriorityQueue::canFitWithEviction(
         while (!iter.isEnd())
         {
             // This is the cheapest transaction
-            auto const& evictTxStack = *iter;
-            auto const& evictTx = *evictTxStack->getTopTx();
+            auto const& evictQueueTx = *iter;
+            auto const& evictTx = *evictQueueTx->getTx();
             auto evictLane = mLaneConfig->getLane(evictTx);
             bool canEvict = false;
-            // Check if it makes sense to evict the current top tx stack.
+            // Check if it makes sense to evict the current top tx.
             //
             // Simple cases: generic lane txs can evict anything; same lane txs
             // can evict each other; any transaction can be evicted if per-lane
@@ -449,14 +438,10 @@ SurgePricingPriorityQueue::canFitWithEviction(
         // The preconditions are ensured above that we should be able to fit
         // the transaction by evicting some transactions.
         releaseAssert(!iter.isEnd());
-        auto const& evictTxStack = *iter;
-        auto const& evictTx = *evictTxStack->getTopTx();
-        auto evict = evictTxStack->getResources();
+        auto const& evictQueueTx = *iter;
+        auto const& evictTx = *evictQueueTx->getTx();
+        auto evict = mLaneConfig->getTxResources(evictTx);
         auto evictLane = mLaneConfig->getLane(evictTx);
-        // Only support this for single tx stacks (eventually we should only
-        // have such stacks and share this invariant across all the queue
-        // operations).
-        releaseAssert(evict == mLaneConfig->getTxResources(evictTx));
 
         // Evicted tx must have a strictly lower fee than the new tx.
         // NB: this logic works with properly with Soroban transactions as well,
@@ -475,7 +460,7 @@ SurgePricingPriorityQueue::canFitWithEviction(
             return std::make_pair(false, 0ll);
         }
 
-        txStacksToEvict.emplace_back(evictTxStack, evictedDueToLaneLimit);
+        txsToEvict.emplace_back(evictQueueTx, evictedDueToLaneLimit);
         neededTotal = subtractNonNegative(neededTotal, evict);
         // Only reduce the needed lane when we evict from tx's lane or when
         // we're trying to fit a 'generic' lane tx (as it can evict any other
@@ -498,14 +483,14 @@ SurgePricingPriorityQueue::Iterator
 SurgePricingPriorityQueue::getTop() const
 {
     std::vector<LaneIter> iters;
-    for (size_t lane = 0; lane < mTxStackSets.size(); ++lane)
+    for (size_t lane = 0; lane < mTxSets.size(); ++lane)
     {
-        auto const& txStackSet = mTxStackSets[lane];
-        if (txStackSet.empty())
+        auto const& txSet = mTxSets[lane];
+        if (txSet.empty())
         {
             continue;
         }
-        iters.emplace_back(lane, txStackSet.begin());
+        iters.emplace_back(lane, txSet.begin());
     }
     return SurgePricingPriorityQueue::Iterator(*this, iters);
 }
@@ -525,18 +510,6 @@ SurgePricingPriorityQueue::laneResources(size_t lane) const
 {
     releaseAssert(lane < mLaneCurrentCount.size());
     return mLaneCurrentCount[lane];
-}
-
-void
-SurgePricingPriorityQueue::popTopTx(SurgePricingPriorityQueue::Iterator iter)
-{
-    auto txStack = *iter;
-    erase(iter);
-    txStack->popTopTx();
-    if (!txStack->empty())
-    {
-        add(txStack);
-    }
 }
 
 SurgePricingPriorityQueue::Iterator::Iterator(
@@ -562,7 +535,7 @@ SurgePricingPriorityQueue::Iterator::getMutableInnerIter() const
     return best;
 }
 
-TxStackPtr
+SurgePricingQueueTxBasePtr
 SurgePricingPriorityQueue::Iterator::operator*() const
 {
     return *getMutableInnerIter()->second;
@@ -585,7 +558,7 @@ SurgePricingPriorityQueue::Iterator::advance()
 {
     auto it = getMutableInnerIter();
     ++it->second;
-    if (it->second == mParent.mTxStackSets[it->first].end())
+    if (it->second == mParent.mTxSets[it->first].end())
     {
         mIters.erase(it);
     }

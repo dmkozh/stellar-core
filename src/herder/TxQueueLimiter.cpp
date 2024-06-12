@@ -84,7 +84,7 @@ TxQueueLimiter::addTransaction(TransactionFrameBasePtr const& tx)
                 "TxQueueLimiter");
         }
     }
-    auto txStack = std::make_shared<SingleTxStack>(tx);
+    auto txStack = std::make_shared<SurgePricingQueueTx>(tx);
     mStackForTx[tx] = txStack;
     mTxs->add(txStack);
 }
@@ -116,9 +116,9 @@ TxQueueLimiter::removeTransaction(TransactionFrameBasePtr const& tx)
 
 #ifdef BUILD_TESTS
 std::pair<bool, int64>
-TxQueueLimiter::canAddTx(TransactionFrameBasePtr const& newTx,
-                         TransactionFrameBasePtr const& oldTx,
-                         std::vector<std::pair<TxStackPtr, bool>>& txsToEvict)
+TxQueueLimiter::canAddTx(
+    TransactionFrameBasePtr const& newTx, TransactionFrameBasePtr const& oldTx,
+    std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>>& txsToEvict)
 {
 
     LedgerTxn ltx(mApp.getLedgerTxnRoot(), /* shouldUpdateLastModified */ true,
@@ -129,10 +129,10 @@ TxQueueLimiter::canAddTx(TransactionFrameBasePtr const& newTx,
 #endif
 
 std::pair<bool, int64>
-TxQueueLimiter::canAddTx(TransactionFrameBasePtr const& newTx,
-                         TransactionFrameBasePtr const& oldTx,
-                         std::vector<std::pair<TxStackPtr, bool>>& txsToEvict,
-                         uint32_t ledgerVersion)
+TxQueueLimiter::canAddTx(
+    TransactionFrameBasePtr const& newTx, TransactionFrameBasePtr const& oldTx,
+    std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>>& txsToEvict,
+    uint32_t ledgerVersion)
 {
     releaseAssert(newTx);
     releaseAssert(newTx->isSoroban() == mIsSoroban);
@@ -188,7 +188,7 @@ TxQueueLimiter::canAddTx(TransactionFrameBasePtr const& newTx,
 
 void
 TxQueueLimiter::evictTransactions(
-    std::vector<std::pair<TxStackPtr, bool>> const& txsToEvict,
+    std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>> const& txsToEvict,
     TransactionFrameBase const& txToFit,
     std::function<void(TransactionFrameBasePtr const&)> evict)
 {
@@ -201,7 +201,7 @@ TxQueueLimiter::evictTransactions(
 
     for (auto const& [evictedStack, evictedDueToLaneLimit] : txsToEvict)
     {
-        auto tx = evictedStack->getTopTx();
+        auto tx = evictedStack->getTx();
         if (evictedDueToLaneLimit)
         {
             // If tx has been evicted due to lane limit, then all the following

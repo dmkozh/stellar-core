@@ -232,9 +232,9 @@ TransactionQueue::sourceAccountPending(AccountID const& accountID) const
 }
 
 TransactionQueue::AddResult
-TransactionQueue::canAdd(TransactionFrameBasePtr tx,
-                         AccountStates::iterator& stateIter,
-                         std::vector<std::pair<TxStackPtr, bool>>& txsToEvict)
+TransactionQueue::canAdd(
+    TransactionFrameBasePtr tx, AccountStates::iterator& stateIter,
+    std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>>& txsToEvict)
 {
     ZoneScoped;
     if (isBanned(tx->getFullHash()))
@@ -535,7 +535,7 @@ TransactionQueue::tryAdd(TransactionFrameBasePtr tx, bool submittedFromSelf)
 
     AccountStates::iterator stateIter;
 
-    std::vector<std::pair<TxStackPtr, bool>> txsToEvict;
+    std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>> txsToEvict;
     auto const res = canAdd(tx, stateIter, txsToEvict);
     if (res != TransactionQueue::AddResult::ADD_STATUS_PENDING)
     {
@@ -946,21 +946,21 @@ TransactionQueue::broadcastTx(TimestampedTx& tx)
                : BroadcastStatus::BROADCAST_STATUS_ALREADY;
 }
 
-class TxQueueTracker : public TxStack
+class TxQueueTracker : public SurgePricingQueueTxBase
 {
     // TxQueueTracker is used in _synchronous_ `broadcastSome` calls and is
     // thrown away immediately after, so it is safe to store a
     // TransactionQueue::AccountState reference
   public:
     TxQueueTracker(TransactionQueue::AccountState& accountState)
-        : mAccountState(accountState), mProcessed(false)
+        : mAccountState(accountState)
     {
         releaseAssert(mAccountState.mTransaction.has_value());
         releaseAssert(!mAccountState.mTransaction->mBroadcasted);
     }
 
     TransactionFrameBasePtr
-    getTopTx() const override
+    getTx() const override
     {
         return getCurrentTimestampedTx().mTx;
     }
@@ -972,30 +972,8 @@ class TxQueueTracker : public TxStack
         return mAccountState.mTransaction.value();
     }
 
-    bool
-    empty() const override
-    {
-        return mProcessed;
-    }
-
-    void
-    popTopTx() override
-    {
-        mProcessed = true;
-    }
-
-    Resource
-    getResources() const override
-    {
-        // Resource count tracking is not relevant for this TxStack.
-        return Resource::makeEmpty(getTopTx()->isSoroban()
-                                       ? NUM_SOROBAN_TX_RESOURCES
-                                       : NUM_CLASSIC_TX_RESOURCES);
-    }
-
   private:
     TransactionQueue::AccountState& mAccountState;
-    bool mProcessed;
 };
 
 SorobanTransactionQueue::SorobanTransactionQueue(Application& app,
@@ -1051,7 +1029,7 @@ SorobanTransactionQueue::broadcastSome()
     auto resToFlood = getMaxResourcesToFloodThisPeriod().first;
 
     auto totalResToFlood = Resource::makeEmptySoroban();
-    std::vector<TxStackPtr> trackersToBroadcast;
+    std::vector<SurgePricingQueueTxBasePtr> trackersToBroadcast;
     for (auto& [_, accountState] : mAccountStates)
     {
         if (accountState.mTransaction &&
@@ -1064,11 +1042,12 @@ SorobanTransactionQueue::broadcastSome()
         }
     }
 
-    auto visitor = [this, &totalResToFlood](TxStack const& txStack) {
+    auto visitor = [this,
+                    &totalResToFlood](SurgePricingQueueTxBase const& txStack) {
         auto const& curTracker = static_cast<TxQueueTracker const&>(txStack);
         // look at the next candidate transaction for that account
         auto& cur = curTracker.getCurrentTimestampedTx();
-        auto tx = curTracker.getTopTx();
+        auto tx = curTracker.getTx();
         // by construction, cur points to non broadcasted transactions
         releaseAssert(!cur.mBroadcasted);
         auto bStatus = broadcastTx(cur);
@@ -1078,13 +1057,13 @@ SorobanTransactionQueue::broadcastSome()
         {
             totalResToFlood -=
                 tx->getResources(/* useByteLimitInClassic */ false);
-            return SurgePricingPriorityQueue::VisitTxStackResult::TX_PROCESSED;
+            return SurgePricingPriorityQueue::VisitTxResult::PROCESSED;
         }
         else
         {
             // Already broadcasted; don't invalidate the stack but also
             // don't count transaction as processed.
-            return SurgePricingPriorityQueue::VisitTxStackResult::TX_SKIPPED;
+            return SurgePricingPriorityQueue::VisitTxResult::SKIPPED;
         }
     };
 
@@ -1138,7 +1117,7 @@ ClassicTransactionQueue::broadcastSome()
     }
 
     auto totalToFlood = Resource::makeEmpty(NUM_CLASSIC_TX_RESOURCES);
-    std::vector<TxStackPtr> trackersToBroadcast;
+    std::vector<SurgePricingQueueTxBasePtr> trackersToBroadcast;
     for (auto& [_, accountState] : mAccountStates)
     {
         if (accountState.mTransaction &&
@@ -1152,32 +1131,32 @@ ClassicTransactionQueue::broadcastSome()
     }
 
     std::vector<TransactionFrameBasePtr> banningTxs;
-    auto visitor = [this, &totalToFlood, &banningTxs](TxStack const& txStack) {
+    auto visitor = [this, &totalToFlood,
+                    &banningTxs](SurgePricingQueueTxBase const& txStack) {
         auto const& curTracker = static_cast<TxQueueTracker const&>(txStack);
         // look at the next candidate transaction for that account
         auto& cur = curTracker.getCurrentTimestampedTx();
-        auto tx = curTracker.getTopTx();
+        auto tx = curTracker.getTx();
         // by construction, cur points to non broadcasted transactions
         releaseAssert(!cur.mBroadcasted);
         auto bStatus = broadcastTx(cur);
         if (bStatus == BroadcastStatus::BROADCAST_STATUS_SUCCESS)
         {
             totalToFlood -= tx->getResources(/* useByteLimitInClassic */ false);
-            return SurgePricingPriorityQueue::VisitTxStackResult::TX_PROCESSED;
+            return SurgePricingPriorityQueue::VisitTxResult::PROCESSED;
         }
         else if (bStatus == BroadcastStatus::BROADCAST_STATUS_SKIPPED)
         {
             // When skipping, we ban the transaction and skip the remainder
             // of the stack.
             banningTxs.emplace_back(tx);
-            return SurgePricingPriorityQueue::VisitTxStackResult::
-                TX_STACK_SKIPPED;
+            return SurgePricingPriorityQueue::VisitTxResult::SKIPPED;
         }
         else
         {
             // Already broadcasted; don't invalidate the stack but also
             // don't count transaction as processed.
-            return SurgePricingPriorityQueue::VisitTxStackResult::TX_SKIPPED;
+            return SurgePricingPriorityQueue::VisitTxResult::SKIPPED;
         }
     };
 

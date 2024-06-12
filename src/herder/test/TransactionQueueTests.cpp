@@ -1046,7 +1046,7 @@ TEST_CASE("TxQueueLimiter with limited source accounts",
 
     int fee = 100;
     auto tx = transaction(*app, account1, 1, 100, fee);
-    std::vector<std::pair<TxStackPtr, bool>> txsToEvict;
+    std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>> txsToEvict;
     REQUIRE(limiter.canAddTx(tx, nullptr, txsToEvict).first);
     limiter.addTransaction(tx);
 
@@ -1466,7 +1466,7 @@ TEST_CASE("Soroban TransactionQueue limits",
         auto queue = std::make_unique<SurgePricingPriorityQueue>(
             /* isHighestPriority */ false, config, 1);
 
-        std::vector<std::pair<TxStackPtr, bool>> toEvict;
+        std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>> toEvict;
 
         // Generic tx, takes 1/2 of instruction limits
         resources.instructions =
@@ -1515,7 +1515,7 @@ TEST_CASE("Soroban TransactionQueue limits",
             SECTION("limited evicts")
             {
                 // Add 2 generic transactions to reach generic limit
-                queue->add(std::make_shared<SingleTxStack>(tx));
+                queue->add(std::make_shared<SurgePricingQueueTx>(tx));
                 resources.instructions =
                     static_cast<uint32>(conf.ledgerMaxInstructions() / 2);
                 // The fee is slightly higher so this transactions is more
@@ -1529,7 +1529,8 @@ TEST_CASE("Soroban TransactionQueue limits",
                                                  toEvict)
                             .first);
                 REQUIRE(toEvict.empty());
-                queue->add(std::make_shared<SingleTxStack>(secondGeneric));
+                queue->add(
+                    std::make_shared<SurgePricingQueueTx>(secondGeneric));
 
                 SECTION("limited evicts generic")
                 {
@@ -1538,7 +1539,7 @@ TEST_CASE("Soroban TransactionQueue limits",
                         queue->canFitWithEviction(*txNew, std::nullopt, toEvict)
                             .first);
                     REQUIRE(toEvict.size() == 1);
-                    REQUIRE(toEvict[0].first->getTopTx() == tx);
+                    REQUIRE(toEvict[0].first->getTx() == tx);
                 }
                 SECTION("evict due to lane limit")
                 {
@@ -1553,7 +1554,7 @@ TEST_CASE("Soroban TransactionQueue limits",
                     REQUIRE(
                         queue->canFitWithEviction(*tx2, std::nullopt, toEvict)
                             .first);
-                    queue->add(std::make_shared<SingleTxStack>(tx2));
+                    queue->add(std::make_shared<SurgePricingQueueTx>(tx2));
 
                     // Add, new tx with max limited lane resources, set a high
                     // fee
@@ -1571,9 +1572,9 @@ TEST_CASE("Soroban TransactionQueue limits",
 
                     // Should evict generic _and_ limited tx
                     REQUIRE(toEvict.size() == 2);
-                    REQUIRE(toEvict[0].first->getTopTx() == tx);
+                    REQUIRE(toEvict[0].first->getTx() == tx);
                     REQUIRE(!toEvict[0].second);
-                    REQUIRE(toEvict[1].first->getTopTx() == tx2);
+                    REQUIRE(toEvict[1].first->getTx() == tx2);
                     REQUIRE(toEvict[1].second);
                 }
             }
@@ -1619,7 +1620,8 @@ TEST_CASE("TransactionQueue limits", "[herder][transactionqueue]")
             {
                 auto tx = transaction(*app, e.account, seq++, 1, opsFee.second,
                                       opsFee.first);
-                std::vector<std::pair<TxStackPtr, bool>> txsToEvict;
+                std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>>
+                    txsToEvict;
                 bool can = limiter.canAddTx(tx, noTx, txsToEvict).first;
                 REQUIRE(can);
                 REQUIRE(txsToEvict.empty());
@@ -1645,7 +1647,7 @@ TEST_CASE("TransactionQueue limits", "[herder][transactionqueue]")
                              int fee, int64 expFeeOnFailed,
                              int expEvictedOpsOnSuccess) {
         auto tx = transaction(*app, account, 1000, 1, fee, ops);
-        std::vector<std::pair<TxStackPtr, bool>> txsToEvict;
+        std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>> txsToEvict;
         auto can = limiter.canAddTx(tx, noTx, txsToEvict);
         REQUIRE(expected == can.first);
         if (can.first)
@@ -1689,7 +1691,7 @@ TEST_CASE("TransactionQueue limits", "[herder][transactionqueue]")
     // that fee threshold is applied even when there is enough space in
     // the limiter, but some transactions were evicted before.
     auto checkMinFeeToFitWithNoEvict = [&](uint32_t minFee) {
-        std::vector<std::pair<TxStackPtr, bool>> txsToEvict;
+        std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>> txsToEvict;
         // 0 fee is a special case as transaction shouldn't have 0 fee.
         // Hence we only check that fee of 1 allows transaction to be added.
         if (minFee == 0)
@@ -1797,7 +1799,7 @@ TEST_CASE("TransactionQueue limiter with DEX separation",
         {
             tx = transaction(*app, account, 1, 1, fee, ops);
         }
-        std::vector<std::pair<TxStackPtr, bool>> txsToEvict;
+        std::vector<std::pair<SurgePricingQueueTxBasePtr, bool>> txsToEvict;
         auto can = limiter.canAddTx(tx, noTx, txsToEvict);
         REQUIRE(can.first == expected);
         if (can.first)

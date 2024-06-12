@@ -647,10 +647,6 @@ testTxSetWithFeeBumps(uint32 protocolVersion)
 
 TEST_CASE("txset", "[herder][txset]")
 {
-    SECTION("protocol 13")
-    {
-        testTxSet(13);
-    }
     SECTION("generalized tx set protocol")
     {
         testTxSet(static_cast<uint32>(SOROBAN_PROTOCOL_VERSION));
@@ -1197,59 +1193,29 @@ TEST_CASE("txset base fee", "[herder][txset]")
     //   1 op, fee bid = baseFee*10 = 1000
     // extra tx
     //   2 ops, fee bid = 20000+i
-    // to reach 112
-    //    protocol 10 adds 104 tx (208 ops)
-    //    protocol 11 adds 52 tx (104 ops)
+    //    should add 52 tx (104 ops)
 
-    // v11: surge threshold is 112-100=12 ops
-    //     no surge pricing @ 10 (only 1 extra tx)
+    //  surge threshold is 112-100=12 ops
     //     surge pricing @ 12 (2 extra tx)
 
     uint32 const baseCount = 8;
-    uint32 const v10ExtraTx = 104;
-    uint32 const v11ExtraTx = 52;
-    uint32 const v10NewCount = 112;
-    uint32 const v11NewCount = 56; // 112/2
+    uint32 const extraTx = 52;
+    uint32 const newCount = 56; // 112/2
     SECTION("surged")
     {
         SECTION("mixed")
         {
-            SECTION("protocol 10")
-            {
-                // low = base tx
-                // high = last extra tx
-                testBaseFee(10, baseCount, v10ExtraTx, maxTxSetSize, 1000,
-                            20104);
-            }
-            SECTION("protocol before generalized tx set")
-            {
-                // low = 10*base tx = baseFee = 1000
-                // high = 2*base (surge)
-                SECTION("maxed out surged")
-                {
-                    testBaseFee(
-                        static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION) - 1,
-                        baseCount, v11ExtraTx, maxTxSetSize, 1000, 2000);
-                }
-                SECTION("smallest surged")
-                {
-                    testBaseFee(
-                        static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION) - 1,
-                        baseCount + 1, v11ExtraTx - 50, maxTxSetSize - 100 + 1,
-                        1000, 2000);
-                }
-            }
             SECTION("generalized tx set protocol")
             {
                 SECTION("fitting exactly into capacity does not cause surge")
                 {
                     testBaseFee(static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION),
-                                baseCount, v11ExtraTx, maxTxSetSize, 100, 200);
+                                baseCount, extraTx, maxTxSetSize, 100, 200);
                 }
                 SECTION("evicting one tx causes surge")
                 {
                     testBaseFee(static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION),
-                                baseCount + 1, v11ExtraTx, maxTxSetSize, 1000,
+                                baseCount + 1, extraTx, maxTxSetSize, 1000,
                                 2000, 1);
                 }
             }
@@ -1264,13 +1230,13 @@ TEST_CASE("txset base fee", "[herder][txset]")
                     {
                         testBaseFee(
                             static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION),
-                            baseCount, v11ExtraTx, maxTxSetSize, 100, 200);
+                            baseCount, extraTx, maxTxSetSize, 100, 200);
                     }
                     SECTION("evicting one tx causes surge")
                     {
                         testBaseFee(
                             static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION),
-                            baseCount + 1, v11ExtraTx, maxTxSetSize, 1000, 2000,
+                            baseCount + 1, extraTx, maxTxSetSize, 1000, 2000,
                             1);
                     }
                 }
@@ -1280,45 +1246,31 @@ TEST_CASE("txset base fee", "[herder][txset]")
                     {
                         testBaseFee(
                             static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION) - 1,
-                            baseCount, v11ExtraTx, maxTxSetSize, 1000, 2000);
+                            baseCount, extraTx, maxTxSetSize, 1000, 2000);
                     }
                     SECTION("smallest surged")
                     {
                         testBaseFee(
                             static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION) - 1,
-                            baseCount + 1, v11ExtraTx - 50,
-                            maxTxSetSize - 100 + 1, 1000, 2000);
+                            baseCount + 1, extraTx - 50, maxTxSetSize - 100 + 1,
+                            1000, 2000);
                     }
                 }
             }
         }
         SECTION("newOnly")
         {
-            SECTION("protocol 10")
-            {
-                // low = 20000+1
-                // high = 20000+112
-                testBaseFee(10, 0, v10NewCount, maxTxSetSize, 20001, 20112);
-            }
-            SECTION("protocol before generalized tx set")
-            {
-                // low = 20000+1 -> baseFee = 20001/2+ = 10001
-                // high = 10001*2
-                testBaseFee(static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION) - 1,
-                            0, v11NewCount, maxTxSetSize, 20001, 20002);
-            }
             SECTION("generalized tx set protocol")
             {
                 SECTION("fitting exactly into capacity does not cause surge")
                 {
                     testBaseFee(static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION),
-                                0, v11NewCount, maxTxSetSize, 200, 200);
+                                0, newCount, maxTxSetSize, 200, 200);
                 }
                 SECTION("evicting one tx causes surge")
                 {
                     testBaseFee(static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION),
-                                0, v11NewCount + 1, maxTxSetSize, 20002, 20002,
-                                1);
+                                0, newCount + 1, maxTxSetSize, 20002, 20002, 1);
                 }
             }
             SECTION("protocol current")
@@ -1331,12 +1283,12 @@ TEST_CASE("txset base fee", "[herder][txset]")
                         "fitting exactly into capacity does not cause surge")
                     {
                         testBaseFee(Config::CURRENT_LEDGER_PROTOCOL_VERSION, 0,
-                                    v11NewCount, maxTxSetSize, 200, 200);
+                                    newCount, maxTxSetSize, 200, 200);
                     }
                     SECTION("evicting one tx causes surge")
                     {
                         testBaseFee(Config::CURRENT_LEDGER_PROTOCOL_VERSION, 0,
-                                    v11NewCount + 1, maxTxSetSize, 20002, 20002,
+                                    newCount + 1, maxTxSetSize, 20002, 20002,
                                     1);
                     }
                 }
@@ -1344,7 +1296,7 @@ TEST_CASE("txset base fee", "[herder][txset]")
                 {
                     testBaseFee(
                         static_cast<uint32_t>(SOROBAN_PROTOCOL_VERSION) - 1, 0,
-                        v11NewCount, maxTxSetSize, 20001, 20002);
+                        newCount, maxTxSetSize, 20001, 20002);
                 }
             }
         }
@@ -1353,36 +1305,24 @@ TEST_CASE("txset base fee", "[herder][txset]")
     {
         SECTION("mixed")
         {
-            SECTION("protocol 10")
-            {
-                // low = 1000
-                // high = 20000+4
-                testBaseFee(10, baseCount, 4, baseCount + 4, 1000, 20004);
-            }
             SECTION("protocol current")
             {
                 // baseFee = minFee = 100
                 // high = 2*minFee
                 // highest number of ops not surged is max-100
                 testBaseFee(Config::CURRENT_LEDGER_PROTOCOL_VERSION, baseCount,
-                            v11ExtraTx - 50, maxTxSetSize - 100, 100, 200);
+                            extraTx - 50, maxTxSetSize - 100, 100, 200);
             }
         }
         SECTION("newOnly")
         {
-            SECTION("protocol 10")
-            {
-                // low = 20000+1
-                // high = 20000+12
-                testBaseFee(10, 0, 12, 12, 20001, 20012);
-            }
             SECTION("protocol current")
             {
                 // low = minFee = 100
                 // high = 2*minFee
                 // highest number of ops not surged is max-100
                 testBaseFee(Config::CURRENT_LEDGER_PROTOCOL_VERSION, 0,
-                            v11NewCount - 50, maxTxSetSize - 100, 200, 200);
+                            newCount - 50, maxTxSetSize - 100, 200, 200);
             }
         }
     }
@@ -1639,11 +1579,6 @@ TEST_CASE("tx set hits overlay byte limit during construction",
 
 TEST_CASE("surge pricing", "[herder][txset][soroban]")
 {
-    SECTION("protocol 19")
-    {
-        // (1+..+4) + (1+2) = 10+3 = 13
-        surgeTest(19, 5, 15, 13);
-    }
     SECTION("max 0 ops per ledger")
     {
         Config cfg(getTestConfig());
