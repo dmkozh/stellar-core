@@ -523,6 +523,7 @@ TEST_CASE("generalized tx set XDR conversion", "[txset]")
                           TransactionMode::READ_ONLY_WITHOUT_SQL_TXN);
             applicableFrame = txSetFrame->prepareForApply(*app);
         }
+
         REQUIRE(applicableFrame->checkValid(*app, 0, 0));
         GeneralizedTransactionSet newXdr;
         applicableFrame->toWireTxSetFrame()->toXDR(newXdr);

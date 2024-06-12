@@ -33,8 +33,8 @@ enum class TxSetPhase
     PHASE_COUNT
 };
 
-using TxSetTransactions = std::vector<TransactionFrameBasePtr>;
-using TxSetPhaseTransactions = std::vector<TxSetTransactions>;
+using TxFrameList = std::vector<TransactionFrameBasePtr>;
+using PerPhaseTransactionList = std::vector<TxFrameList>;
 
 std::string getTxSetPhaseName(TxSetPhase phase);
 
@@ -51,7 +51,7 @@ std::string getTxSetPhaseName(TxSetPhase phase);
 // transaction pointers.
 std::pair<TxSetXDRFrameConstPtr, ApplicableTxSetFrameConstPtr>
 makeTxSetFromTransactions(
-    TxSetPhaseTransactions const& txPhases, Application& app,
+    PerPhaseTransactionList const& txPhases, Application& app,
     uint64_t lowerBoundCloseTimeOffset,
     uint64_t upperBoundCloseTimeOffset
 #ifdef BUILD_TESTS
@@ -64,9 +64,9 @@ makeTxSetFromTransactions(
 );
 std::pair<TxSetXDRFrameConstPtr, ApplicableTxSetFrameConstPtr>
 makeTxSetFromTransactions(
-    TxSetPhaseTransactions const& txPhases, Application& app,
+    PerPhaseTransactionList const& txPhases, Application& app,
     uint64_t lowerBoundCloseTimeOffset, uint64_t upperBoundCloseTimeOffset,
-    TxSetPhaseTransactions& invalidTxsPerPhase
+    PerPhaseTransactionList& invalidTxsPerPhase
 #ifdef BUILD_TESTS
     // Skips the tx set validation and preserves the pointers
     // to the passed-in transactions - use in conjunction with
@@ -78,15 +78,15 @@ makeTxSetFromTransactions(
 
 #ifdef BUILD_TESTS
 std::pair<TxSetXDRFrameConstPtr, ApplicableTxSetFrameConstPtr>
-makeTxSetFromTransactions(TxSetTransactions txs, Application& app,
+makeTxSetFromTransactions(TxFrameList txs, Application& app,
                           uint64_t lowerBoundCloseTimeOffset,
                           uint64_t upperBoundCloseTimeOffset,
                           bool enforceTxsApplyOrder = false);
 std::pair<TxSetXDRFrameConstPtr, ApplicableTxSetFrameConstPtr>
-makeTxSetFromTransactions(TxSetTransactions txs, Application& app,
+makeTxSetFromTransactions(TxFrameList txs, Application& app,
                           uint64_t lowerBoundCloseTimeOffset,
                           uint64_t upperBoundCloseTimeOffset,
-                          TxSetTransactions& invalidTxs,
+                          TxFrameList& invalidTxs,
                           bool enforceTxsApplyOrder = false);
 #endif
 
@@ -124,7 +124,7 @@ class TxSetXDRFrame : public NonMovableOrCopyable
     // historical transactions.
     static TxSetXDRFrameConstPtr
     makeFromHistoryTransactions(Hash const& previousLedgerHash,
-                                TxSetTransactions const& txs);
+                                TxFrameList const& txs);
 
     void toXDR(TransactionSet& set) const;
     void toXDR(GeneralizedTransactionSet& generalizedTxSet) const;
@@ -170,7 +170,8 @@ class TxSetXDRFrame : public NonMovableOrCopyable
     // This is only necessary to serve a very specific use case of updating
     // the transaction queue with wired tx sets. Otherwise, use
     // getTransactionsForPhase() in `ApplicableTxSetFrame`.
-    TxSetPhaseTransactions createTransactionFrames(Hash const& networkID) const;
+    PerPhaseTransactionList
+    createTransactionFrames(Hash const& networkID) const;
 
 #ifdef BUILD_TESTS
     mutable ApplicableTxSetFrameConstPtr mApplicableTxSetOverride;
@@ -185,6 +186,68 @@ class TxSetXDRFrame : public NonMovableOrCopyable
     std::variant<TransactionSet, GeneralizedTransactionSet> mXDRTxSet;
     size_t mEncodedSize{};
     Hash mHash;
+};
+
+using TxThreadFrame = std::vector<TxFrameList>;
+using TxStageFrame = std::vector<TxThreadFrame>;
+using TxStageFrameList = std::vector<TxStageFrame>;
+
+class TxSetPhaseFrame
+{
+  public:
+    explicit TxSetPhaseFrame(TxFrameList&& txs);
+    explicit TxSetPhaseFrame(TxStageFrameList&& txs);
+    TxSetPhaseFrame() = default;
+
+    bool isParallel() const;
+
+    TxStageFrameList const& getParallelStages() const;
+    TxFrameList const& getNonParallelTxs() const;
+
+    void
+    toXDR(std::unordered_map<TransactionFrameBaseConstPtr,
+                             std::optional<int64_t>> const& inclusionFeeMap,
+          TransactionPhase& xdrPhase) const;
+
+    class Iterator
+    {
+      public:
+        using value_type = TransactionFrameBasePtr;
+        using difference_type = std::ptrdiff_t;
+        using pointer = value_type*;
+        using reference = value_type&;
+        using iterator_category = std::forward_iterator_tag;
+
+        TransactionFrameBasePtr operator*() const;
+
+        Iterator& operator++();
+        Iterator operator++(int);
+
+        bool operator==(Iterator const& other) const;
+        bool operator!=(Iterator const& other) const;
+
+      private:
+        friend class TxSetPhaseFrame;
+
+        Iterator(std::variant<TxFrameList, TxStageFrameList> const& txs,
+                 size_t stageIndex, size_t txIndex);
+        std::variant<TxFrameList, TxStageFrameList> const& mTxs;
+        size_t mStageIndex = 0;
+        size_t mThreadIndex = 0;
+        size_t mClusterIndex = 0;
+        size_t mTxIndex = 0;
+    };
+    Iterator begin() const;
+    Iterator end() const;
+    size_t size() const;
+    bool empty() const;
+
+  private:
+    friend class ApplicableTxSetFrame;
+    void addTxList(TxFrameList txList);
+    TxSetPhaseFrame sortedForApply(Hash const& txSetHash) const;
+
+    std::variant<TxFrameList, TxStageFrameList> mTxs;
 };
 
 // Transaction set that is suitable for being applied to the ledger.
@@ -205,7 +268,10 @@ class ApplicableTxSetFrame
                                         LedgerHeader const& lclHeader) const;
 
     // Gets all the transactions belonging to this frame in arbitrary order.
-    TxSetTransactions const& getTxsForPhase(TxSetPhase phase) const;
+    TxSetPhaseFrame const& getTxsForPhase(TxSetPhase phase) const;
+
+    // Gets all the phases of this tx set with transactions in arbitrary order.
+    std::vector<TxSetPhaseFrame> const& getPhases() const;
 
     // Build a list of transaction ready to be applied to the last closed
     // ledger, based on the transaction set.
@@ -213,7 +279,7 @@ class ApplicableTxSetFrame
     // The order satisfies:
     // * transactions for an account are sorted by sequence number (ascending)
     // * the order between accounts is randomized
-    TxSetTransactions getTxsInApplyOrder() const;
+    std::vector<TxSetPhaseFrame> getPhasesInApplyOrder() const;
 
     // Checks if this tx set frame is valid in the context of the current LCL.
     // This can be called when LCL does not match `previousLedgerHash`, but
@@ -224,11 +290,7 @@ class ApplicableTxSetFrame
     size_t size(LedgerHeader const& lh,
                 std::optional<TxSetPhase> phase = std::nullopt) const;
 
-    size_t
-    sizeTx(TxSetPhase phase) const
-    {
-        return mTxPhases.at(static_cast<size_t>(phase)).size();
-    }
+    size_t sizeTx(TxSetPhase phase) const;
     size_t sizeTxTotal() const;
 
     bool
@@ -272,11 +334,11 @@ class ApplicableTxSetFrame
   private:
     friend class TxSetXDRFrame;
     friend std::pair<TxSetXDRFrameConstPtr, ApplicableTxSetFrameConstPtr>
-    makeTxSetFromTransactions(TxSetPhaseTransactions const& txPhases,
+    makeTxSetFromTransactions(PerPhaseTransactionList const& txPhases,
                               Application& app,
                               uint64_t lowerBoundCloseTimeOffset,
                               uint64_t upperBoundCloseTimeOffset,
-                              TxSetPhaseTransactions& invalidTxsPerPhase
+                              PerPhaseTransactionList& invalidTxsPerPhase
 #ifdef BUILD_TESTS
                               ,
                               bool skipValidation
@@ -284,20 +346,20 @@ class ApplicableTxSetFrame
     );
 #ifdef BUILD_TESTS
     friend std::pair<TxSetXDRFrameConstPtr, ApplicableTxSetFrameConstPtr>
-    makeTxSetFromTransactions(TxSetTransactions txs, Application& app,
+    makeTxSetFromTransactions(TxFrameList txs, Application& app,
                               uint64_t lowerBoundCloseTimeOffset,
                               uint64_t upperBoundCloseTimeOffset,
-                              TxSetTransactions& invalidTxs,
+                              TxFrameList& invalidTxs,
                               bool enforceTxsApplyOrder);
 #endif
 
     ApplicableTxSetFrame(Application& app,
                          LedgerHeaderHistoryEntry const& lclHeader,
-                         TxSetPhaseTransactions const& txs,
+                         PerPhaseTransactionList const& txs,
                          std::optional<Hash> contentsHash);
     ApplicableTxSetFrame(Application& app, bool isGeneralized,
                          Hash const& previousLedgerHash,
-                         TxSetPhaseTransactions const& txs,
+                         PerPhaseTransactionList const& txs,
                          std::optional<Hash> contentsHash);
     ApplicableTxSetFrame(ApplicableTxSetFrame const&) = default;
     ApplicableTxSetFrame(ApplicableTxSetFrame&&) = default;
@@ -341,7 +403,7 @@ class ApplicableTxSetFrame
     Hash const mPreviousLedgerHash;
     // There can only be 1 phase (classic) prior to protocol 20.
     // Starting protocol 20, there will be 2 phases (classic and soroban).
-    std::vector<TxSetTransactions> mTxPhases;
+    std::vector<TxSetPhaseFrame> mTxPhases;
 
     mutable std::vector<bool> mFeesComputed;
     mutable std::vector<std::unordered_map<TransactionFrameBaseConstPtr,
@@ -350,7 +412,7 @@ class ApplicableTxSetFrame
 
     std::optional<Hash> mContentsHash;
 #ifdef BUILD_TESTS
-    mutable std::optional<TxSetTransactions> mApplyOrderOverride;
+    mutable std::optional<std::vector<TxSetPhaseFrame>> mApplyOrderOverride;
 #endif
 };
 
