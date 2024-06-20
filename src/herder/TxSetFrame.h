@@ -36,8 +36,6 @@ enum class TxSetPhase
 using TxFrameList = std::vector<TransactionFrameBasePtr>;
 using PerPhaseTransactionList = std::vector<TxFrameList>;
 
-std::string getTxSetPhaseName(TxSetPhase phase);
-
 // Creates a valid ApplicableTxSetFrame and corresponding TxSetXDRFrame
 // from the provided transactions.
 //
@@ -192,11 +190,23 @@ using TxThreadFrame = std::vector<TxFrameList>;
 using TxStageFrame = std::vector<TxThreadFrame>;
 using TxStageFrameList = std::vector<TxStageFrame>;
 
+using InclusionFeeMap =
+    std::unordered_map<TransactionFrameBaseConstPtr, std::optional<int64_t>>;
+
 class TxSetPhaseFrame
 {
   public:
-    explicit TxSetPhaseFrame(TxFrameList&& txs);
-    explicit TxSetPhaseFrame(TxStageFrameList&& txs);
+    static std::optional<TxSetPhaseFrame>
+    makeFromWire(Hash const& networkID, TransactionPhase const& xdrPhase);
+
+    static std::optional<TxSetPhaseFrame>
+    makeFromWireLegacy(LedgerHeader const& lclHeader, Hash const& networkID,
+                       xdr::xvector<TransactionEnvelope> const& xdrTxs);
+
+    TxSetPhaseFrame(TxFrameList&& txs,
+                    std::shared_ptr<InclusionFeeMap> inclusionFeeMap);
+    TxSetPhaseFrame(TxStageFrameList&& txs,
+                    std::shared_ptr<InclusionFeeMap> inclusionFeeMap);
     TxSetPhaseFrame() = default;
 
     bool isParallel() const;
@@ -204,10 +214,7 @@ class TxSetPhaseFrame
     TxStageFrameList const& getParallelStages() const;
     TxFrameList const& getNonParallelTxs() const;
 
-    void
-    toXDR(std::unordered_map<TransactionFrameBaseConstPtr,
-                             std::optional<int64_t>> const& inclusionFeeMap,
-          TransactionPhase& xdrPhase) const;
+    void toXDR(TransactionPhase& xdrPhase) const;
 
     class Iterator
     {
@@ -242,11 +249,15 @@ class TxSetPhaseFrame
     size_t size() const;
     bool empty() const;
 
-  private:
-    friend class ApplicableTxSetFrame;
-    void addTxList(TxFrameList txList);
+    // Get _inclusion_ fee map for a given phase. The map contains lowest base
+    // fee for each transaction (lowest base fee is identical for all
+    // transactions in the same lane)
+    InclusionFeeMap const& getInclusionFeeMap() const;
+
     TxSetPhaseFrame sortedForApply(Hash const& txSetHash) const;
 
+  private:
+    std::shared_ptr<InclusionFeeMap> mInclusionFeeMap;
     std::variant<TxFrameList, TxStageFrameList> mTxs;
 };
 
@@ -264,8 +275,8 @@ class ApplicableTxSetFrame
   public:
     // Returns the base fee for the transaction or std::nullopt when the
     // transaction is not discounted.
-    std::optional<int64_t> getTxBaseFee(TransactionFrameBaseConstPtr const& tx,
-                                        LedgerHeader const& lclHeader) const;
+    std::optional<int64_t>
+    getTxBaseFee(TransactionFrameBaseConstPtr const& tx) const;
 
     // Gets all the transactions belonging to this frame in arbitrary order.
     TxSetPhaseFrame const& getTxsForPhase(TxSetPhase phase) const;
@@ -302,7 +313,7 @@ class ApplicableTxSetFrame
     size_t
     numPhases() const
     {
-        return mTxPhases.size();
+        return mPhases.size();
     }
 
     size_t sizeOp(TxSetPhase phase) const;
@@ -355,46 +366,22 @@ class ApplicableTxSetFrame
 
     ApplicableTxSetFrame(Application& app,
                          LedgerHeaderHistoryEntry const& lclHeader,
-                         PerPhaseTransactionList const& txs,
+                         std::vector<TxSetPhaseFrame> const& phases,
                          std::optional<Hash> contentsHash);
     ApplicableTxSetFrame(Application& app, bool isGeneralized,
                          Hash const& previousLedgerHash,
-                         PerPhaseTransactionList const& txs,
+                         std::vector<TxSetPhaseFrame> const& phases,
                          std::optional<Hash> contentsHash);
     ApplicableTxSetFrame(ApplicableTxSetFrame const&) = default;
     ApplicableTxSetFrame(ApplicableTxSetFrame&&) = default;
-    // Computes the fees for transactions in this set based on information from
-    // the non-generalized tx set.
-    // This has to be `const` in combination with `mutable` fee-related fields
-    // in order to accommodate one specific case: legacy (non-generalized) tx
-    // sets received from the peers don't include the fee information and we
-    // don't have immediate access to the ledger header needed to compute them.
-    // Hence we lazily compute the fees in `getTxBaseFee` for such TxSetFrames.
-    // This can be cleaned up after the protocol migration as non-generalized tx
-    // sets won't exist in the network anymore.
-    void computeTxFeesForNonGeneralizedSet(LedgerHeader const& lclHeader) const;
 
-    bool addTxsFromXdr(Hash const& networkID,
-                       xdr::xvector<TransactionEnvelope> const& txs,
-                       bool useBaseFee, std::optional<int64_t> baseFee,
-                       TxSetPhase phase);
-    void applySurgePricing(Application& app);
+    // bool addTxsFromXdr(Hash const& networkID,
+    //                    xdr::xvector<TransactionEnvelope> const& txs,
+    //                    bool useBaseFee, std::optional<int64_t> baseFee,
+    //                    TxSetPhase phase);
+    // void applySurgePricing(Application& app);
 
-    void computeTxFeesForNonGeneralizedSet(LedgerHeader const& lclHeader,
-                                           int64_t lowestBaseFee,
-                                           bool enableLogging) const;
-
-    void computeTxFees(TxSetPhase phase, LedgerHeader const& ledgerHeader,
-                       SurgePricingLaneConfig const& surgePricingConfig,
-                       std::vector<int64_t> const& lowestLaneFee,
-                       std::vector<bool> const& hadTxNotFittingLane) const;
     std::optional<Resource> getTxSetSorobanResource() const;
-
-    // Get _inclusion_ fee map for a given phase. The map contains lowest base
-    // fee for each transaction (lowest base fee is identical for all
-    // transactions in the same lane)
-    std::unordered_map<TransactionFrameBaseConstPtr, std::optional<int64_t>>&
-    getInclusionFeeMap(TxSetPhase phase) const;
 
     void toXDR(TransactionSet& set) const;
     void toXDR(GeneralizedTransactionSet& generalizedTxSet) const;
@@ -402,13 +389,8 @@ class ApplicableTxSetFrame
     bool const mIsGeneralized;
     Hash const mPreviousLedgerHash;
     // There can only be 1 phase (classic) prior to protocol 20.
-    // Starting protocol 20, there will be 2 phases (classic and soroban).
-    std::vector<TxSetPhaseFrame> mTxPhases;
-
-    mutable std::vector<bool> mFeesComputed;
-    mutable std::vector<std::unordered_map<TransactionFrameBaseConstPtr,
-                                           std::optional<int64_t>>>
-        mPhaseInclusionFeeMap;
+    // Starting with protocol 20, there are 2 phases (classic and Soroban).
+    std::vector<TxSetPhaseFrame> mPhases;
 
     std::optional<Hash> mContentsHash;
 #ifdef BUILD_TESTS

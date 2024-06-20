@@ -1354,7 +1354,7 @@ LedgerManagerImpl::processFeesSeqNums(
             for (auto const& tx : phase)
             {
                 LedgerTxn ltxTx(ltx);
-                tx->processFeeSeqNum(ltxTx, txSet.getTxBaseFee(tx, header));
+                tx->processFeeSeqNum(ltxTx, txSet.getTxBaseFee(tx));
 
                 if (protocolVersionStartsFrom(
                         ltxTx.loadHeader().current().ledgerVersion,

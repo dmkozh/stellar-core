@@ -1756,13 +1756,7 @@ TEST_CASE("surge pricing with DEX separation", "[herder][txset]")
     cfg.MAX_DEX_TX_OPERATIONS_IN_TX_SET = 5;
 
     VirtualClock clock;
-    Application::pointer app = createTestApplication(clock, cfg);
-
-    LedgerHeader lhCopy;
-    {
-        LedgerTxn ltx(app->getLedgerTxnRoot());
-        lhCopy = ltx.loadHeader().current();
-    }
+    Application::pointer app = createTestApplication(clock, cfg);    
 
     auto root = TestAccount::createRoot(*app);
 
@@ -1812,7 +1806,7 @@ TEST_CASE("surge pricing with DEX separation", "[herder][txset]")
                 REQUIRE(seqNumD == tx->getSeqNum());
             }
 
-            auto baseFee = txSet->getTxBaseFee(tx, lhCopy);
+            auto baseFee = txSet->getTxBaseFee(tx);
             REQUIRE(baseFee);
             if (tx->hasDexOperations())
             {
@@ -2002,7 +1996,7 @@ TEST_CASE("surge pricing with DEX separation holds invariants",
             {
                 auto isDex = static_cast<size_t>(resTx->hasDexOperations());
                 opsCounts[isDex] += resTx->getNumOperations();
-                auto baseFee = txSet->getTxBaseFee(resTx, lhCopy);
+                auto baseFee = txSet->getTxBaseFee(resTx);
                 REQUIRE(baseFee);
                 if (baseFees[isDex] != 0)
                 {

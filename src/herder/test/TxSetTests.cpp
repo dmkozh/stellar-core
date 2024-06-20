@@ -904,9 +904,7 @@ TEST_CASE("generalized tx set fees", "[txset][soroban]")
                  txSet->getTxsForPhase(static_cast<TxSetPhase>(i)))
             {
                 fees.push_back(
-                    txSet->getTxBaseFee(tx, app->getLedgerManager()
-                                                .getLastClosedLedgerHeader()
-                                                .header));
+                    txSet->getTxBaseFee(tx));
             }
             std::sort(fees.begin(), fees.end());
             REQUIRE(fees == std::vector<std::optional<int64_t>>{
