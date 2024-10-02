@@ -18,8 +18,7 @@ class ApplyLoad
               uint64_t ledgerMaxReadLedgerEntries, uint64_t ledgerMaxReadBytes,
               uint64_t ledgerMaxWriteLedgerEntries,
               uint64_t ledgerMaxWriteBytes, uint64_t ledgerMaxTxCount,
-              uint64_t ledgerMaxTransactionsSizeBytes,
-              uint32_t ledgerMaxParallelThreads);
+              uint64_t ledgerMaxTransactionsSizeBytes, uint64_t threadCount);
 
     // Fills up a list of transactions with
     // SOROBAN_TRANSACTION_QUEUE_SIZE_MULTIPLIER * the max ledger resources
