@@ -832,7 +832,7 @@ TEST_CASE("apply only load", "[loadgen][applyload]")
         static_cast<uint32_t>(PARALLEL_SOROBAN_PHASE_PROTOCOL_VERSION);
     cfg.SOROBAN_PHASE_STAGE_COUNT = 1;
 
-    cfg.LOADGEN_NUM_DATA_ENTRIES_FOR_TESTING = {1};
+    cfg.LOADGEN_NUM_DATA_ENTRIES_FOR_TESTING = {25};
     cfg.LOADGEN_NUM_DATA_ENTRIES_DISTRIBUTION_FOR_TESTING = {1};
     cfg.LOADGEN_IO_KILOBYTES_FOR_TESTING = {1};
     cfg.LOADGEN_IO_KILOBYTES_DISTRIBUTION_FOR_TESTING = {1};
@@ -849,16 +849,17 @@ TEST_CASE("apply only load", "[loadgen][applyload]")
 
     uint64_t ledgerMaxInstructions = 500'000'000;
     uint64_t ledgerMaxReadLedgerEntries = 2000;
-    uint64_t ledgerMaxReadBytes = 5'000'000;
+    uint64_t ledgerMaxReadBytes = 50'000'000;
     uint64_t ledgerMaxWriteLedgerEntries = 1250;
     uint64_t ledgerMaxWriteBytes = 700'000;
     uint64_t ledgerMaxTxCount = 1'000;
     uint64_t ledgerMaxTransactionsSizeBytes = 800'000;
+    uint32_t threadCount = 4;
 
     ApplyLoad al(*app, ledgerMaxInstructions, ledgerMaxReadLedgerEntries,
                  ledgerMaxReadBytes, ledgerMaxWriteLedgerEntries,
                  ledgerMaxWriteBytes, ledgerMaxTxCount,
-                 ledgerMaxTransactionsSizeBytes);
+                 ledgerMaxTransactionsSizeBytes, threadCount);
 
     auto& ledgerClose =
         app->getMetrics().NewTimer({"ledger", "ledger", "close"});
@@ -871,7 +872,6 @@ TEST_CASE("apply only load", "[loadgen][applyload]")
     auto& cpuInsRatioExclVm = app->getMetrics().NewHistogram(
         {"soroban", "host-fn-op", "invoke-time-fsecs-cpu-insn-ratio-excl-vm"});
     cpuInsRatioExclVm.Clear();
-
     for (size_t i = 0; i < 20; ++i)
     {
         al.benchmark();
@@ -880,6 +880,7 @@ TEST_CASE("apply only load", "[loadgen][applyload]")
     CLOG_INFO(Perf, "Max ledger close: {} milliseconds", ledgerClose.max());
     CLOG_INFO(Perf, "Min ledger close: {} milliseconds", ledgerClose.min());
     CLOG_INFO(Perf, "Mean ledger close:  {} milliseconds", ledgerClose.mean());
+    CLOG_INFO(Perf, "STDDEV ledger close:  {} milliseconds", ledgerClose.std_dev());
 
     CLOG_INFO(Perf, "Max CPU ins ratio: {}", cpuInsRatio.max() / 1000000);
     CLOG_INFO(Perf, "Mean CPU ins ratio:  {}", cpuInsRatio.mean() / 1000000);
@@ -888,6 +889,8 @@ TEST_CASE("apply only load", "[loadgen][applyload]")
               cpuInsRatioExclVm.max() / 1000000);
     CLOG_INFO(Perf, "Mean CPU ins ratio excl VM:  {}",
               cpuInsRatioExclVm.mean() / 1000000);
+    CLOG_INFO(Perf, "STDDEV CPU ins ratio excl VM:  {}",
+              cpuInsRatioExclVm.std_dev() / 1000000);
 
     CLOG_INFO(Perf, "Tx count utilization {}%",
               al.getTxCountUtilization().mean() / 1000.0);

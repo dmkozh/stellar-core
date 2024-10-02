@@ -25,7 +25,8 @@ ApplyLoad::ApplyLoad(Application& app, uint64_t ledgerMaxInstructions,
                      uint64_t ledgerMaxReadBytes,
                      uint64_t ledgerMaxWriteLedgerEntries,
                      uint64_t ledgerMaxWriteBytes, uint64_t ledgerMaxTxCount,
-                     uint64_t ledgerMaxTransactionsSizeBytes)
+                     uint64_t ledgerMaxTransactionsSizeBytes,
+                     uint32_t ledgerMaxParallelThreads)
     : mTxGenerator(app)
     , mApp(app)
     , mNumAccounts(
@@ -72,7 +73,7 @@ ApplyLoad::ApplyLoad(Application& app, uint64_t ledgerMaxInstructions,
     mUpgradeConfig.bucketListSizeWindowSampleSize = 30;
     mUpgradeConfig.evictionScanSize = 100000;
     mUpgradeConfig.startingEvictionScanLevel = 7;
-    mUpgradeConfig.ledgerMaxParallelThreads = 6;
+    mUpgradeConfig.ledgerMaxParallelThreads = ledgerMaxParallelThreads;
 
     setupAccountsAndUpgradeProtocol();
 

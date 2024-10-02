@@ -1814,6 +1814,7 @@ runApplyLoad(CommandLineArgs const& args)
     uint64_t ledgerMaxWriteBytes = 0;
     uint64_t ledgerMaxTxCount = 0;
     uint64_t ledgerMaxTransactionsSizeBytes = 0;
+    uint32_t ledgerMaxThreads = 0;
 
     ParserWithValidation ledgerMaxInstructionsParser{
         clara::Opt(ledgerMaxInstructions,
@@ -1881,12 +1882,20 @@ runApplyLoad(CommandLineArgs const& args)
                        : "ledgerMaxTransactionsSizeBytes must be > 0";
         }};
 
+    ParserWithValidation ledgerMaxThreadsParser{
+        clara::Opt(ledgerMaxThreads, "ledgerMaxThreads")["--ledger-max-threads"]
+            .required(),
+        [&] {
+            return ledgerMaxThreads > 0 ? "" : "ledgerMaxThreads must be > 0";
+        }};
+
     return runWithHelp(
         args,
         {configurationParser(configOption), ledgerMaxInstructionsParser,
          ledgerMaxReadLedgerEntriesParser, ledgerMaxReadBytesParser,
          ledgerMaxWriteLedgerEntriesParser, ledgerMaxWriteBytesParser,
-         ledgerMaxTxCountParser, ledgerMaxTransactionsSizeBytesParser},
+         ledgerMaxTxCountParser, ledgerMaxTransactionsSizeBytesParser,
+         ledgerMaxThreadsParser},
         [&] {
             auto config = configOption.getConfig();
             config.RUN_STANDALONE = true;
@@ -1903,7 +1912,8 @@ runApplyLoad(CommandLineArgs const& args)
                 ApplyLoad al(app, ledgerMaxInstructions,
                              ledgerMaxReadLedgerEntries, ledgerMaxReadBytes,
                              ledgerMaxWriteLedgerEntries, ledgerMaxWriteBytes,
-                             ledgerMaxTxCount, ledgerMaxTransactionsSizeBytes);
+                             ledgerMaxTxCount, ledgerMaxTransactionsSizeBytes,
+                             ledgerMaxThreads);
 
                 auto& ledgerClose =
                     app.getMetrics().NewTimer({"ledger", "ledger", "close"});
@@ -1930,6 +1940,8 @@ runApplyLoad(CommandLineArgs const& args)
                           ledgerClose.min());
                 CLOG_INFO(Perf, "Mean ledger close:  {} milliseconds",
                           ledgerClose.mean());
+                CLOG_INFO(Perf, "stddev ledger close:  {} milliseconds",
+                          ledgerClose.std_dev());
 
                 CLOG_INFO(Perf, "Max CPU ins ratio: {}",
                           cpuInsRatio.max() / 1000000);
@@ -1940,6 +1952,9 @@ runApplyLoad(CommandLineArgs const& args)
                           cpuInsRatioExclVm.max() / 1000000);
                 CLOG_INFO(Perf, "Mean CPU ins ratio excl VM:  {}",
                           cpuInsRatioExclVm.mean() / 1000000);
+                CLOG_INFO(Perf,
+                          "stddev CPU ins ratio excl VM:  {} milliseconds",
+                          cpuInsRatioExclVm.std_dev());
 
                 CLOG_INFO(Perf, "Tx count utilization {}%",
                           al.getTxCountUtilization().mean() / 1000.0);

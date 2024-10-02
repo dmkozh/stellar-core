@@ -464,6 +464,7 @@ TxGenerator::invokeSorobanLoadTransaction(
     // Randomly select a number of guest cycles
     uint64_t guestCyclesMax = targetInstructions / instructionsPerGuestCycle;
     uint64_t guestCycles = rand_uniform<uint64_t>(0, guestCyclesMax);
+    guestCycles = guestCyclesMax / 2;
 
     // Rest of instructions consumed by host cycles
     targetInstructions -= guestCycles * instructionsPerGuestCycle;
