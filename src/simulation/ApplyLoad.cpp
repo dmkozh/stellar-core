@@ -123,13 +123,13 @@ ApplyLoad::setupAccountsAndUpgradeProtocol()
     }
 
     // Upgrade to latest protocol as well
-    auto upgrade = xdr::xvector<UpgradeType, 6>{};
-    auto ledgerUpgrade = LedgerUpgrade{LEDGER_UPGRADE_VERSION};
-    ledgerUpgrade.newLedgerVersion() = Config::CURRENT_LEDGER_PROTOCOL_VERSION;
-    auto v = xdr::xdr_to_opaque(ledgerUpgrade);
-    upgrade.push_back(UpgradeType{v.begin(), v.end()});
+    //auto upgrade = xdr::xvector<UpgradeType, 6>{};
+    //auto ledgerUpgrade = LedgerUpgrade{LEDGER_UPGRADE_VERSION};
+    //ledgerUpgrade.newLedgerVersion() = Config::CURRENT_LEDGER_PROTOCOL_VERSION;
+    //auto v = xdr::xdr_to_opaque(ledgerUpgrade);
+    //upgrade.push_back(UpgradeType{v.begin(), v.end()});
 
-    closeLedger({}, upgrade);
+    //closeLedger({}, upgrade);
 }
 
 void

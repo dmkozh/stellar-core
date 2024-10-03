@@ -1910,6 +1910,10 @@ runApplyLoad(CommandLineArgs const& args)
             auto config = configOption.getConfig();
             config.RUN_STANDALONE = true;
             config.SOROBAN_PHASE_STAGE_COUNT = stageCount;
+            config.USE_CONFIG_FOR_GENESIS = true;
+            config.TESTING_UPGRADE_MAX_TX_SET_SIZE = 1000;
+            config.LEDGER_PROTOCOL_VERSION =
+                Config::CURRENT_LEDGER_PROTOCOL_VERSION;
 
             VirtualClock clock(VirtualClock::REAL_TIME);
             auto appPtr = Application::create(clock, config);
@@ -1971,8 +1975,7 @@ runApplyLoad(CommandLineArgs const& args)
                           cpuInsRatioExclVm.max() / 1000000);
                 CLOG_INFO(Perf, "Mean CPU ins ratio excl VM:  {}",
                           cpuInsRatioExclVm.mean() / 1000000);
-                CLOG_INFO(Perf,
-                          "stddev CPU ins ratio excl VM:  {}",
+                CLOG_INFO(Perf, "stddev CPU ins ratio excl VM:  {}",
                           cpuInsRatioExclVm.std_dev() / 1000000);
 
                 CLOG_INFO(Perf, "Ledger Max CPU ins ratio: {}",
