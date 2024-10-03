@@ -1886,33 +1886,26 @@ runApplyLoad(CommandLineArgs const& args)
         }};
 
     ParserWithValidation stageParser{
-        clara::Opt(stageCount,
-                   "StageCount")["--stage-count"]
-            .required(),
-        [&] {
-            // More stages reduces the instruction limit per thread, which doesn't work
-            // with the applyLoad setup at the moment due to low initial limits.
+        clara::Opt(stageCount, "StageCount")["--stage-count"].required(), [&] {
+            // More stages reduces the instruction limit per thread, which
+            // doesn't work with the applyLoad setup at the moment due to low
+            // initial limits.
             return stageCount > 0 && stageCount <= 2
                        ? ""
                        : "stageCount must be > 0 and <= 2";
         }};
 
     ParserWithValidation threadParser{
-        clara::Opt(threadCount,
-                   "ThreadCount")["--thread-count"]
-            .required(),
-        [&] {
-            return threadCount > 0
-                       ? ""
-                       : "threadCount must be > 0";
-        }};
+        clara::Opt(threadCount, "ThreadCount")["--thread-count"].required(),
+        [&] { return threadCount > 0 ? "" : "threadCount must be > 0"; }};
 
     return runWithHelp(
         args,
         {configurationParser(configOption), ledgerMaxInstructionsParser,
          ledgerMaxReadLedgerEntriesParser, ledgerMaxReadBytesParser,
          ledgerMaxWriteLedgerEntriesParser, ledgerMaxWriteBytesParser,
-         ledgerMaxTxCountParser, ledgerMaxTransactionsSizeBytesParser},
+         ledgerMaxTxCountParser, ledgerMaxTransactionsSizeBytesParser,
+         stageParser, threadParser},
         [&] {
             auto config = configOption.getConfig();
             config.RUN_STANDALONE = true;
@@ -1929,7 +1922,8 @@ runApplyLoad(CommandLineArgs const& args)
                 ApplyLoad al(app, ledgerMaxInstructions,
                              ledgerMaxReadLedgerEntries, ledgerMaxReadBytes,
                              ledgerMaxWriteLedgerEntries, ledgerMaxWriteBytes,
-                             ledgerMaxTxCount, ledgerMaxTransactionsSizeBytes);
+                             ledgerMaxTxCount, ledgerMaxTransactionsSizeBytes,
+                             threadCount);
 
                 auto& ledgerClose =
                     app.getMetrics().NewTimer({"ledger", "ledger", "close"});
@@ -1945,7 +1939,16 @@ runApplyLoad(CommandLineArgs const& args)
                      "invoke-time-fsecs-cpu-insn-ratio-excl-vm"});
                 cpuInsRatioExclVm.Clear();
 
-                for (size_t i = 0; i < 20; ++i)
+                auto& ledgerCpuInsRatio = app.getMetrics().NewHistogram(
+                    {"soroban", "host-fn-op", "ledger-cpu-insns-ratio"});
+                ledgerCpuInsRatio.Clear();
+
+                auto& ledgerCpuInsRatioExclVm = app.getMetrics().NewHistogram(
+                    {"soroban", "host-fn-op",
+                     "ledger-cpu-insns-ratio-excl-vm"});
+                ledgerCpuInsRatioExclVm.Clear();
+
+                for (size_t i = 0; i < 100; ++i)
                 {
                     al.benchmark();
                 }
@@ -1969,8 +1972,24 @@ runApplyLoad(CommandLineArgs const& args)
                 CLOG_INFO(Perf, "Mean CPU ins ratio excl VM:  {}",
                           cpuInsRatioExclVm.mean() / 1000000);
                 CLOG_INFO(Perf,
-                          "stddev CPU ins ratio excl VM:  {} milliseconds",
-                          cpuInsRatioExclVm.std_dev());
+                          "stddev CPU ins ratio excl VM:  {}",
+                          cpuInsRatioExclVm.std_dev() / 1000000);
+
+                CLOG_INFO(Perf, "Ledger Max CPU ins ratio: {}",
+                          ledgerCpuInsRatio.max() / 1000000);
+                CLOG_INFO(Perf, "Ledger Mean CPU ins ratio:  {}",
+                          ledgerCpuInsRatio.mean() / 1000000);
+                CLOG_INFO(Perf, "Ledger stddev CPU ins ratio:  {}",
+                          ledgerCpuInsRatio.std_dev() / 1000000);
+
+                CLOG_INFO(Perf, "Ledger Max CPU ins ratio excl VM: {}",
+                          ledgerCpuInsRatioExclVm.max() / 1000000);
+                CLOG_INFO(Perf, "Ledger Mean CPU ins ratio excl VM:  {}",
+                          ledgerCpuInsRatioExclVm.mean() / 1000000);
+                CLOG_INFO(
+                    Perf,
+                    "Ledger stddev CPU ins ratio excl VM:  {} milliseconds",
+                    ledgerCpuInsRatioExclVm.std_dev() / 1000000);
 
                 CLOG_INFO(Perf, "Tx count utilization {}%",
                           al.getTxCountUtilization().mean() / 1000.0);

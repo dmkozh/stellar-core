@@ -61,9 +61,9 @@ ApplyLoad::ApplyLoad(Application& app, uint64_t ledgerMaxInstructions,
     mUpgradeConfig.ledgerMaxWriteLedgerEntries = ledgerMaxWriteLedgerEntries;
     mUpgradeConfig.ledgerMaxWriteBytes = ledgerMaxWriteBytes;
     mUpgradeConfig.ledgerMaxTxCount = ledgerMaxTxCount;
-    mUpgradeConfig.txMaxReadLedgerEntries = 40;
+    mUpgradeConfig.txMaxReadLedgerEntries = 100;
     mUpgradeConfig.txMaxReadBytes = 200000;
-    mUpgradeConfig.txMaxWriteLedgerEntries = 25;
+    mUpgradeConfig.txMaxWriteLedgerEntries = 50;
     mUpgradeConfig.txMaxWriteBytes = 66560;
     mUpgradeConfig.txMaxContractEventsSizeBytes = 8198;
     mUpgradeConfig.ledgerMaxTransactionsSizeBytes =
