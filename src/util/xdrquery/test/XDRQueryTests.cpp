@@ -424,6 +424,23 @@ TEST_CASE("XDR matcher", "[xdrquery]")
             testMatches("data.account.balance - data.account.balance == 0",
                         {true, true});
         }
+
+        SECTION("multiple operations")
+        {
+            testMatches("data.account.balance + data.account.balance - 50 == 150",
+                        {true, false});
+            testMatches("data.account.balance + 50 - data.account.balance == 50",
+                        {true, true});
+        }
+
+        SECTION("type casting")
+        {
+            testMatches("data.account.numSubEntries + 100 == 100", {true, true});
+            testMatches("data.account.numSubEntries + data.account.balance == 100",
+                        {true, false});
+            testMatches("data.account.numSubEntries + data.account.seqNum == data.account.seqNum",
+                        {true, true});
+        }
     }
 
     SECTION("query errors")

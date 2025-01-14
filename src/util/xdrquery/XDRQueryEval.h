@@ -61,7 +61,8 @@ enum class EvalNodeType
     LITERAL,
     COLUMN,
     BOOL_OP,
-    COMPARISON_OP
+    COMPARISON_OP,
+    MATH_OP
 };
 
 // Expression node that can be evaluated.

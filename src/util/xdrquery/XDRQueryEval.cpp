@@ -332,9 +332,43 @@ MathNode::eval(DynamicXDRGetter const& xdrGetter) const
 
     if (leftVal->index() != rightVal->index())
     {
-        throw XDRQueryError(fmt::format(
-            FMT_STRING("Type mismatch between values `{}` and `{}`."),
-            resultToString(*leftVal), resultToString(*rightVal)));
+        // Automatic type casting
+        if (std::holds_alternative<int32_t>(*leftVal) &&
+            std::holds_alternative<int64_t>(*rightVal))
+        {
+            leftVal = static_cast<int64_t>(std::get<int32_t>(*leftVal));
+        }
+        else if (std::holds_alternative<int64_t>(*leftVal) &&
+                 std::holds_alternative<int32_t>(*rightVal))
+        {
+            rightVal = static_cast<int64_t>(std::get<int32_t>(*rightVal));
+        }
+        else if (std::holds_alternative<uint32_t>(*leftVal) &&
+                 std::holds_alternative<uint64_t>(*rightVal))
+        {
+            leftVal = static_cast<uint64_t>(std::get<uint32_t>(*leftVal));
+        }
+        else if (std::holds_alternative<uint64_t>(*leftVal) &&
+                 std::holds_alternative<uint32_t>(*rightVal))
+        {
+            rightVal = static_cast<uint64_t>(std::get<uint32_t>(*rightVal));
+        }
+        else if (std::holds_alternative<uint64_t>(*leftVal) &&
+                 std::holds_alternative<int64_t>(*rightVal))
+        {
+            leftVal = static_cast<int64_t>(std::get<uint64_t>(*leftVal));
+        }
+        else if (std::holds_alternative<int64_t>(*leftVal) &&
+                 std::holds_alternative<uint64_t>(*rightVal))
+        {
+            rightVal = static_cast<int64_t>(std::get<uint64_t>(*rightVal));
+        }
+        else
+        {
+            throw XDRQueryError(fmt::format(
+                FMT_STRING("Type mismatch between values `{}` and `{}`."),
+                resultToString(*leftVal), resultToString(*rightVal)));
+        }
     }
 
     return std::visit(
