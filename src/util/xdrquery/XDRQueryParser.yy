@@ -58,17 +58,23 @@ parseXDRQuery(std::string const& query);
 %token DOT "."
 %token COMMA ","
 
+%token ADD "+"
+%token SUB "-"
+
 %token END 0
 
 %left "||"
 %left "&&"
 %left "==" "!=" ">" ">=" "<" "<="
+%left "+" "-"
+%left "*"
 
 %type <std::shared_ptr<EvalNode>> literal operand
 %type <std::shared_ptr<BoolEvalNode>> comparison_expr logic_expr
 %type <std::shared_ptr<ColumnNode>> column
 %type <std::shared_ptr<FieldNode>> field
 %type <std::shared_ptr<EntrySizeNode>> entry_size
+%type <std::shared_ptr<EvalNode>> math_expr
 
 %type <std::shared_ptr<Accumulator>> accumulator
 %type <std::shared_ptr<AccumulatorList>> accumulator_list
@@ -111,6 +117,7 @@ comparison_expr: operand "==" operand {
 
 operand: literal { $$ = std::move($1); }
        | column { $$ = std::move($1); }
+       | math_expr { $$ = std::move($1); }
 
 literal: INT { $$ = std::make_shared<LiteralNode>(LiteralNodeType::INT, $1); }
        | STR { $$ = std::make_shared<LiteralNode>(LiteralNodeType::STR, $1); }
@@ -123,6 +130,11 @@ entry_size: ENTRY_SIZE "(" ")" { $$ = std::make_shared<EntrySizeNode>(); }
 
 field: ID { $$ = std::make_shared<FieldNode>($1); }
      | field "." ID { $1->mFieldPath.push_back($3); $$ = std::move($1); }
+
+math_expr: operand "+" operand {
+        $$ = std::make_shared<MathNode>(MathNodeType::ADD, std::move($1), std::move($3)); }
+         | operand "-" operand {
+        $$ = std::make_shared<MathNode>(MathNodeType::SUB, std::move($1), std::move($3)); }
 
 accumulator_list: accumulator { $$ = std::make_shared<AccumulatorList>(std::move($1)); }
                 | accumulator_list "," accumulator { $1->addAccumulator($3); $$ = std::move($1); }

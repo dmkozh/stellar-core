@@ -313,6 +313,62 @@ ComparisonNode::compareNullFields(bool leftIsNull, bool rightIsNull) const
     }
 }
 
+MathNode::MathNode(MathNodeType nodeType, std::shared_ptr<EvalNode> left,
+                   std::shared_ptr<EvalNode> right)
+    : mType(nodeType), mLeft(std::move(left)), mRight(std::move(right))
+{
+}
+
+ResultType
+MathNode::eval(DynamicXDRGetter const& xdrGetter) const
+{
+    auto leftVal = mLeft->eval(xdrGetter);
+    auto rightVal = mRight->eval(xdrGetter);
+
+    if (!leftVal || !rightVal)
+    {
+        return std::nullopt;
+    }
+
+    if (leftVal->index() != rightVal->index())
+    {
+        throw XDRQueryError(fmt::format(
+            FMT_STRING("Type mismatch between values `{}` and `{}`."),
+            resultToString(*leftVal), resultToString(*rightVal)));
+    }
+
+    return std::visit(
+        [this](auto&& left, auto&& right) -> ResultType {
+            using T = std::decay_t<decltype(left)>;
+            if constexpr (std::is_same_v<T, int32_t> ||
+                          std::is_same_v<T, int64_t> ||
+                          std::is_same_v<T, uint32_t> ||
+                          std::is_same_v<T, uint64_t>)
+            {
+                switch (mType)
+                {
+                case MathNodeType::ADD:
+                    return left + right;
+                case MathNodeType::SUB:
+                    return left - right;
+                }
+            }
+            else
+            {
+                throw XDRQueryError(fmt::format(
+                    FMT_STRING("Unsupported type for math operation: `{}`."),
+                    resultToString(left)));
+            }
+        },
+        *leftVal, *rightVal);
+}
+
+EvalNodeType
+MathNode::getType() const
+{
+    return EvalNodeType::MATH_OP;
+}
+
 Accumulator::Accumulator(AccumulatorType nodeType)
     : Accumulator(nodeType, nullptr)
 {

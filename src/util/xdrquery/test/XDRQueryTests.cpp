@@ -409,6 +409,23 @@ TEST_CASE("XDR matcher", "[xdrquery]")
         }
     }
 
+    SECTION("queries with math operators")
+    {
+        SECTION("addition")
+        {
+            testMatches("data.account.balance + 100 == 200", {true, false});
+            testMatches("data.account.balance + data.account.balance == 200",
+                        {true, false});
+        }
+
+        SECTION("subtraction")
+        {
+            testMatches("data.account.balance - 50 == 50", {true, false});
+            testMatches("data.account.balance - data.account.balance == 0",
+                        {true, true});
+        }
+    }
+
     SECTION("query errors")
     {
         auto runQuery = [&](std::string const& query) {

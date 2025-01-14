@@ -188,6 +188,28 @@ struct ComparisonNode : public BoolEvalNode
     std::shared_ptr<EvalNode> mRight;
 };
 
+enum class MathNodeType
+{
+    ADD,
+    SUB
+};
+
+// Node for mathematical operations.
+struct MathNode : public EvalNode
+{
+    MathNode(MathNodeType nodeType, std::shared_ptr<EvalNode> left,
+             std::shared_ptr<EvalNode> right);
+
+    ResultType eval(DynamicXDRGetter const& xdrGetter) const override;
+
+    EvalNodeType getType() const override;
+
+  private:
+    MathNodeType mType;
+    std::shared_ptr<EvalNode> mLeft;
+    std::shared_ptr<EvalNode> mRight;
+};
+
 enum class AccumulatorType
 {
     SUM,

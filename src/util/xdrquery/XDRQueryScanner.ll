@@ -58,6 +58,9 @@ entry_size { return xdrquery::XDRQueryParser::make_ENTRY_SIZE(); }
 "."   { return xdrquery::XDRQueryParser::make_DOT(); }
 ","   { return xdrquery::XDRQueryParser::make_COMMA(); }
 
+"+"   { return xdrquery::XDRQueryParser::make_ADD(); }
+"-"   { return xdrquery::XDRQueryParser::make_SUB(); }
+
 {STRING} { 
     std::string s(yytext + 1); 
     s.pop_back();
