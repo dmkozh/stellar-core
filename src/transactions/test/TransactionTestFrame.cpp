@@ -290,6 +290,30 @@ TransactionTestFrame::insertKeysForTxApply(UnorderedSet<LedgerKey>& keys,
     mTransactionFrame->insertKeysForTxApply(keys, lkMeter);
 }
 
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+void
+TransactionTestFrame::preParallelApply(AppConnector& app,
+                                       AbstractLedgerTxn& ltx,
+                                       TransactionMetaFrame& meta,
+                                       MutableTxResultPtr resPayload) const
+{
+    mTransactionFrame->preParallelApply(app, ltx, meta, resPayload);
+}
+
+ParallelTxReturnVal
+TransactionTestFrame::parallelApply(
+    ThreadEntryMap const& entryMap, // Must not be shared between threads!,
+    Config const& config, SorobanNetworkConfig const& sorobanConfig,
+    ParallelLedgerInfo const& ledgerInfo, MutableTxResultPtr resPayload,
+    SorobanMetrics& sorobanMetrics, Hash const& txPrngSeed,
+    TxEffects& effects) const
+{
+    return mTransactionFrame->parallelApply(
+        entryMap, config, sorobanConfig, ledgerInfo, resPayload, sorobanMetrics,
+        txPrngSeed, effects);
+}
+#endif
+
 MutableTxResultPtr
 TransactionTestFrame::processFeeSeqNum(AbstractLedgerTxn& ltx,
                                        std::optional<int64_t> baseFee) const

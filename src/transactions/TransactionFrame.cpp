@@ -51,6 +51,8 @@
 #include <unordered_set>
 #include <xdrpp/types.h>
 
+#include "util/XDRCereal.h"
+
 namespace stellar
 {
 namespace
@@ -1682,6 +1684,290 @@ TransactionFrame::apply(AppConnector& app, AbstractLedgerTxn& ltx,
     return apply(app, ltx, tm, txResult, sorobanBasePrngSeed);
 }
 
+#ifdef BUILD_TESTS
+void
+maybeTriggerTestInternalError(TransactionEnvelope const& env)
+{
+    auto memo =
+        env.type() == ENVELOPE_TYPE_TX_V0 ? env.v0().tx.memo : env.v1().tx.memo;
+    if (memo.type() == MEMO_TEXT && memo.text() == "txINTERNAL_ERROR")
+    {
+        throw std::runtime_error(
+            "Intentionally triggered INTERNAL_ERROR in test");
+    }
+}
+#endif
+
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+
+void
+TransactionFrame::preParallelApply(AppConnector& app, AbstractLedgerTxn& ltx,
+                                   TransactionMetaFrame& meta,
+                                   MutableTxResultPtr resPayload) const
+{
+    preParallelApply(app, ltx, meta, resPayload, true);
+}
+
+void
+TransactionFrame::preParallelApply(AppConnector& app, AbstractLedgerTxn& ltx,
+                                   TransactionMetaFrame& meta,
+                                   MutableTxResultPtr txResult,
+                                   bool chargeFee) const
+{
+    ZoneScoped;
+    try
+    {
+        releaseAssertOrThrow(isSoroban());
+
+        auto sorobanData = txResult->getSorobanData();
+
+        mCachedAccountPreProtocol8.reset();
+        uint32_t ledgerVersion = ltx.loadHeader().current().ledgerVersion;
+        SignatureChecker signatureChecker{ledgerVersion, getContentsHash(),
+                                          getSignatures(mEnvelope)};
+
+        auto const& sorobanCfg = app.getSorobanNetworkConfigForApply();
+        //  when applying, a failure during tx validation means that
+        //  we'll skip trying to apply operations but we'll still
+        //  process the sequence number if needed
+        auto sorobanResourceFee = computePreApplySorobanResourceFee(
+            ledgerVersion, sorobanCfg, app.getConfig());
+
+        sorobanData->setSorobanConsumedNonRefundableFee(
+            sorobanResourceFee.non_refundable_fee);
+        sorobanData->setSorobanFeeRefund(declaredSorobanResourceFee() -
+                                         sorobanResourceFee.non_refundable_fee);
+
+        LedgerTxn ltxTx(ltx);
+        auto cv = commonValid(app, sorobanCfg, signatureChecker, ltxTx, 0, true,
+                              chargeFee, 0, 0, sorobanResourceFee, txResult);
+        if (cv >= ValidationType::kInvalidUpdateSeqNum)
+        {
+            processSeqNum(ltxTx);
+        }
+
+        bool signaturesValid =
+            processSignatures(cv, signatureChecker, ltxTx, *txResult);
+
+        meta.pushTxChangesBefore(ltxTx.getChanges());
+
+        ltxTx.commit();
+
+        bool ok = signaturesValid && cv == ValidationType::kMaybeValid;
+        if (ok)
+        {
+            updateSorobanMetrics(app);
+
+            auto& opResult = txResult->getOpResultAt(0);
+
+            // Pre parallel soroban, OperationFrame::checkValid is called right
+            // before OperationFrame::doApply, but we do it here instead to
+            // avoid making OperationFrame::checkValid thread safe.
+            ok = mOperations.front()->checkValid(app, signatureChecker,
+                                                 sorobanCfg, ltx, true,
+                                                 opResult, sorobanData);
+            if (!ok)
+            {
+                txResult->setInnermostResultCode(txFAILED);
+            }
+        }
+
+        // If validation fails, we check the result code in the parallel step to
+        // make sure we don't apply the transaction.
+        releaseAssertOrThrow(ok == txResult->isSuccess());
+    }
+    catch (std::exception& e)
+    {
+        printErrorAndAbort("Exception after processing fees but before "
+                           "processing sequence number: ",
+                           e.what());
+    }
+    catch (...)
+    {
+        printErrorAndAbort("Unknown exception after processing fees but before "
+                           "processing sequence number");
+    }
+}
+
+ParallelTxReturnVal
+TransactionFrame::parallelApply(
+    ThreadEntryMap const& entryMap, // Must not be shared between threads!,
+    Config const& config, SorobanNetworkConfig const& sorobanConfig,
+    ParallelLedgerInfo const& ledgerInfo, MutableTxResultPtr txResult,
+    SorobanMetrics& sorobanMetrics, Hash const& txPrngSeed,
+    TxEffects& effects) const
+{
+    ZoneScoped;
+
+    bool reportInternalErrOnException = true;
+    try
+    {
+        // We do not want to increase the internal-error metric count for
+        // older ledger versions. The minimum ledger version for which we
+        // start internal-error counting is defined in the app config.
+        reportInternalErrOnException =
+            ledgerInfo.getLedgerVersion() >=
+            config.LEDGER_PROTOCOL_MIN_VERSION_INTERNAL_ERROR_REPORT;
+
+        releaseAssertOrThrow(txResult);
+
+        // This tx failed validation earlier, do not apply it
+        if (!txResult->isSuccess())
+        {
+            return {false, {}};
+        }
+
+        releaseAssertOrThrow(mOperations.size() == 1);
+
+        auto sorobanData = txResult->getSorobanData();
+        releaseAssertOrThrow(sorobanData);
+
+        auto op = mOperations.front();
+        auto& opResult = txResult->getOpResultAt(0);
+
+        auto res = op->applyParallel(entryMap, config, sorobanConfig,
+                                     ledgerInfo, sorobanMetrics, opResult,
+                                     *sorobanData, txPrngSeed);
+
+#ifdef BUILD_TESTS
+        maybeTriggerTestInternalError(mEnvelope);
+#endif
+
+        if (res.mSuccess)
+        {
+            // Build OperationMeta
+            LedgerEntryChanges changes;
+            for (auto const& newUpdates : res.mModifiedEntryMap)
+            {
+                auto const& lk = newUpdates.first;
+                auto const& le = newUpdates.second;
+
+                // Any key the op updates should also be in entryMap because the
+                // keys were taken from the footprint (the ttl keys were added
+                // as well)
+                auto prev = entryMap.find(lk);
+                releaseAssertOrThrow(prev != entryMap.end());
+
+                auto prevLe = prev->second.mLedgerEntry;
+
+                if (prevLe)
+                {
+                    changes.emplace_back(LEDGER_ENTRY_STATE);
+                    changes.back().state() = *prevLe;
+
+                    if (le)
+                    {
+                        changes.emplace_back(LEDGER_ENTRY_UPDATED);
+                        changes.back().updated() = *le;
+                    }
+                    else
+                    {
+                        changes.emplace_back(LEDGER_ENTRY_REMOVED);
+                        changes.back().removed() = lk;
+                    }
+                }
+                else
+                {
+                    // op should return a LedgerEntry for this key if it doesn't
+                    // exist in EntryMap because it must've been created in the
+                    // op
+                    releaseAssertOrThrow(le);
+
+                    // New entry
+                    changes.emplace_back(LEDGER_ENTRY_CREATED);
+                    changes.back().created() = *le;
+                }
+
+                LedgerTxnDelta::EntryDelta entryDelta;
+                if (prevLe)
+                {
+                    entryDelta.previous =
+                        std::make_shared<InternalLedgerEntry>(*prevLe);
+                }
+                if (le)
+                {
+                    auto deltaLe = *le;
+                    // This is for the invariants check in LedgerManager
+                    deltaLe.lastModifiedLedgerSeq = ledgerInfo.getLedgerSeq();
+
+                    entryDelta.current =
+                        std::make_shared<InternalLedgerEntry>(deltaLe);
+                }
+
+                effects.getDelta().entry[lk] = entryDelta;
+                // Note that we don't set delta.header here because Soroban
+                // transactions don't modify the header. The header will be set
+                // right before we cal into the invariants.
+            }
+
+            xdr::xvector<OperationMeta> operationMetas;
+            operationMetas.emplace_back(changes);
+            effects.getMeta().pushOperationMetas(std::move(operationMetas));
+
+            sorobanData->publishSuccessDiagnosticsToMeta(effects.getMeta(),
+                                                         config);
+        }
+        else
+        {
+            // Changing "code" normally causes the XDR structure to be
+            // destructed, then a different XDR structure is constructed.
+            // However, txFAILED and txSUCCESS have the same underlying field
+            // number so this does not occur.
+            txResult->setInnermostResultCode(txFAILED);
+
+            // If transaction fails, we don't charge for any
+            // refundable resources.
+            auto preApplyFee = computePreApplySorobanResourceFee(
+                ledgerInfo.getLedgerVersion(), sorobanConfig, config);
+
+            sorobanData->setSorobanFeeRefund(declaredSorobanResourceFee() -
+                                             preApplyFee.non_refundable_fee);
+
+            sorobanData->publishFailureDiagnosticsToMeta(effects.getMeta(),
+                                                         config);
+        }
+
+        return res;
+    }
+    catch (std::bad_alloc& e)
+    {
+        printErrorAndAbort("Exception while applying operations: ", e.what());
+    }
+    catch (std::exception& e)
+    {
+        if (reportInternalErrOnException)
+        {
+            CLOG_ERROR(Tx, "Exception while applying operations ({}, {}): {}",
+                       xdr_to_string(getFullHash(), "fullHash"),
+                       xdr_to_string(getContentsHash(), "contentsHash"),
+                       e.what());
+        }
+        else
+        {
+            CLOG_INFO(Tx,
+                      "Exception occurred on outdated protocol version "
+                      "while applying operations ({}, {}): {}",
+                      xdr_to_string(getFullHash(), "fullHash"),
+                      xdr_to_string(getContentsHash(), "contentsHash"),
+                      e.what());
+        }
+    }
+    if (config.HALT_ON_INTERNAL_TRANSACTION_ERROR)
+    {
+        printErrorAndAbort("Encountered an exception while applying "
+                           "operations, see logs for details.");
+    }
+
+    // This is only reachable if an exception is thrown
+    txResult->setInnermostResultCode(txINTERNAL_ERROR);
+
+    // operations and txChangesAfter should already be empty at this point
+    effects.getMeta().clearOperationMetas();
+    effects.getMeta().clearTxChangesAfter();
+    return {false, {}};
+}
+#endif
+
 bool
 TransactionFrame::applyOperations(SignatureChecker& signatureChecker,
                                   AppConnector& app, AbstractLedgerTxn& ltx,
@@ -1752,6 +2038,9 @@ TransactionFrame::applyOperations(SignatureChecker& signatureChecker,
 
             bool txRes = op->apply(app, signatureChecker, ltxOp, subSeed,
                                    opResult, txResult.getSorobanData());
+#ifdef BUILD_TESTS
+            maybeTriggerTestInternalError(mEnvelope);
+#endif
 
             if (!txRes)
             {
@@ -2086,4 +2375,5 @@ TransactionFrame::getSize() const
     ZoneScoped;
     return static_cast<uint32_t>(xdr::xdr_size(mEnvelope));
 }
+
 } // namespace stellar

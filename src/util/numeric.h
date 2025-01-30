@@ -55,4 +55,6 @@ bool bigDivideUnsigned(uint64_t& result, uint64_t A, uint64_t B, uint64_t C,
 
 // This only implements ROUND_DOWN
 uint64_t bigSquareRoot(uint64_t a, uint64_t b);
+
+template <typename T> T add_sat(T a, T b);
 }

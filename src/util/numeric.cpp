@@ -350,4 +350,15 @@ doubleToClampedUint32(double d)
     }
     return static_cast<uint32_t>(std::clamp<double>(d, 0, maxUint32));
 }
+
+template <typename T>
+T
+add_sat(T a, T b)
+{
+    releaseAssertOrThrow((a >= 0) && (b >= 0));
+    return std::numeric_limits<T>::max() - a < b ? std::numeric_limits<T>::max()
+                                                 : a + b;
+}
+
+template uint32_t add_sat(uint32_t a, uint32_t b);
 }

@@ -52,10 +52,127 @@ RestoreFootprintOpFrame::isOpSupported(LedgerHeader const& header) const
     return header.ledgerVersion >= 20;
 }
 
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+ParallelTxReturnVal
+RestoreFootprintOpFrame::doApplyParallel(
+    ThreadEntryMap const& entryMap, // Must not be shared between threads
+    Config const& appConfig, SorobanNetworkConfig const& sorobanConfig,
+    Hash const& txPrngSeed, ParallelLedgerInfo const& ledgerInfo,
+    SorobanMetrics& sorobanMetrics, OperationResult& res,
+    SorobanTxData& sorobanData) const
+{
+    ZoneNamedN(applyZone, "RestoreFootprintOpFrame doApplyParallel", true);
+
+    RestoreFootprintMetrics metrics(sorobanMetrics);
+    auto timeScope = metrics.getExecTimer();
+
+    auto const& resources = mParentTx.sorobanResources();
+    auto const& footprint = resources.footprint;
+
+    // Keep track of LedgerEntry updates we need to make
+    ModifiedEntryMap opEntryMap;
+
+    auto const& archivalSettings = sorobanConfig.stateArchivalSettings();
+    rust::Vec<CxxLedgerEntryRentChange> rustEntryRentChanges;
+    // Extend the TTL on the restored entry to minimum TTL, including
+    // the current ledger.
+    uint32_t restoredLiveUntilLedger =
+        ledgerInfo.getLedgerSeq() + archivalSettings.minPersistentTTL - 1;
+    rustEntryRentChanges.reserve(footprint.readWrite.size());
+    for (auto const& lk : footprint.readWrite)
+    {
+        auto ttlKey = getTTLKey(lk);
+
+        auto ttlIter = entryMap.find(ttlKey);
+
+        // Skip entry if the TTLEntry is missing or if it's already live.
+        if (ttlIter == entryMap.end() || !ttlIter->second.mLedgerEntry ||
+            isLive(*ttlIter->second.mLedgerEntry, ledgerInfo.getLedgerSeq()))
+        {
+            continue;
+        }
+
+        // We must load the ContractCode/ContractData entry for fee purposes, as
+        // restore is considered a write
+        auto entryIter = entryMap.find(lk);
+
+        // We checked for TTLEntry existence above
+        releaseAssertOrThrow(entryIter != entryMap.end() &&
+                             entryIter->second.mLedgerEntry);
+
+        auto const& entryLe = *entryIter->second.mLedgerEntry;
+
+        uint32_t entrySize = static_cast<uint32>(xdr::xdr_size(entryLe));
+        metrics.mLedgerReadByte += entrySize;
+        if (resources.readBytes < metrics.mLedgerReadByte)
+        {
+            sorobanData.pushApplyTimeDiagnosticError(
+                appConfig, SCE_BUDGET, SCEC_EXCEEDED_LIMIT,
+                "operation byte-read resources exceeds amount specified",
+                {makeU64SCVal(metrics.mLedgerReadByte),
+                 makeU64SCVal(resources.readBytes)});
+            innerResult(res).code(RESTORE_FOOTPRINT_RESOURCE_LIMIT_EXCEEDED);
+            return {false, {}};
+        }
+
+        // To maintain consistency with InvokeHostFunction, TTLEntry
+        // writes come out of refundable fee, so only add entrySize
+        metrics.mLedgerWriteByte += entrySize;
+        if (!validateContractLedgerEntry(lk, entrySize, sorobanConfig,
+                                         appConfig, mParentTx, sorobanData))
+        {
+            innerResult(res).code(RESTORE_FOOTPRINT_RESOURCE_LIMIT_EXCEEDED);
+            return {false, {}};
+        }
+
+        if (resources.writeBytes < metrics.mLedgerWriteByte)
+        {
+            sorobanData.pushApplyTimeDiagnosticError(
+                appConfig, SCE_BUDGET, SCEC_EXCEEDED_LIMIT,
+                "operation byte-write resources exceeds amount specified",
+                {makeU64SCVal(metrics.mLedgerWriteByte),
+                 makeU64SCVal(resources.writeBytes)});
+            innerResult(res).code(RESTORE_FOOTPRINT_RESOURCE_LIMIT_EXCEEDED);
+            return {false, {}};
+        }
+
+        rustEntryRentChanges.emplace_back();
+        auto& rustChange = rustEntryRentChanges.back();
+        rustChange.is_persistent = true;
+        // Treat the entry as if it hasn't existed before restoration
+        // for the rent fee purposes.
+        rustChange.old_size_bytes = 0;
+        rustChange.old_live_until_ledger = 0;
+        rustChange.new_size_bytes = entrySize;
+        rustChange.new_live_until_ledger = restoredLiveUntilLedger;
+
+        auto ttlLe = *ttlIter->second.mLedgerEntry;
+        ttlLe.data.ttl().liveUntilLedgerSeq = restoredLiveUntilLedger;
+
+        opEntryMap.emplace(ttlKey, ttlLe);
+    }
+    int64_t rentFee = rust_bridge::compute_rent_fee(
+        appConfig.CURRENT_LEDGER_PROTOCOL_VERSION,
+        ledgerInfo.getLedgerVersion(), rustEntryRentChanges,
+        sorobanConfig.rustBridgeRentFeeConfiguration(),
+        ledgerInfo.getLedgerSeq());
+    if (!sorobanData.consumeRefundableSorobanResources(
+            0, rentFee, ledgerInfo.getLedgerVersion(), sorobanConfig, appConfig,
+            mParentTx))
+    {
+        innerResult(res).code(RESTORE_FOOTPRINT_INSUFFICIENT_REFUNDABLE_FEE);
+        return {false, {}};
+    }
+    innerResult(res).code(RESTORE_FOOTPRINT_SUCCESS);
+    return {true, opEntryMap};
+}
+#endif
+
 bool
 RestoreFootprintOpFrame::doApply(
     AppConnector& app, AbstractLedgerTxn& ltx, Hash const& sorobanBasePrngSeed,
     OperationResult& res, std::shared_ptr<SorobanTxData> sorobanData) const
+
 {
     ZoneNamedN(applyZone, "RestoreFootprintOpFrame apply", true);
 
