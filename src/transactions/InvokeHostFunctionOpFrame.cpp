@@ -635,7 +635,7 @@ InvokeHostFunctionOpFrame::doApplyParallel(
         if (createdAndModifiedKeys.find(lk) == createdAndModifiedKeys.end())
         {
             auto entryIter = entryMap.find(lk);
-            if (entryIter != entryMap.end())
+            if (entryIter != entryMap.end() && entryIter->second.mLedgerEntry)
             {
                 releaseAssertOrThrow(isSorobanEntry(lk));
                 opEntryMap.emplace(lk, std::nullopt);
