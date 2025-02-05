@@ -1673,7 +1673,7 @@ LedgerManagerImpl::collectEntries(AbstractLedgerTxn& ltx, Thread const& txs)
     return entryMap;
 }
 
-UnorderedMap<LedgerKey, uint32_t>
+void
 LedgerManagerImpl::applyThread(ThreadEntryMap& entryMap, Thread const& thread,
                                Config const& config,
                                SorobanNetworkConfig const& sorobanConfig,
@@ -1705,26 +1705,25 @@ LedgerManagerImpl::applyThread(ThreadEntryMap& entryMap, Thread const& thread,
 
             auto const& ttlKey = getTTLKey(lk);
             auto extIt = readOnlyTtlExtensions.find(ttlKey);
-            if (extIt != readOnlyTtlExtensions.end() && extIt->second != 0)
+            if (extIt != readOnlyTtlExtensions.end())
             {
-                // "Commit" all RO cumulative bumps now that the key is in a
+                // "Commit" max RO bump now that the key is in a
                 // readWrite set
                 auto it = entryMap.find(ttlKey);
                 if (it != entryMap.end())
                 {
                     releaseAssertOrThrow(it->second.mLedgerEntry);
+                    releaseAssertOrThrow(it->second.mLedgerEntry->data.ttl()
+                                             .liveUntilLedgerSeq <=
+                                         extIt->second);
 
                     it->second.mLedgerEntry->data.ttl().liveUntilLedgerSeq =
-                        std::min(
-                            sorobanConfig.stateArchivalSettings().maxEntryTTL,
-                            add_sat(it->second.mLedgerEntry->data.ttl()
-                                        .liveUntilLedgerSeq,
-                                    extIt->second));
+                        extIt->second;
 
                     // Mark as dirty so this entry gets written.
                     it->second.isDirty = true;
                 }
-                extIt->second = 0;
+                readOnlyTtlExtensions.erase(extIt);
             }
         }
 
@@ -1778,20 +1777,17 @@ LedgerManagerImpl::applyThread(ThreadEntryMap& entryMap, Thread const& thread,
                         updatedLe->data.ttl().liveUntilLedgerSeq >
                         it->second.mLedgerEntry->data.ttl().liveUntilLedgerSeq);
 
-                    uint32_t delta =
-                        updatedLe->data.ttl().liveUntilLedgerSeq -
-                        it->second.mLedgerEntry->data.ttl().liveUntilLedgerSeq;
-
                     auto ttlIt = readOnlyTtlExtensions.find(lk);
                     if (ttlIt != readOnlyTtlExtensions.end())
                     {
-                        // We will cap the ttl bump to the max network setting
-                        // later when updating the ledger entry
-                        ttlIt->second = add_sat(ttlIt->second, delta);
+                        ttlIt->second =
+                            std::max(ttlIt->second,
+                                     updatedLe->data.ttl().liveUntilLedgerSeq);
                     }
                     else
                     {
-                        readOnlyTtlExtensions.emplace(lk, delta);
+                        readOnlyTtlExtensions.emplace(
+                            lk, updatedLe->data.ttl().liveUntilLedgerSeq);
                     }
                 }
                 else
@@ -1810,7 +1806,22 @@ LedgerManagerImpl::applyThread(ThreadEntryMap& entryMap, Thread const& thread,
         }
     }
 
-    return readOnlyTtlExtensions;
+    for (auto kvp : readOnlyTtlExtensions)
+    {
+        auto const& lk = kvp.first;
+        auto const& ttlExtension = kvp.second;
+
+        auto it = entryMap.find(lk);
+        //TODO: The key in entryMap should always exist
+        if (it != entryMap.end() && it->second.mLedgerEntry &&
+            it->second.mLedgerEntry->data.ttl().liveUntilLedgerSeq <
+                ttlExtension)
+        {
+            it->second.mLedgerEntry->data.ttl().liveUntilLedgerSeq =
+                ttlExtension;
+            it->second.isDirty = true;
+        }
+    }
 }
 
 ParallelLedgerInfo
@@ -1846,33 +1857,23 @@ LedgerManagerImpl::applySorobanStage(AppConnector& app, AbstractLedgerTxn& ltx,
         entryMapsByThread.emplace_back(collectEntries(ltx, thread));
     }
 
-    std::vector<std::future<UnorderedMap<LedgerKey, uint32_t>>> roTtlDeltas;
-
     auto ledgerInfo = getParallelLedgerInfo(app, ltx);
+    std::vector<std::thread> threads;
     for (size_t i = 0; i < stage.size(); ++i)
     {
         auto& entryMapByThread = entryMapsByThread.at(i);
 
         auto const& thread = stage.at(i);
 
-        roTtlDeltas.emplace_back(std::async(
-            &LedgerManagerImpl::applyThread, this, std::ref(entryMapByThread),
-            std::ref(thread), config, sorobanConfig, std::ref(ledgerInfo),
-            sorobanBasePrngSeed, std::ref(sorobanMetrics)));
+        threads.emplace_back(&LedgerManagerImpl::applyThread, this,
+                             std::ref(entryMapByThread), std::ref(thread),
+                             config, sorobanConfig, std::ref(ledgerInfo),
+                             sorobanBasePrngSeed, std::ref(sorobanMetrics));
     }
 
-    UnorderedMap<LedgerKey, uint32_t> cumulativeRoTtlDeltas;
-    for (auto& roTtlDeltaFuture : roTtlDeltas)
+    for (auto& thread : threads)
     {
-        auto roDeltas = roTtlDeltaFuture.get();
-        for (auto const& delta : roDeltas)
-        {
-            auto it = cumulativeRoTtlDeltas.emplace(delta.first, delta.second);
-            if (!it.second)
-            {
-                it.first->second = add_sat(it.first->second, delta.second);
-            }
-        }
+        thread.join();
     }
 
     LedgerTxn ltxInner(ltx);
@@ -1942,10 +1943,13 @@ LedgerManagerImpl::applySorobanStage(AppConnector& app, AbstractLedgerTxn& ltx,
                     {
                         auto currLiveUntil =
                             ltxe.current().data.ttl().liveUntilLedgerSeq;
+                        auto newLiveUntil =
+                            updatedEntry.data.ttl().liveUntilLedgerSeq;
 
-                        releaseAssertOrThrow(
-                            updatedEntry.data.ttl().liveUntilLedgerSeq >=
-                            currLiveUntil);
+                        if (newLiveUntil <= currLiveUntil)
+                        {
+                            continue;
+                        }
                     }
                     ltxe.current() = updatedEntry;
                 }
@@ -1965,26 +1969,6 @@ LedgerManagerImpl::applySorobanStage(AppConnector& app, AbstractLedgerTxn& ltx,
         }
     }
 
-    for (auto const& kvp : cumulativeRoTtlDeltas)
-    {
-        auto ltxe = ltxInner.load(kvp.first);
-
-        // The entry was deleted
-        if (!ltxe)
-        {
-            continue;
-        }
-        // The entry has to exist because this key doesn't exist in any RW set.
-        releaseAssertOrThrow(ltxe);
-
-        auto currentTTL = ltxe.current().data.ttl().liveUntilLedgerSeq;
-
-        auto cumulativeTTL = add_sat(currentTTL, kvp.second);
-
-        auto maxEntryTTL = sorobanConfig.stateArchivalSettings().maxEntryTTL;
-        ltxe.current().data.ttl().liveUntilLedgerSeq =
-            std::min(maxEntryTTL - 1, cumulativeTTL);
-    }
     ltxInner.commit();
 }
 

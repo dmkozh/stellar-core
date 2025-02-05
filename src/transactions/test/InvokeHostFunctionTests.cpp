@@ -5020,7 +5020,7 @@ TEST_CASE("parallel txs", "[tx][soroban][parallelapply]")
         REQUIRE(
             test.getTTL(client.getContract().getDataKey(
                 makeSymbolSCVal("key4"), ContractDataDurability::PERSISTENT)) ==
-            (1'000 + test.getLCLSeq() - preExtendTTL) * 2 + preExtendTTL);
+            1'000 + test.getLCLSeq());
 
         REQUIRE(
             test.getTTL(client.getContract().getDataKey(
@@ -5125,30 +5125,30 @@ TEST_CASE("parallel txs", "[tx][soroban][parallelapply]")
                                      extendTos.at(i));
         }
 
+        auto observedTtl = test.getTTL(client.getContract().getDataKey(
+            makeSymbolSCVal("key2"), ContractDataDurability::TEMPORARY));
+
         successesBefore = hostFnSuccessMeter.count();
         auto r = closeLedger(test.getApp(), sorobanTxs);
 
         REQUIRE(r.results.size() == sorobanTxs.size());
 
-        uint32_t ttl = test.getTTL(client.getContract().getDataKey(
-            makeSymbolSCVal("key2"), ContractDataDurability::TEMPORARY));
-
-        uint32_t cumulativeExtensions = 0;
+        // We're testing to make sure the write tx observed any ttl extensions
+        // before it, so save the largest extension seen before the write tx.
+        uint32_t maxLiveUntilSeenBeforeWrite = observedTtl;
         for (auto const& res : r.results)
         {
             // The first tx in sorobanTxs is the readWrite tx
             if (res.transactionHash == sorobanTxs.at(0)->getContentsHash())
             {
-                ttl += cumulativeExtensions;
-                cumulativeExtensions = 0;
+                break;
             }
-            else
-            {
-                cumulativeExtensions +=
-                    txHashToExtendTO[res.transactionHash] > ttl
-                        ? txHashToExtendTO[res.transactionHash] - ttl
-                        : 0;
-            }
+
+            auto it = txHashToExtendTO.find(res.transactionHash);
+            REQUIRE(it != txHashToExtendTO.end());
+
+            maxLiveUntilSeenBeforeWrite = std::max(
+                it->second + test.getLCLSeq(), maxLiveUntilSeenBeforeWrite);
         }
 
         REQUIRE(hostFnSuccessMeter.count() - successesBefore ==
@@ -5157,14 +5157,81 @@ TEST_CASE("parallel txs", "[tx][soroban][parallelapply]")
 
         checkResults(r, sorobanTxs.size(), 0);
 
+        auto metaMap = readMeta(metaPath);
+        REQUIRE(metaMap.count(test.getLCLSeq()));
+
+        auto const& lcm = metaMap[test.getLCLSeq()];
+        REQUIRE(lcm.v1().txProcessing.size() == 6);
+        for (auto const& txResultMeta : lcm.v1().txProcessing)
+        {
+            bool isWrite = sorobanTxs.at(0)->getContentsHash() ==
+                           txResultMeta.result.transactionHash;
+
+            auto const& changes =
+                txResultMeta.txApplyProcessing.v3().operations.at(0).changes;
+
+            if (isWrite)
+            {
+                observedTtl = maxLiveUntilSeenBeforeWrite;
+            }
+
+            // Verify meta makes sense
+            for (auto const& change : changes)
+            {
+                switch (change.type())
+                {
+                case LedgerEntryChangeType::LEDGER_ENTRY_STATE:
+                {
+                    if (change.state().data.type() != TTL)
+                    {
+                        continue;
+                    }
+
+                    REQUIRE(change.state().data.ttl().liveUntilLedgerSeq ==
+                            observedTtl);
+                }
+                break;
+                case LedgerEntryChangeType::LEDGER_ENTRY_UPDATED:
+                {
+                    if (change.updated().data.type() != TTL)
+                    {
+                        continue;
+                    }
+
+                    auto writeTtl = extendTos.at(0) + test.getLCLSeq();
+                    auto thisTxTtl =
+                        txHashToExtendTO
+                            .find(txResultMeta.result.transactionHash)
+                            ->second +
+                        test.getLCLSeq();
+                    if (isWrite)
+                    {
+                        observedTtl = writeTtl;
+                    }
+
+                    auto expected = isWrite ? writeTtl : thisTxTtl;
+                    REQUIRE(change.updated().data.ttl().liveUntilLedgerSeq ==
+                            expected);
+                }
+                break;
+
+                default:
+                    REQUIRE(false);
+                }
+            }
+        }
+
+        auto maxExtendTo =
+            *std::max_element(extendTos.begin(), extendTos.end());
+        auto maxTtl = maxExtendTo + test.getLCLSeq();
         REQUIRE(test.getTTL(client.getContract().getDataKey(
                     makeSymbolSCVal("key2"),
-                    ContractDataDurability::TEMPORARY)) == ttl);
+                    ContractDataDurability::TEMPORARY)) == maxTtl);
     };
 
     REQUIRE(client.has("key2", ContractDataDurability::TEMPORARY, true) ==
             INVOKE_HOST_FUNCTION_SUCCESS);
-    for (size_t i = 0; i < 10; ++i)
+    for (size_t i = 0; i < 25; ++i)
     {
         SECTION("multi RO extensions with a single RW extension in a single "
                 "stage and cluster. Run " +

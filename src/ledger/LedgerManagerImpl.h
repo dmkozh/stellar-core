@@ -120,12 +120,12 @@ class LedgerManagerImpl : public LedgerManager
 #ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
     ThreadEntryMap collectEntries(AbstractLedgerTxn& ltx, Thread const& txs);
 
-    UnorderedMap<LedgerKey, uint32_t>
-    applyThread(ThreadEntryMap& entryMapByCluster, Thread const& thread,
-                Config const& config, SorobanNetworkConfig const& sorobanConfig,
-                ParallelLedgerInfo const& ledgerInfo,
-                Hash const& sorobanBasePrngSeed,
-                SorobanMetrics& sorobanMetrics);
+    void applyThread(ThreadEntryMap& entryMapByCluster, Thread const& thread,
+                     Config const& config,
+                     SorobanNetworkConfig const& sorobanConfig,
+                     ParallelLedgerInfo const& ledgerInfo,
+                     Hash const& sorobanBasePrngSeed,
+                     SorobanMetrics& sorobanMetrics);
 
     void applySorobanStage(AppConnector& app, AbstractLedgerTxn& ltx,
                            ApplyStage const& stage,
