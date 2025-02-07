@@ -117,6 +117,25 @@ class LedgerManagerImpl : public LedgerManager
         AbstractLedgerTxn& ltx,
         std::unique_ptr<LedgerCloseMetaFrame> const& ledgerCloseMeta);
 
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+    ThreadEntryMap collectEntries(AbstractLedgerTxn& ltx, Thread const& txs);
+
+    void applyThread(ThreadEntryMap& entryMapByCluster, Thread const& thread,
+                     Config const& config,
+                     SorobanNetworkConfig const& sorobanConfig,
+                     ParallelLedgerInfo const& ledgerInfo,
+                     Hash const& sorobanBasePrngSeed,
+                     SorobanMetrics& sorobanMetrics);
+
+    void applySorobanStage(AppConnector& app, AbstractLedgerTxn& ltx,
+                           ApplyStage const& stage,
+                           Hash const& sorobanBasePrngSeed);
+
+    void applySorobanStages(AppConnector& app, AbstractLedgerTxn& ltx,
+                            std::vector<ApplyStage> const& stages,
+                            Hash const& sorobanBasePrngSeed);
+#endif
+
     // initialLedgerVers must be the ledger version at the start of the ledger.
     // On the ledger in which a protocol upgrade from vN to vN + 1 occurs,
     // initialLedgerVers must be vN.

@@ -213,6 +213,7 @@ class TransactionFrame : public TransactionFrameBase
         AppConnector& app, LedgerSnapshot const& ls, SequenceNumber current,
         bool chargeFee, uint64_t lowerBoundCloseTimeOffset,
         uint64_t upperBoundCloseTimeOffset) const;
+
     MutableTxResultPtr
     checkValid(AppConnector& app, LedgerSnapshot const& ls,
                SequenceNumber current, uint64_t lowerBoundCloseTimeOffset,
@@ -237,6 +238,23 @@ class TransactionFrame : public TransactionFrameBase
     MutableTxResultPtr
     processFeeSeqNum(AbstractLedgerTxn& ltx,
                      std::optional<int64_t> baseFee) const override;
+
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+    void preParallelApply(AppConnector& app, AbstractLedgerTxn& ltx,
+                          TransactionMetaFrame& meta,
+                          MutableTxResultPtr resPayload, bool chargeFee) const;
+
+    void preParallelApply(AppConnector& app, AbstractLedgerTxn& ltx,
+                          TransactionMetaFrame& meta,
+                          MutableTxResultPtr resPayload) const override;
+
+    ParallelTxReturnVal parallelApply(
+        ThreadEntryMap const& entryMap, // Must not be shared between threads!,
+        Config const& config, SorobanNetworkConfig const& sorobanConfig,
+        ParallelLedgerInfo const& ledgerInfo, MutableTxResultPtr resPayload,
+        SorobanMetrics& sorobanMetrics, Hash const& sorobanBasePrngSeed,
+        TxEffects& effects) const override;
+#endif
 
     // apply this transaction to the current ledger
     // returns true if successfully applied

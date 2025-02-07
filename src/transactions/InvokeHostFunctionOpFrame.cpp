@@ -57,15 +57,15 @@ toCxxBuf(T const& t)
 }
 
 CxxLedgerInfo
-getLedgerInfo(AbstractLedgerTxn& ltx, AppConnector& app,
-              SorobanNetworkConfig const& sorobanConfig)
+getLedgerInfo(SorobanNetworkConfig const& sorobanConfig, uint32_t ledgerVersion,
+              uint32_t ledgerSeq, uint32_t baseReserve, TimePoint closeTime,
+              Hash const& networkID)
 {
     CxxLedgerInfo info{};
-    auto const& hdr = ltx.loadHeader().current();
-    info.base_reserve = hdr.baseReserve;
-    info.protocol_version = hdr.ledgerVersion;
-    info.sequence_number = hdr.ledgerSeq;
-    info.timestamp = hdr.scpValue.closeTime;
+    info.base_reserve = baseReserve;
+    info.protocol_version = ledgerVersion;
+    info.sequence_number = ledgerSeq;
+    info.timestamp = closeTime;
     info.memory_limit = sorobanConfig.txMemoryLimit();
     info.min_persistent_entry_ttl =
         sorobanConfig.stateArchivalSettings().minPersistentTTL;
@@ -79,7 +79,6 @@ getLedgerInfo(AbstractLedgerTxn& ltx, AppConnector& app,
     info.cpu_cost_params = toCxxBuf(cpu);
     info.mem_cost_params = toCxxBuf(mem);
 
-    auto& networkID = app.getNetworkID();
     info.network_id.reserve(networkID.size());
     for (auto c : networkID)
     {
@@ -87,6 +86,18 @@ getLedgerInfo(AbstractLedgerTxn& ltx, AppConnector& app,
     }
     return info;
 }
+
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+CxxLedgerInfo
+getLedgerInfo(SorobanNetworkConfig const& sorobanConfig,
+              ParallelLedgerInfo const& parallelLedgerInfo)
+{
+    return getLedgerInfo(
+        sorobanConfig, parallelLedgerInfo.getLedgerVersion(),
+        parallelLedgerInfo.getLedgerSeq(), parallelLedgerInfo.getBaseReserve(),
+        parallelLedgerInfo.getCloseTime(), parallelLedgerInfo.getNetworkID());
+}
+#endif
 
 DiagnosticEvent
 metricsEvent(bool success, std::string&& topic, uint64_t value)
@@ -322,6 +333,383 @@ InvokeHostFunctionOpFrame::maybePopulateDiagnosticEvents(
     }
 }
 
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+ParallelTxReturnVal
+InvokeHostFunctionOpFrame::doApplyParallel(
+    ThreadEntryMap const& entryMap, // Must not be shared between threads
+    Config const& appConfig, SorobanNetworkConfig const& sorobanConfig,
+    Hash const& sorobanBasePrngSeed, ParallelLedgerInfo const& ledgerInfo,
+    SorobanMetrics& sorobanMetrics, OperationResult& res,
+    SorobanTxData& sorobanData) const
+{
+    ZoneNamedN(applyZone, "InvokeHostFunctionOpFrame doApplyParallel", true);
+
+    std::vector<LedgerEntryChange> changes;
+
+    HostFunctionMetrics metrics(sorobanMetrics);
+    auto timeScope = metrics.getExecTimer();
+
+    // Get the entries for the footprint
+    rust::Vec<CxxBuf> ledgerEntryCxxBufs;
+    rust::Vec<CxxBuf> ttlEntryCxxBufs;
+
+    auto const& resources = mParentTx.sorobanResources();
+    auto const& footprint = resources.footprint;
+    auto footprintLength =
+        footprint.readOnly.size() + footprint.readWrite.size();
+
+    ledgerEntryCxxBufs.reserve(footprintLength);
+    ttlEntryCxxBufs.reserve(footprintLength);
+
+    auto addReads = [&ledgerEntryCxxBufs, &ttlEntryCxxBufs, &metrics, &entryMap,
+                     &resources, &sorobanConfig, &appConfig, &sorobanData, &res,
+                     &ledgerInfo, this](auto const& keys) -> bool {
+        for (auto const& lk : keys)
+        {
+            uint32_t keySize = static_cast<uint32_t>(xdr::xdr_size(lk));
+            uint32_t entrySize = 0u;
+            std::optional<TTLEntry> ttlEntry;
+            bool sorobanEntryLive = false;
+
+            // For soroban entries, check if the entry is expired before loading
+            if (isSorobanEntry(lk))
+            {
+                auto ttlKey = getTTLKey(lk);
+                auto ttlIter = entryMap.find(ttlKey);
+                if (ttlIter != entryMap.end() && ttlIter->second.mLedgerEntry)
+                {
+                    if (!isLive(*(ttlIter->second.mLedgerEntry),
+                                ledgerInfo.getLedgerSeq()))
+                    {
+                        // For temporary entries, treat the expired entry as
+                        // if the key did not exist
+                        if (!isTemporaryEntry(lk))
+                        {
+                            if (lk.type() == CONTRACT_CODE)
+                            {
+                                sorobanData.pushApplyTimeDiagnosticError(
+                                    appConfig, SCE_VALUE, SCEC_INVALID_INPUT,
+                                    "trying to access an archived contract "
+                                    "code "
+                                    "entry",
+                                    {makeBytesSCVal(lk.contractCode().hash)});
+                            }
+                            else if (lk.type() == CONTRACT_DATA)
+                            {
+                                sorobanData.pushApplyTimeDiagnosticError(
+                                    appConfig, SCE_VALUE, SCEC_INVALID_INPUT,
+                                    "trying to access an archived contract "
+                                    "data "
+                                    "entry",
+                                    {makeAddressSCVal(
+                                         lk.contractData().contract),
+                                     lk.contractData().key});
+                            }
+                            // Cannot access an archived entry
+                            this->innerResult(res).code(
+                                INVOKE_HOST_FUNCTION_ENTRY_ARCHIVED);
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        sorobanEntryLive = true;
+                        ttlEntry =
+                            ttlIter->second.mLedgerEntry.value().data.ttl();
+                    }
+                }
+                // If ttlLtxe doesn't exist, this is a new Soroban entry
+            }
+
+            if (!isSorobanEntry(lk) || sorobanEntryLive)
+            {
+                auto entryIter = entryMap.find(lk);
+                if (entryIter != entryMap.end() &&
+                    entryIter->second.mLedgerEntry)
+                {
+                    auto leBuf = toCxxBuf(*(entryIter->second.mLedgerEntry));
+                    entrySize = static_cast<uint32_t>(leBuf.data->size());
+
+                    // For entry types that don't have an ttlEntry (i.e.
+                    // Accounts), the rust host expects an "empty" CxxBuf such
+                    // that the buffer has a non-null pointer that points to an
+                    // empty byte vector
+                    auto ttlBuf =
+                        ttlEntry
+                            ? toCxxBuf(*ttlEntry)
+                            : CxxBuf{std::make_unique<std::vector<uint8_t>>()};
+
+                    ledgerEntryCxxBufs.emplace_back(std::move(leBuf));
+                    ttlEntryCxxBufs.emplace_back(std::move(ttlBuf));
+                }
+                else if (isSorobanEntry(lk))
+                {
+                    releaseAssertOrThrow(!ttlEntry);
+                }
+            }
+
+            metrics.noteReadEntry(isCodeKey(lk), keySize, entrySize);
+            if (!validateContractLedgerEntry(lk, entrySize, sorobanConfig,
+                                             appConfig, mParentTx, sorobanData))
+            {
+                this->innerResult(res).code(
+                    INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED);
+                return false;
+            }
+
+            if (resources.readBytes < metrics.mLedgerReadByte)
+            {
+                sorobanData.pushApplyTimeDiagnosticError(
+                    appConfig, SCE_BUDGET, SCEC_EXCEEDED_LIMIT,
+                    "operation byte-read resources exceeds amount specified",
+                    {makeU64SCVal(metrics.mLedgerReadByte),
+                     makeU64SCVal(resources.readBytes)});
+
+                this->innerResult(res).code(
+                    INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED);
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (!addReads(footprint.readOnly))
+    {
+        // Error code set in addReads
+        return {false, {}};
+    }
+
+    if (!addReads(footprint.readWrite))
+    {
+        // Error code set in addReads
+        return {false, {}};
+    }
+
+    rust::Vec<CxxBuf> authEntryCxxBufs;
+    authEntryCxxBufs.reserve(mInvokeHostFunction.auth.size());
+    for (auto const& authEntry : mInvokeHostFunction.auth)
+    {
+        authEntryCxxBufs.emplace_back(toCxxBuf(authEntry));
+    }
+
+    InvokeHostFunctionOutput out{};
+    out.success = false;
+    try
+    {
+        CxxBuf basePrngSeedBuf{};
+        basePrngSeedBuf.data = std::make_unique<std::vector<uint8_t>>();
+        basePrngSeedBuf.data->assign(sorobanBasePrngSeed.begin(),
+                                     sorobanBasePrngSeed.end());
+
+        out = rust_bridge::invoke_host_function(
+            appConfig.CURRENT_LEDGER_PROTOCOL_VERSION,
+            appConfig.ENABLE_SOROBAN_DIAGNOSTIC_EVENTS, resources.instructions,
+            toCxxBuf(mInvokeHostFunction.hostFunction), toCxxBuf(resources),
+            toCxxBuf(getSourceID()), authEntryCxxBufs,
+            getLedgerInfo(sorobanConfig, ledgerInfo), ledgerEntryCxxBufs,
+            ttlEntryCxxBufs, basePrngSeedBuf,
+            sorobanConfig.rustBridgeRentFeeConfiguration());
+        metrics.mCpuInsn = out.cpu_insns;
+        metrics.mMemByte = out.mem_bytes;
+        metrics.mInvokeTimeNsecs = out.time_nsecs;
+        metrics.mCpuInsnExclVm = out.cpu_insns_excluding_vm_instantiation;
+        metrics.mInvokeTimeNsecsExclVm =
+            out.time_nsecs_excluding_vm_instantiation;
+        if (!out.success)
+        {
+            maybePopulateDiagnosticEvents(appConfig, out, metrics, sorobanData);
+        }
+    }
+    catch (std::exception& e)
+    {
+        // Host invocations should never throw an exception, so encountering
+        // one would be an internal error.
+        out.is_internal_error = true;
+        CLOG_DEBUG(Tx, "Exception caught while invoking host fn: {}", e.what());
+    }
+
+    if (!out.success)
+    {
+        if (out.is_internal_error)
+        {
+            throw std::runtime_error(
+                "Got internal error during Soroban host invocation.");
+        }
+        if (resources.instructions < out.cpu_insns)
+        {
+            sorobanData.pushApplyTimeDiagnosticError(
+                appConfig, SCE_BUDGET, SCEC_EXCEEDED_LIMIT,
+                "operation instructions exceeds amount specified",
+                {makeU64SCVal(out.cpu_insns),
+                 makeU64SCVal(resources.instructions)});
+
+            innerResult(res).code(INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED);
+        }
+        else if (sorobanConfig.txMemoryLimit() < out.mem_bytes)
+        {
+            sorobanData.pushApplyTimeDiagnosticError(
+                appConfig, SCE_BUDGET, SCEC_EXCEEDED_LIMIT,
+                "operation memory usage exceeds network config limit",
+                {makeU64SCVal(out.mem_bytes),
+                 makeU64SCVal(sorobanConfig.txMemoryLimit())});
+            innerResult(res).code(INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED);
+        }
+        else
+        {
+            innerResult(res).code(INVOKE_HOST_FUNCTION_TRAPPED);
+        }
+        return {false, {}};
+    }
+
+    // Keep track of updates we need to make
+    ModifiedEntryMap opEntryMap;
+
+    // Create or update every entry returned.
+    UnorderedSet<LedgerKey> createdAndModifiedKeys;
+    UnorderedSet<LedgerKey> createdKeys;
+    for (auto const& buf : out.modified_ledger_entries)
+    {
+        LedgerEntry le;
+        xdr::xdr_from_opaque(buf.data, le);
+        if (!validateContractLedgerEntry(LedgerEntryKey(le), buf.data.size(),
+                                         sorobanConfig, appConfig, mParentTx,
+                                         sorobanData))
+        {
+            innerResult(res).code(INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED);
+            return {false, {}};
+        }
+
+        auto lk = LedgerEntryKey(le);
+        createdAndModifiedKeys.insert(lk);
+
+        uint32_t keySize = static_cast<uint32_t>(xdr::xdr_size(lk));
+        uint32_t entrySize = static_cast<uint32_t>(buf.data.size());
+
+        // ttlEntry write fees come out of refundableFee, already
+        // accounted for by the host
+        if (lk.type() != TTL)
+        {
+            metrics.noteWriteEntry(isCodeKey(lk), keySize, entrySize);
+            if (resources.writeBytes < metrics.mLedgerWriteByte)
+            {
+                sorobanData.pushApplyTimeDiagnosticError(
+                    appConfig, SCE_BUDGET, SCEC_EXCEEDED_LIMIT,
+                    "operation byte-write resources exceeds amount specified",
+                    {makeU64SCVal(metrics.mLedgerWriteByte),
+                     makeU64SCVal(resources.writeBytes)});
+                innerResult(res).code(
+                    INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED);
+                return {false, {}};
+            }
+        }
+
+        opEntryMap.emplace(lk, le);
+        auto iter = entryMap.find(lk);
+        if (iter == entryMap.end())
+        {
+            createdKeys.insert(lk);
+        }
+    }
+
+    // Check that each newly created ContractCode or ContractData entry also
+    // creates an ttlEntry
+    for (auto const& key : createdKeys)
+    {
+        if (isSorobanEntry(key))
+        {
+            auto ttlKey = getTTLKey(key);
+            releaseAssertOrThrow(createdKeys.find(ttlKey) != createdKeys.end());
+        }
+        else
+        {
+            releaseAssertOrThrow(key.type() == TTL);
+        }
+    }
+
+    // Erase every entry not returned.
+    // NB: The entries that haven't been touched are passed through
+    // from host, so this should never result in removing an entry
+    // that hasn't been removed by host explicitly.
+    for (auto const& lk : footprint.readWrite)
+    {
+        if (createdAndModifiedKeys.find(lk) == createdAndModifiedKeys.end())
+        {
+            auto entryIter = entryMap.find(lk);
+            if (entryIter != entryMap.end() && entryIter->second.mLedgerEntry)
+            {
+                releaseAssertOrThrow(isSorobanEntry(lk));
+                opEntryMap.emplace(lk, std::nullopt);
+
+                // Also delete associated ttlEntry
+                auto ttlLK = getTTLKey(lk);
+
+                auto ttlIter = entryMap.find(ttlLK);
+                releaseAssertOrThrow(ttlIter != entryMap.end());
+                opEntryMap.emplace(ttlLK, std::nullopt);
+            }
+        }
+    }
+
+    // Append events to the enclosing TransactionFrame, where
+    // they'll be picked up and transferred to the TxMeta.
+    InvokeHostFunctionSuccessPreImage success{};
+    success.events.reserve(out.contract_events.size());
+    for (auto const& buf : out.contract_events)
+    {
+        metrics.mEmitEvent++;
+        uint32_t eventSize = static_cast<uint32_t>(buf.data.size());
+        metrics.mEmitEventByte += eventSize;
+        metrics.mMaxEmitEventByte =
+            std::max(metrics.mMaxEmitEventByte, eventSize);
+        if (sorobanConfig.txMaxContractEventsSizeBytes() <
+            metrics.mEmitEventByte)
+        {
+            sorobanData.pushApplyTimeDiagnosticError(
+                appConfig, SCE_BUDGET, SCEC_EXCEEDED_LIMIT,
+                "total events size exceeds network config maximum",
+                {makeU64SCVal(metrics.mEmitEventByte),
+                 makeU64SCVal(sorobanConfig.txMaxContractEventsSizeBytes())});
+            innerResult(res).code(INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED);
+            return {false, {}};
+        }
+        ContractEvent evt;
+        xdr::xdr_from_opaque(buf.data, evt);
+        success.events.emplace_back(evt);
+    }
+    maybePopulateDiagnosticEvents(appConfig, out, metrics, sorobanData);
+
+    metrics.mEmitEventByte += static_cast<uint32>(out.result_value.data.size());
+    if (sorobanConfig.txMaxContractEventsSizeBytes() < metrics.mEmitEventByte)
+    {
+        sorobanData.pushApplyTimeDiagnosticError(
+            appConfig, SCE_BUDGET, SCEC_EXCEEDED_LIMIT,
+            "return value pushes events size above network config maximum",
+            {makeU64SCVal(metrics.mEmitEventByte),
+             makeU64SCVal(sorobanConfig.txMaxContractEventsSizeBytes())});
+        innerResult(res).code(INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED);
+        return {false, {}};
+    }
+
+    if (!sorobanData.consumeRefundableSorobanResources(
+            metrics.mEmitEventByte, out.rent_fee, ledgerInfo.getLedgerVersion(),
+            sorobanConfig, appConfig, mParentTx))
+    {
+        innerResult(res).code(INVOKE_HOST_FUNCTION_INSUFFICIENT_REFUNDABLE_FEE);
+        return {false, {}};
+    }
+
+    xdr::xdr_from_opaque(out.result_value.data, success.returnValue);
+    innerResult(res).code(INVOKE_HOST_FUNCTION_SUCCESS);
+    innerResult(res).success() = xdrSha256(success);
+
+    sorobanData.pushContractEvents(success.events);
+    sorobanData.setReturnValue(success.returnValue);
+    metrics.mSuccess = true;
+
+    return {true, opEntryMap};
+}
+#endif
+
 bool
 InvokeHostFunctionOpFrame::doApply(
     AppConnector& app, AbstractLedgerTxn& ltx, Hash const& sorobanBasePrngSeed,
@@ -522,13 +910,16 @@ InvokeHostFunctionOpFrame::doApply(
         basePrngSeedBuf.data->assign(sorobanBasePrngSeed.begin(),
                                      sorobanBasePrngSeed.end());
 
+        auto const& lh = ltx.loadHeader().current();
         out = rust_bridge::invoke_host_function(
             appConfig.CURRENT_LEDGER_PROTOCOL_VERSION,
             appConfig.ENABLE_SOROBAN_DIAGNOSTIC_EVENTS, resources.instructions,
             toCxxBuf(mInvokeHostFunction.hostFunction), toCxxBuf(resources),
             toCxxBuf(getSourceID()), authEntryCxxBufs,
-            getLedgerInfo(ltx, app, sorobanConfig), ledgerEntryCxxBufs,
-            ttlEntryCxxBufs, basePrngSeedBuf,
+            getLedgerInfo(sorobanConfig, lh.ledgerVersion, lh.ledgerSeq,
+                          lh.baseReserve, lh.scpValue.closeTime,
+                          app.getNetworkID()),
+            ledgerEntryCxxBufs, ttlEntryCxxBufs, basePrngSeedBuf,
             sorobanConfig.rustBridgeRentFeeConfiguration());
         metrics.mCpuInsn = out.cpu_insns;
         metrics.mMemByte = out.mem_bytes;

@@ -38,6 +38,15 @@ class ExtendFootprintTTLOpFrame : public OperationFrame
     bool doCheckValid(uint32_t ledgerVersion,
                       OperationResult& res) const override;
 
+#ifdef ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION
+    ParallelTxReturnVal doApplyParallel(
+        ThreadEntryMap const& entryMap, // Must not be shared between threads!
+        Config const& appConfig, SorobanNetworkConfig const& sorobanConfig,
+        Hash const& txPrngSeed, ParallelLedgerInfo const& ledgerInfo,
+        SorobanMetrics& sorobanMetrics, OperationResult& res,
+        SorobanTxData& sorobanData) const override;
+#endif
+
     void
     insertLedgerKeysToPrefetch(UnorderedSet<LedgerKey>& keys) const override;
 

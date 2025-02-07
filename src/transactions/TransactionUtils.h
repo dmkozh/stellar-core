@@ -328,6 +328,7 @@ LumenContractInfo getLumenContractInfo(Hash const& networkID);
 SCVal makeSymbolSCVal(std::string&& str);
 SCVal makeSymbolSCVal(std::string const& str);
 SCVal makeStringSCVal(std::string&& str);
+SCVal makeU32SCVal(uint32_t u);
 SCVal makeU64SCVal(uint64_t u);
 template <typename T>
 SCVal
