@@ -616,6 +616,7 @@ exit /b 0
     <ClCompile Include="..\..\src\ledger\SharedModuleCacheCompiler.cpp" />
     <ClCompile Include="..\..\src\ledger\test\InMemoryLedgerTxn.cpp" />
     <ClCompile Include="..\..\src\ledger\test\InMemoryLedgerTxnRoot.cpp" />
+    <ClCompile Include="..\..\src\ledger\test\LCMTest.cpp" />
     <ClCompile Include="..\..\src\ledger\test\LedgerCloseMetaStreamTests.cpp" />
     <ClCompile Include="..\..\src\ledger\test\LedgerHeaderTests.cpp" />
     <ClCompile Include="..\..\src\ledger\test\LedgerTests.cpp" />

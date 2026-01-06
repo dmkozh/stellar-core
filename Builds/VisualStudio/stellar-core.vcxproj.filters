@@ -1429,6 +1429,9 @@
     <ClCompile Include="..\..\src\invariant\ArchivedStateConsistency.cpp">
       <Filter>invariant</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\ledger\test\LCMTest.cpp">
+      <Filter>ledger\tests</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\lib\util\cpptoml.h">
