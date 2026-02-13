@@ -597,61 +597,177 @@ buildSurgePricedParallelSorobanPhase(
     // Before trying to include any transactions, find all the pairs of the
     // conflicting transactions and mark the conflicts in the builderTxs.
     //
-    // In order to find the conflicts, we build the maps from the footprint
-    // keys to transactions, then mark the conflicts between the transactions
-    // that share RW key, or between the transactions that share RO and RW key.
+    // We use a sort-based approach: collect all footprint entries into a flat
+    // vector tagged with (key hash, tx id, RO/RW, key pointer), sort by hash,
+    // then scan for groups sharing the same key. This avoids the O(N) node
+    // allocations and rehashing overhead of hash maps and provides much better
+    // cache behavior due to sequential memory access.
     //
-    // The approach here is optimized towards the low number of conflicts,
-    // specifically when there are no conflicts at all, the complexity is just
-    // O(total_footprint_entry_count). The worst case is roughly
-    // O(max_tx_footprint_size * transaction_count ^ 2), which is equivalent
-    // to the complexity of the straightforward approach of iterating over all
-    // the transaction pairs.
+    // For hash collisions (different keys with same hash), we do pairwise key
+    // comparison within each hash group. With 64-bit hashes and typical
+    // footprint sizes, collisions are exceedingly rare (birthday probability
+    // ~K^2/2^64).
     //
     // This also has the further optimization potential: we could populate the
     // key maps and even the conflicting transactions eagerly in tx queue, thus
     // amortizing the costs across the whole ledger duration.
-    UnorderedMap<LedgerKey, std::vector<size_t>> txsWithRoKey;
-    UnorderedMap<LedgerKey, std::vector<size_t>> txsWithRwKey;
+    struct FpEntry
+    {
+        size_t keyHash;
+        uint32_t txId;
+        bool isRW;
+        LedgerKey const* key;
+    };
+
+    // Count total footprint entries for a single allocation.
+    size_t totalFpEntries = 0;
+    for (auto const& txFrame : txFrames)
+    {
+        auto const& fp = txFrame->sorobanResources().footprint;
+        totalFpEntries += fp.readOnly.size() + fp.readWrite.size();
+    }
+
+    std::vector<FpEntry> fpEntries;
+    fpEntries.reserve(totalFpEntries);
+    std::hash<LedgerKey> keyHasher;
     for (size_t i = 0; i < txFrames.size(); ++i)
     {
-        auto const& txFrame = txFrames[i];
-        auto const& footprint = txFrame->sorobanResources().footprint;
+        auto const& footprint = txFrames[i]->sorobanResources().footprint;
         for (auto const& key : footprint.readOnly)
         {
-            txsWithRoKey[key].push_back(i);
+            fpEntries.push_back(
+                {keyHasher(key), static_cast<uint32_t>(i), false, &key});
         }
         for (auto const& key : footprint.readWrite)
         {
-            txsWithRwKey[key].push_back(i);
+            fpEntries.push_back(
+                {keyHasher(key), static_cast<uint32_t>(i), true, &key});
         }
     }
 
-    for (auto const& [key, rwTxIds] : txsWithRwKey)
+    // Sort by hash for cache-friendly grouping.
+    std::sort(fpEntries.begin(), fpEntries.end(),
+              [](FpEntry const& a, FpEntry const& b) {
+                  return a.keyHash < b.keyHash;
+              });
+
+    // Scan sorted entries for groups sharing the same hash, then mark
+    // conflicts between transactions that share RW keys (RW-RW and RO-RW).
+    // Within each hash group, we use pairwise key comparison to handle
+    // potential hash collisions correctly.
+    for (size_t groupStart = 0; groupStart < fpEntries.size();)
     {
-        // RW-RW conflicts
-        for (size_t i = 0; i < rwTxIds.size(); ++i)
+        size_t groupEnd = groupStart + 1;
+        while (groupEnd < fpEntries.size() &&
+               fpEntries[groupEnd].keyHash == fpEntries[groupStart].keyHash)
         {
-            for (size_t j = i + 1; j < rwTxIds.size(); ++j)
-            {
-                builderTxs[rwTxIds[i]]->mConflictTxs.set(rwTxIds[j]);
-                builderTxs[rwTxIds[j]]->mConflictTxs.set(rwTxIds[i]);
-            }
+            ++groupEnd;
         }
-        // RO-RW conflicts
-        auto roIt = txsWithRoKey.find(key);
-        if (roIt != txsWithRoKey.end())
+
+        // Skip singleton groups — no possible conflicts.
+        if (groupEnd - groupStart < 2)
         {
-            auto const& roTxIds = roIt->second;
-            for (size_t i = 0; i < roTxIds.size(); ++i)
+            groupStart = groupEnd;
+            continue;
+        }
+
+        // Within this hash group, identify sub-groups with the same actual
+        // key. For each unique key, collect RO and RW tx ids, then mark
+        // conflicts.
+        for (size_t i = groupStart; i < groupEnd; ++i)
+        {
+            if (fpEntries[i].key == nullptr)
             {
-                for (size_t j = 0; j < rwTxIds.size(); ++j)
+                continue; // already processed in a previous sub-group
+            }
+
+            // Collect all entries matching this actual key.
+            // Start with the current entry, then scan forward.
+            // Use small inline buffers since most keys have very few txs.
+            size_t roTxBuf[8];
+            size_t rwTxBuf[8];
+            size_t roCount = 0;
+            size_t rwCount = 0;
+            std::vector<size_t> roTxOverflow;
+            std::vector<size_t> rwTxOverflow;
+
+            auto addTx = [&](size_t txId, bool isRW) {
+                if (isRW)
                 {
-                    builderTxs[roTxIds[i]]->mConflictTxs.set(rwTxIds[j]);
-                    builderTxs[rwTxIds[j]]->mConflictTxs.set(roTxIds[i]);
+                    if (rwCount < 8)
+                        rwTxBuf[rwCount++] = txId;
+                    else
+                        rwTxOverflow.push_back(txId);
+                }
+                else
+                {
+                    if (roCount < 8)
+                        roTxBuf[roCount++] = txId;
+                    else
+                        roTxOverflow.push_back(txId);
+                }
+            };
+
+            addTx(fpEntries[i].txId, fpEntries[i].isRW);
+
+            for (size_t j = i + 1; j < groupEnd; ++j)
+            {
+                if (fpEntries[j].key == nullptr)
+                {
+                    continue;
+                }
+                if (*fpEntries[j].key == *fpEntries[i].key)
+                {
+                    addTx(fpEntries[j].txId, fpEntries[j].isRW);
+                    fpEntries[j].key = nullptr; // mark as consumed
+                }
+            }
+
+            // Build combined views for conflict marking.
+            size_t totalRw = rwCount + rwTxOverflow.size();
+            size_t totalRo = roCount + roTxOverflow.size();
+
+            // Skip if there are no RW entries (no conflicts possible)
+            // or if there's only a single entry total.
+            if (totalRw == 0 || (totalRw + totalRo < 2))
+            {
+                continue;
+            }
+
+            auto getRwTxId = [&](size_t idx) -> size_t {
+                return idx < rwCount ? rwTxBuf[idx]
+                                     : rwTxOverflow[idx - rwCount];
+            };
+            auto getRoTxId = [&](size_t idx) -> size_t {
+                return idx < roCount ? roTxBuf[idx]
+                                     : roTxOverflow[idx - roCount];
+            };
+
+            // RW-RW conflicts
+            for (size_t a = 0; a < totalRw; ++a)
+            {
+                for (size_t b = a + 1; b < totalRw; ++b)
+                {
+                    auto idA = getRwTxId(a);
+                    auto idB = getRwTxId(b);
+                    builderTxs[idA]->mConflictTxs.set(idB);
+                    builderTxs[idB]->mConflictTxs.set(idA);
+                }
+            }
+            // RO-RW conflicts
+            for (size_t a = 0; a < totalRo; ++a)
+            {
+                for (size_t b = 0; b < totalRw; ++b)
+                {
+                    auto roId = getRoTxId(a);
+                    auto rwId = getRwTxId(b);
+                    builderTxs[roId]->mConflictTxs.set(rwId);
+                    builderTxs[rwId]->mConflictTxs.set(roId);
                 }
             }
         }
+
+        groupStart = groupEnd;
     }
 
     // Process the transactions in the surge pricing (decreasing fee) order.
