@@ -177,6 +177,22 @@ bitset_intersection_count(const bitset_t* b1, const bitset_t* b2)
     return answer;
 }
 
+/* check whether two bitsets are disjoint (have no bits in common),
+ * with early exit on first common word */
+static inline bool
+bitset_disjoint(const bitset_t* b1, const bitset_t* b2)
+{
+    size_t minlength = b1->arraysize < b2->arraysize ? b1->arraysize : b2->arraysize;
+    for (size_t k = 0; k < minlength; ++k)
+    {
+        if (b1->array[k] & b2->array[k])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* compute the difference in-place (to b1), to generate a new bitset first call
  * bitset_copy */
 void bitset_inplace_difference(bitset_t* b1, const bitset_t* b2);

@@ -305,6 +305,16 @@ class BitSet
     {
         return bitset_intersection_count(mPtr, other.mPtr);
     }
+    bool
+    disjoint(BitSet const& other) const
+    {
+        return bitset_disjoint(mPtr, other.mPtr);
+    }
+    bool
+    intersects(BitSet const& other) const
+    {
+        return !bitset_disjoint(mPtr, other.mPtr);
+    }
     size_t
     differenceCount(BitSet const& other) const
     {

@@ -203,3 +203,65 @@ TEST_CASE("BitSet large bitsets", "[bitset]")
     }
     REQUIRE(bs.count() == 10000);
 }
+
+TEST_CASE("BitSet disjoint and intersects", "[bitset]")
+{
+    // Two empty bitsets are disjoint.
+    {
+        BitSet a, b;
+        REQUIRE(a.disjoint(b));
+        REQUIRE(!a.intersects(b));
+    }
+    // Disjoint bitsets.
+    {
+        BitSet a, b;
+        a.set(0);
+        a.set(2);
+        b.set(1);
+        b.set(3);
+        REQUIRE(a.disjoint(b));
+        REQUIRE(!a.intersects(b));
+    }
+    // Overlapping bitsets.
+    {
+        BitSet a, b;
+        a.set(0);
+        a.set(1);
+        b.set(1);
+        b.set(2);
+        REQUIRE(!a.disjoint(b));
+        REQUIRE(a.intersects(b));
+    }
+    // Different sizes, disjoint.
+    {
+        BitSet a, b;
+        a.set(0);
+        b.set(200);
+        REQUIRE(a.disjoint(b));
+        REQUIRE(!a.intersects(b));
+    }
+    // Different sizes, overlapping.
+    {
+        BitSet a, b;
+        a.set(200);
+        b.set(200);
+        REQUIRE(!a.disjoint(b));
+        REQUIRE(a.intersects(b));
+    }
+    // Randomised consistency check vs intersectionCount.
+    for (size_t loop = 0; loop < 100; ++loop)
+    {
+        BitSet a, b;
+        for (size_t i = 0; i < rand_uniform<size_t>(size_t(1), size_t(200));
+             ++i)
+        {
+            if (rand_flip())
+                a.set(i);
+            if (rand_flip())
+                b.set(i);
+        }
+        bool expectDisjoint = (a.intersectionCount(b) == 0);
+        REQUIRE(a.disjoint(b) == expectDisjoint);
+        REQUIRE(a.intersects(b) == !expectDisjoint);
+    }
+}
