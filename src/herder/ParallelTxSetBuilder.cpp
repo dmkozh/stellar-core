@@ -8,7 +8,7 @@
 #include "transactions/TransactionFrameBase.h"
 #include "util/BitSet.h"
 
-#include <unordered_set>
+#include <algorithm>
 
 namespace stellar
 {
@@ -232,26 +232,32 @@ class Stage
     }
 
   private:
-    std::unordered_set<Cluster const*>
+    std::vector<Cluster const*>
     getConflictingClusters(BuilderTx const& tx) const
     {
-        std::unordered_set<Cluster const*> conflictingClusters;
         // Fast path: if the tx's id is not in any cluster's conflict set,
         // there are no conflicting clusters.
         if (!mAllConflictTxs.get(tx.mId))
         {
-            return conflictingClusters;
+            return {};
         }
         // O(K) lookup: iterate the conflict tx ids and find their
         // clusters via the tx-to-cluster mapping, instead of scanning
         // all clusters (which would be O(C)).
+        std::vector<Cluster const*> conflictingClusters;
         size_t conflictTxId = 0;
         while (tx.mConflictTxs.nextSet(conflictTxId))
         {
             auto* cluster = mTxToCluster[conflictTxId];
             if (cluster != nullptr)
             {
-                conflictingClusters.insert(cluster);
+                // Small-K linear dedup is faster than hash set overhead.
+                if (std::find(conflictingClusters.begin(),
+                              conflictingClusters.end(),
+                              cluster) == conflictingClusters.end())
+                {
+                    conflictingClusters.push_back(cluster);
+                }
             }
             ++conflictTxId;
         }
@@ -273,7 +279,7 @@ class Stage
     bool
     inPlaceBinPacking(
         Cluster const& newCluster,
-        std::unordered_set<Cluster const*> const& clustersToRemove)
+        std::vector<Cluster const*> const& clustersToRemove)
     {
         // Remove the clusters that were merged from their respective bins.
         for (auto const& cluster : clustersToRemove)
@@ -308,13 +314,14 @@ class Stage
     // moves but no shared_ptr copies (which involve atomic refcounts).
     void
     removeConflictingClusters(
-        std::unordered_set<Cluster const*> const& toRemove,
+        std::vector<Cluster const*> const& toRemove,
         std::vector<std::shared_ptr<Cluster const>>& saved)
     {
         size_t writePos = 0;
         for (size_t readPos = 0; readPos < mClusters.size(); ++readPos)
         {
-            if (toRemove.find(mClusters[readPos].get()) != toRemove.end())
+            if (std::find(toRemove.begin(), toRemove.end(),
+                          mClusters[readPos].get()) != toRemove.end())
             {
                 saved.push_back(std::move(mClusters[readPos]));
             }
@@ -668,8 +675,8 @@ buildSurgePricedParallelSorobanPhase(
          stageCount <= cfg.SOROBAN_PHASE_MAX_STAGE_COUNT; ++stageCount)
     {
         size_t resultIndex = stageCount - cfg.SOROBAN_PHASE_MIN_STAGE_COUNT;
-        threads.emplace_back([queue, &builderTxForTx, txFrames, stageCount,
-                              sorobanCfg, laneConfig, resultIndex, &results,
+        threads.emplace_back([queue, &builderTxForTx, &txFrames, stageCount,
+                              &sorobanCfg, laneConfig, resultIndex, &results,
                               ledgerVersion]() {
             results.at(resultIndex) =
                 buildSurgePricedParallelSorobanPhaseWithStageCount(
