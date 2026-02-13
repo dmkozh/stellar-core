@@ -9,6 +9,7 @@
 #include "util/BitSet.h"
 
 #include <algorithm>
+#include <numeric>
 
 namespace stellar
 {
@@ -469,12 +470,12 @@ struct ParallelPhaseBuildResult
 
 ParallelPhaseBuildResult
 buildSurgePricedParallelSorobanPhaseWithStageCount(
-    SurgePricingPriorityQueue queue,
+    std::vector<size_t> const& sortedTxOrder,
+    std::vector<Resource> const& txResources, Resource const& laneLimit,
     std::unordered_map<TransactionFrameBaseConstPtr, BuilderTx const*> const&
         builderTxForTx,
     TxFrameList const& txFrames, uint32_t stageCount,
-    SorobanNetworkConfig const& sorobanCfg,
-    std::shared_ptr<SurgePricingLaneConfig> laneConfig, uint32_t ledgerVersion)
+    SorobanNetworkConfig const& sorobanCfg)
 {
     ZoneScoped;
     ParallelPartitionConfig partitionCfg(stageCount, sorobanCfg);
@@ -482,13 +483,33 @@ buildSurgePricedParallelSorobanPhaseWithStageCount(
     std::vector<Stage> stages(partitionCfg.mStageCount,
                               Stage(partitionCfg, txFrames.size()));
 
-    // Visit the transactions in the surge pricing queue and try to add them to
-    // at least one of the stages.
-    auto visitor = [&stages,
-                    &builderTxForTx](TransactionFrameBaseConstPtr const& tx) {
-        bool added = false;
-        auto builderTxIt = builderTxForTx.find(tx);
+    // Iterate transactions in decreasing fee order (matching the order that
+    // SurgePricingPriorityQueue::popTopTxs would use) and try to add each to
+    // at least one stage. This replaces the queue-based visitor pattern with
+    // a simple loop over a pre-sorted index vector, avoiding O(N) tree node
+    // allocations for queue construction and per-thread queue copies.
+    Resource laneLeft = laneLimit;
+    bool hadTxNotFittingLane = false;
+
+    for (size_t txIdx : sortedTxOrder)
+    {
+        auto const& txRes = txResources[txIdx];
+
+        // Check if the transaction fits within the remaining lane resource
+        // limits. This mirrors the anyGreater check in popTopTxs that skips
+        // transactions exceeding resource limits.
+        if (anyGreater(txRes, laneLeft))
+        {
+            hadTxNotFittingLane = true;
+            continue;
+        }
+
+        // Try to add the transaction to one of the stages.
+        auto const& txFrame = txFrames[txIdx];
+        auto builderTxIt = builderTxForTx.find(txFrame);
         releaseAssert(builderTxIt != builderTxForTx.end());
+
+        bool added = false;
         for (auto& stage : stages)
         {
             if (stage.tryAdd(*builderTxIt->second))
@@ -497,26 +518,22 @@ buildSurgePricedParallelSorobanPhaseWithStageCount(
                 break;
             }
         }
+
         if (added)
         {
-            return SurgePricingPriorityQueue::VisitTxResult::PROCESSED;
+            // Consume lane resources (equivalent to PROCESSED in popTopTxs).
+            laneLeft -= txRes;
         }
-        // If a transaction didn't fit into any of the stages, we consider it
-        // to have been excluded due to resource limits and thus notify the
-        // surge pricing queue that surge pricing should be triggered (
-        // REJECTED imitates the behavior for exceeding the resource limit
-        // within the queue itself).
-        return SurgePricingPriorityQueue::VisitTxResult::REJECTED;
-    };
+        else
+        {
+            // Transaction didn't fit into any stage — treat as REJECTED
+            // to trigger surge pricing.
+            hadTxNotFittingLane = true;
+        }
+    }
 
     ParallelPhaseBuildResult result;
-    std::vector<Resource> laneLeftUntilLimitUnused;
-    queue.popTopTxs(/* allowGaps */ true, visitor, laneLeftUntilLimitUnused,
-                    result.mHadTxNotFittingLane, ledgerVersion);
-    // There is only a single fee lane for Soroban, so there is only a single
-    // flag that indicates whether there was a transaction that didn't fit into
-    // lane (and thus all transactions are surge priced at once).
-    releaseAssert(result.mHadTxNotFittingLane.size() == 1);
+    result.mHadTxNotFittingLane = {hadTxNotFittingLane};
 
     // At this point the stages have been filled with transactions and we just
     // need to place the full transactions into the respective stages/clusters.
@@ -770,18 +787,58 @@ buildSurgePricedParallelSorobanPhase(
         groupStart = groupEnd;
     }
 
-    // Process the transactions in the surge pricing (decreasing fee) order.
-    // This also automatically ensures that the resource limits are respected
-    // for all the dimensions besides instructions.
-    SurgePricingPriorityQueue queue(
-        /* isHighestPriority */ true, laneConfig,
-        stellar::rand_uniform<size_t>(0, std::numeric_limits<size_t>::max()));
+    // Sort transactions in decreasing fee order, matching the iteration order
+    // of SurgePricingPriorityQueue::popTopTxs. This replaces queue
+    // construction (O(N) tree node allocations) with a flat vector sort and
+    // eliminates per-thread queue copies entirely.
+    size_t comparisonSeed = stellar::rand_uniform<size_t>(
+        0, std::numeric_limits<size_t>::max());
+    std::vector<size_t> sortedTxOrder(txFrames.size());
+    std::iota(sortedTxOrder.begin(), sortedTxOrder.end(), 0);
+    std::sort(
+        sortedTxOrder.begin(), sortedTxOrder.end(),
+        [&txFrames, comparisonSeed](size_t a, size_t b) {
+            auto cmp = feeRate3WayCompare(
+                txFrames[a]->getInclusionFee(),
+                txFrames[a]->getNumOperations(),
+                txFrames[b]->getInclusionFee(),
+                txFrames[b]->getNumOperations());
+            if (cmp != 0)
+            {
+                return cmp > 0; // Higher fee rate first.
+            }
+            // Tiebreaker matching TxComparator::txLessThan (reversed for
+            // descending order).
+#ifndef BUILD_TESTS
+            auto la =
+                reinterpret_cast<size_t>(txFrames[a].get()) ^ comparisonSeed;
+            auto lb =
+                reinterpret_cast<size_t>(txFrames[b].get()) ^ comparisonSeed;
+#else
+            // Use deterministic hash tiebreaker in tests for reproducibility.
+            auto const& la = txFrames[a]->getFullHash();
+            auto const& lb = txFrames[b]->getFullHash();
+#endif
+            return la > lb;
+        });
+
+    // Precompute per-transaction resources to avoid repeated virtual calls
+    // and heap allocations across threads.
+    std::vector<Resource> txResources;
+    txResources.reserve(txFrames.size());
     for (auto const& tx : txFrames)
     {
-        queue.add(tx, ledgerVersion);
+        txResources.push_back(
+            tx->getResources(/* useByteLimitInClassic */ false, ledgerVersion));
     }
 
-    // Create a worker thread for each stage count.
+    // Get the lane limit. Soroban uses a single generic lane.
+    auto const& laneLimits = laneConfig->getLaneLimits();
+    releaseAssert(laneLimits.size() == 1);
+    auto const& laneLimit = laneLimits[0];
+
+    // Create a worker thread for each stage count. The sorted order and
+    // precomputed resources are shared across all threads (read-only).
     std::vector<std::thread> threads;
     uint32_t stageCountOptions = cfg.SOROBAN_PHASE_MAX_STAGE_COUNT -
                                  cfg.SOROBAN_PHASE_MIN_STAGE_COUNT + 1;
@@ -791,13 +848,13 @@ buildSurgePricedParallelSorobanPhase(
          stageCount <= cfg.SOROBAN_PHASE_MAX_STAGE_COUNT; ++stageCount)
     {
         size_t resultIndex = stageCount - cfg.SOROBAN_PHASE_MIN_STAGE_COUNT;
-        threads.emplace_back([queue, &builderTxForTx, &txFrames, stageCount,
-                              &sorobanCfg, laneConfig, resultIndex, &results,
-                              ledgerVersion]() {
+        threads.emplace_back([&sortedTxOrder, &txResources, &laneLimit,
+                              &builderTxForTx, &txFrames, stageCount,
+                              &sorobanCfg, resultIndex, &results]() {
             results.at(resultIndex) =
                 buildSurgePricedParallelSorobanPhaseWithStageCount(
-                    std::move(queue), builderTxForTx, txFrames, stageCount,
-                    sorobanCfg, laneConfig, ledgerVersion);
+                    sortedTxOrder, txResources, laneLimit, builderTxForTx,
+                    txFrames, stageCount, sorobanCfg);
         });
     }
     for (auto& thread : threads)
