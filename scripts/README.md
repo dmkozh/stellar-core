@@ -2,10 +2,16 @@
 This folder is for storing any scripts that may be helpful for using stellar-core.
 
 ## List of scripts
+- [Apply Load Matrix](#apply-load-matrix)
 - [Overlay survey](#overlay-survey)
 - [Diff Tracy CSV](#diff-tracy-csv)
 - [Parse Backtrace Dump](#parse-backtrace-dump)
 - [Histogram Generator](#histogram-generator)
+
+### Apply Load Matrix
+- Name - `run_apply_load_matrix.py`
+- Description - A Python script that runs a predefined list of apply-load benchmark scenarios, writes per-scenario logs, and emits a CSV table with median, p95, and p99 close times.
+- Usage - Ex. `cd scripts && ./run_apply_load_matrix.py` to run the predefined scenario matrix against `../src/stellar-core` using `../docs/apply-load-benchmark-sac.cfg`, writing outputs under `~/apply-load/<run-id>/`. Scenario labels in the CSV and log names are generated from parameters such as `sac,TX=3000,T=4,B=100`. Use `--build-tag <tag>` to override the auto-generated version hash, `--stellar-core-bin <path>` to point at a different binary, `--template-config <path>` to use a different config template, or `--output-root <path>` to change the destination directory.
 
 ### Overlay survey 
 - Name - `OverlaySurvey.py`
