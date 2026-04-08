@@ -1905,6 +1905,11 @@ TransactionFrame::checkValidWithOptionallyChargedFee(
         ls.getLedgerHeader().current().ledgerVersion, getContentsHash(),
         getSignatures(mEnvelope)};
 
+    if (app.getConfig().DISABLE_SOROBAN_METRICS_FOR_TESTING)
+    {
+        signatureChecker.disableCacheMetricsTracking();
+    }
+
     std::optional<FeePair> sorobanResourceFee;
     SorobanNetworkConfig const* sorobanConfig = nullptr;
     auto ledgerVersion = ls.getLedgerHeader().current().ledgerVersion;
@@ -2068,6 +2073,11 @@ TransactionFrame::commonPreApply(bool chargeFee, AppConnector& app,
 #ifdef BUILD_TESTS
     }
 #endif // BUILD_TESTS
+
+    if (app.getConfig().DISABLE_SOROBAN_METRICS_FOR_TESTING)
+    {
+        signatureChecker->disableCacheMetricsTracking();
+    }
 
     //  when applying, a failure during tx validation means that
     //  we'll skip trying to apply operations but we'll still

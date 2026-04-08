@@ -31,7 +31,10 @@ subSha256(ByteSlice const& seed, uint64_t counter)
 {
     SHA256 sha;
     sha.add(seed);
-    sha.add(xdr::xdr_to_opaque(counter));
+    // Encode counter as big-endian (XDR wire format) directly on the stack,
+    // avoiding the heap allocation that xdr::xdr_to_opaque would perform.
+    auto be = xdr::swap64le(counter);
+    sha.add(ByteSlice(&be, sizeof(be)));
     return sha.finish();
 }
 
