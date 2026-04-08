@@ -65,9 +65,9 @@ Some frequently used key variants hash only `uint256` fields and do not touch `s
 
 **The inefficiency is real.** Every `computeHash` call serializes the entire hash computation (including SipHash-2,4) under `gKeyMutex`. Every `XDRShortHasher` construction serializes only the 16-byte key copy under the mutex — the actual XDR traversal and SipHash update/digest run lock-free.
 
-**The mutex is unnecessary in production.** `gKey` is written once at startup (single-threaded) via `initialize()` and never modified again. `gHaveHashed` is a dead write in production builds (only read by `#ifdef BUILD_TESTS` code). The mutex exists solely for the test-only `seed()` re-initialization guard.
+**The mutex is unnecessary in production.** `gKey` is written once at startup (single-threaded) via `initialize()` and never modified in production. `gHaveHashed` is a dead write in production builds (only read by `#ifdef BUILD_TESTS` code). The mutex exists solely for the test-only `seed()` re-initialization guard.
 
-**Impact on Soroban workloads is real but bounded.** For `CONTRACT_DATA` keys (the dominant key type in Soroban benchmarks), the lock is only held during `XDRShortHasher` construction (~10-20ns). The heavier XDR serialization of the `SCVal` key happens lock-free. For classic key types (`DATA`, `OFFER`, `Asset`), `computeHash` holds the lock for the full SipHash computation (~50-100ns), which is more significant under contention but less relevant to Soroban-dominated workloads.
+**Impact on Soroban workloads is real but bounded.** For `CONTRACT_DATA` keys (the dominant key type in Soroban benchmarks), the lock is only held during `XDRShortHasher` construction (~10-20ns). The heavier XDR serialization of the `SCVal` key happens lock-free. For classic key types (`DATA`, `OFFER`), `computeHash` holds the lock for the full SipHash computation (~50-100ns), which is more significant under contention but less relevant to Soroban-dominated workloads.
 
 **Quantitative estimate:** With 8 threads, each performing ~50-100 map operations per transaction across multiple maps (thread entry map, tx entry map, global entry map), and ~10-50 transactions per thread per ledger close, the mutex sees 4,000-40,000 lock/unlock operations per ledger close. At ~10-20ns per critical section (XDRShortHasher path), the theoretical serialization overhead is 40-800μs. Against a ledger close time of tens of milliseconds, this is a few percent — consistent with Low severity.
 
@@ -106,3 +106,32 @@ In production builds, `computeHash()` and `XDRShortHasher()` no longer acquire `
 - All 7 `[ledger]` tests passed (4,682 assertions)
 - All 124 `[tx]` tests passed (572,146 assertions)
 - Full test suite: 1 pre-existing flaky failure in "ledger state update flow with parallel apply" (HerderTests.cpp:5188, passes on re-run; unrelated to this change since `BUILD_TESTS` paths are identical to original code)
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-08
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Exercises claimed inefficiency**: PASS — the production change removes `gKeyMutex` from both `shortHash::computeHash` and `XDRShortHasher`, which is exactly the hypothesized bottleneck.
+2. **Realistic preconditions**: PASS — the apply-load matrix exercises parallel Soroban workloads that hash `LedgerKey`/`SCVal` structures on the apply path, including the `custom_token` and `soroswap` scenarios called out in the hypothesis.
+3. **Inefficiency vs by-design**: PASS — the production lock is not required after one-time startup initialization; `BUILD_TESTS` retains the reseed guard.
+4. **Benchmark impact / severity**: FAIL — the independent apply-load run showed no >=5% win on any metric and significant regressions in the most relevant workload. Against `ai-summary/baseline.csv`, `custom_token,TX=3000,T=8` regressed by **12.54% median**, **9.54% p95**, and **7.34% p99**. `custom_token,TX=3000,T=1` also regressed by **2.68% median**, **11.02% p95**, and **11.53% p99**. The small wins that did appear were inconsistent and minor (`soroswap,TX=1600,T=1` p95 +5.51%, median +2.30%; `sac,TX=6400,T=8` p99 +2.71%).
+5. **In scope**: PASS — this is a C++ crypto hot-path change in the apply-load path.
+6. **Benchmark methodology**: PASS — stellar-core was rebuilt, the full existing test suite passed, and the project benchmark tool was run via `python3 scripts/run_apply_load_matrix.py --stellar-core-bin ./src/stellar-core --build-tag optimized`, producing `/home/devbox/apply-load/optimized-20260408-215209/results.csv` for comparison against `ai-summary/baseline.csv`.
+7. **Alternative explanations / attribution**: FAIL — the observed positive deltas are within noise-level territory and are outweighed by regressions in the very contract-data-heavy workload this optimization was supposed to improve. The benchmark data does not support attributing a real performance win to removing this mutex.
+8. **Novelty**: PASS — no evidence this exact optimization has already been captured elsewhere in the current findings set.
+
+### Rejection Reason
+
+The mutex contention hypothesis is plausible and the code change does remove the claimed bottleneck, but the project's authoritative apply-load benchmark does not show a net improvement. The most relevant parallel contract-heavy scenario (`custom_token,TX=3000,T=8`) regressed materially, so the performance claim is not supported.
+
+### Failed Checks
+
+- 4
+- 7

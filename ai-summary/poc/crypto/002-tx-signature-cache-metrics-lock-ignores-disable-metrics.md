@@ -83,3 +83,25 @@ Downgraded from Medium to **Informational**: the inconsistency is real and the f
 - **Change description**: When `DISABLE_SOROBAN_METRICS_FOR_TESTING` is set, disable tx signature cache metrics tracking to be consistent with other metrics-off behavior.
 - **Correctness check**: Existing tests for `SignatureChecker`, `TransactionFrame::checkValid`, and `TransactionFrame::apply` cover these paths. The change only affects metrics counters, not signature validation logic.
 - **Benchmark focus**: Compare apply-load T=8 scenarios with and without the fix. The expected improvement is < 0.1% — likely within measurement noise. The value is consistency, not performance.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-08
+**PoC by**: claude-opus-4.6, high
+
+### Changes Made
+
+- `src/transactions/TransactionFrame.cpp` lines 1908–1911 (checkValid path): After constructing the `SignatureChecker` on the stack, added a check for `app.getConfig().DISABLE_SOROBAN_METRICS_FOR_TESTING` that calls `signatureChecker.disableCacheMetricsTracking()` when the flag is set.
+
+- `src/transactions/TransactionFrame.cpp` lines 2077–2080 (apply/commonPreApply path): After constructing the `SignatureChecker` via `std::make_unique`, added the same check calling `signatureChecker->disableCacheMetricsTracking()` when `DISABLE_SOROBAN_METRICS_FOR_TESTING` is set.
+
+### Demonstration
+
+When `DISABLE_SOROBAN_METRICS_FOR_TESTING` is enabled, the tx signature cache metrics mutex (`gCheckValidOrApplyTxSigCacheMetricsMutex`) is no longer acquired on every signature verification in checkValid and apply paths. This makes the metrics-off behavior consistent: both Soroban metrics and tx signature cache metrics are now skipped together, eliminating unnecessary per-signature synchronization in benchmark configurations.
+
+### Test Results
+
+All 124 tests in the `[tx]` tag passed (572,146 assertions). All 16 tests in the `[crypto]` tag passed (15,262 assertions). No regressions detected.
