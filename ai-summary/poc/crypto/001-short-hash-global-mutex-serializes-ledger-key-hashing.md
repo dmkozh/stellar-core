@@ -82,3 +82,27 @@ Some frequently used key variants hash only `uint256` fields and do not touch `s
   3. **(Minimal)** Simply remove the lock from hash paths in production builds (keep it for `BUILD_TESTS`), relying on the startup-ordering guarantee that `initialize()` completes before any threads run.
 - **Correctness check**: Existing tests for `ShortHash` (search for `"ShortHash"` or `"shortHash"` in test files). Also run `[ledger]` and `[tx]` tagged tests to verify hash-map behavior is unchanged. The key concern is that the thread-local or lock-free approach must produce identical hash values (same `gKey` bytes).
 - **Benchmark focus**: Run `scripts/run_apply_load_matrix.py` with `T=8` `custom_token` and `soroswap` scenarios. Compare wall-clock ledger close time (median and p99). Expected improvement: 2-8% on CONTRACT_DATA-heavy workloads, potentially more on classic workloads with many OFFER/DATA keys.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-08
+**PoC by**: claude-opus-4.6, high
+
+### Changes Made
+
+- **`src/crypto/ShortHash.cpp` (lines 14-83)**: Moved `gHaveHashed` and `gExplicitSeed` declarations under `#ifdef BUILD_TESTS` since they are only used by the test-only `seed()` function. Wrapped the `std::lock_guard` and `gHaveHashed = true` in both `computeHash()` and `XDRShortHasher::XDRShortHasher()` with `#ifdef BUILD_TESTS`, so in production builds the mutex is never acquired on the hash hot path. In `XDRShortHasher`, the production path relies solely on the initializer list `state(gKey)` (which was already reading `gKey` without the lock), and skips the redundant reassignment. The `initialize()` and `getShortHashInitKey()` functions retain their mutex usage unchanged.
+
+### Demonstration
+
+In production builds, `computeHash()` and `XDRShortHasher()` no longer acquire `gKeyMutex`, eliminating all synchronization from the SipHash hot path used by `LedgerKey`, `Asset`, and `SCAddress` hash functions. This allows 8+ parallel apply threads to compute hash-map keys concurrently without contention on the global mutex that previously serialized every hash operation. The optimization is safe because `gKey` is written once during single-threaded startup and never modified in production.
+
+### Test Results
+
+- All 16 `[crypto]` tests passed (15,262 assertions)
+- All 1 `[shorthash]` test passed (1,000 assertions confirming XDR hash == byte hash)
+- All 7 `[ledger]` tests passed (4,682 assertions)
+- All 124 `[tx]` tests passed (572,146 assertions)
+- Full test suite: 1 pre-existing flaky failure in "ledger state update flow with parallel apply" (HerderTests.cpp:5188, passes on re-run; unrelated to this change since `BUILD_TESTS` paths are identical to original code)
