@@ -105,3 +105,32 @@ When `DISABLE_SOROBAN_METRICS_FOR_TESTING` is enabled, the tx signature cache me
 ### Test Results
 
 All 124 tests in the `[tx]` tag passed (572,146 assertions). All 16 tests in the `[crypto]` tag passed (15,262 assertions). No regressions detected.
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-08
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Exercises claimed inefficiency**: PASS — the code change disables `SignatureChecker::updateTxSigCacheMetrics()` in both the `checkValid` and apply flows exactly where the hypothesis identified the extra mutex acquisition.
+2. **Realistic preconditions**: PASS — `scripts/run_apply_load_matrix.py` sets `DISABLE_SOROBAN_METRICS_FOR_TESTING=true`, so the reviewed benchmark path does exercise the new branch.
+3. **Inefficiency vs by-design**: PASS — these counters are only flushed later into metrics, so skipping them under an explicit metrics-off config does not change signature-validation semantics.
+4. **Benchmark impact / severity**: FAIL — the independent benchmark run is mixed and net-unconvincing. Against `ai-summary/baseline.csv`, the highest-signature SAC scenarios regressed materially (`sac,TX=6400,T=1`: median **-8.23%**, p95 **-9.00%**, p99 **-7.96%**; `sac,TX=6400,T=8`: median **-7.40%**). The relevant parallel `custom_token,TX=3000,T=8` scenario also regressed across all metrics (median **-7.09%**, p95 **-8.52%**, p99 **-8.98%**). Some `soroswap` numbers improved (`T=8`: median **+9.03%**, p95 **+8.82%**, p99 **+5.50%**), but not in a pattern consistent with a fixed per-signature lock cost.
+5. **In scope**: PASS — this is a C++ apply-path change in the benchmarked codebase and does not require soroban-env-host internal changes.
+6. **Benchmark methodology**: PASS — stellar-core was rebuilt, the full existing test suite completed successfully, and the project benchmark tool was run exactly as required: `python3 scripts/run_apply_load_matrix.py --stellar-core-bin ./src/stellar-core --build-tag finalreview-txsig-metrics`, producing `/home/devbox/apply-load/finalreview-txsig-metrics-20260408-223713/results.csv`.
+7. **Alternative explanations / attribution**: FAIL — this optimization removes a tiny per-signature cost, so any real win should correlate with signature volume. The data shows the opposite pattern: the most signature-dense SAC scenarios regress, while the largest gains appear in `soroswap`, the heaviest and lowest-transaction-count workload where signature bookkeeping should be least important. That mismatch strongly suggests normal benchmark variance or unrelated effects, not causal improvement from the change.
+8. **Novelty**: PASS — no duplicate of this exact finding was identified in the existing crypto success/fail set.
+
+### Rejection Reason
+
+The code change is behavior-safe and does remove the claimed metrics mutex from the benchmark path, but the authoritative apply-load benchmark does not support it as a performance optimization. The observed wins are inconsistent with the mechanism and are outweighed by regressions in the scenarios that should benefit most from reduced per-signature overhead.
+
+### Failed Checks
+
+- 4
+- 7
