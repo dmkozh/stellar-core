@@ -1,5 +1,5 @@
 {
-  "hypothesis_viable": 0,
+  "hypothesis_viable": 5,
   "hypothesis_not_viable": 0,
   "review_viable": 0,
   "review_not_viable": 0,
@@ -12,17 +12,66 @@
   "publishes": 0,
   "agent_errors": 0,
   "agent_timeouts": 0,
-  "total_spawned": 2,
+  "total_spawned": 3,
   "input_tokens": 0,
-  "output_tokens": 0,
+  "output_tokens": 15755,
   "cache_read_tokens": 0,
-  "per_subsystem": {},
-  "per_model": {},
-  "tokens_by_stage": {},
-  "tokens_by_model": {},
-  "agent_durations": [],
+  "per_subsystem": {
+    "crypto": {
+      "hypothesis_viable": 5,
+      "hypothesis_not_viable": 0
+    }
+  },
+  "per_model": {
+    "gpt-5.4": {
+      "hypothesis_viable": 5
+    }
+  },
+  "tokens_by_stage": {
+    "hypothesis": {
+      "input": 0,
+      "output": 15755,
+      "cache_read": 0
+    }
+  },
+  "tokens_by_model": {
+    "gpt-5.4": {
+      "input": 0,
+      "output": 15755,
+      "cache_read": 0
+    }
+  },
+  "agent_durations": [
+    [
+      "hypothesis",
+      "gpt-5.4",
+      279.8
+    ]
+  ],
   "costs": {
-    "providers": {},
-    "total_cost": 0.0
+    "providers": {
+      "copilot": {
+        "models": {
+          "gpt-5.4": {
+            "input_tokens": 0,
+            "output_tokens": 15755,
+            "cache_read_tokens": 0,
+            "total_cost": 0.03,
+            "premium_requests": 1
+          }
+        },
+        "provider_cost": 0.03
+      }
+    },
+    "total_cost": 0.03,
+    "stages": {
+      "hypothesis": {
+        "copilot": {
+          "input_tokens": 0,
+          "output_tokens": 15755,
+          "premium_requests": 1
+        }
+      }
+    }
   }
 }
