@@ -85,3 +85,34 @@ especially visible in traces showing idle parallel threads.
 4. The dominant cost is likely the per-tx `setEffectsDeltaFromSuccessfulTx`
    which creates `shared_ptr<InternalLedgerEntry>` copies. Optimizing this
    requires changing how deltas are represented.
+
+---
+
+## Review
+
+**Verdict**: NOT_VIABLE
+**Date**: 2026-04-09
+**Reviewed by**: claude-opus-4-6, high
+**Novelty**: PASS — not previously investigated
+**Failed At**: reviewer
+
+### Trace Summary
+
+The hypothesis claims that `setEffectsDeltaFromSuccessfulTx` runs serially inside `checkAllTxBundleInvariants` between stages, constituting the dominant serial bottleneck. This is factually incorrect. Tracing the actual call sites shows that `setEffectsDeltaFromSuccessfulTx` is called from `TransactionFrame::parallelApply` (TransactionFrame.cpp:2243) on **worker threads** inside `applySorobanStageClustersInParallel`, not in any serial section. The hypothesis misattributes the largest cost component to the serial path, inflating the estimated overhead by 5-10×.
+
+### Code Paths Examined
+
+- `LedgerManagerImpl::applySorobanStage:2517-2532` — confirmed serial sequence is: `applySorobanStageClustersInParallel` (parallel) → `checkAllTxBundleInvariants` (serial) → `commitChangesFromThreads` (serial)
+- `TransactionFrame::parallelApply:2241-2246` — `setEffectsDeltaFromSuccessfulTx` and `setLedgerChangesFromSuccessfulOp` are called HERE, on worker threads, not in the serial section
+- `LedgerManagerImpl::checkAllTxBundleInvariants:2474-2513` — does NOT call `setEffectsDeltaFromSuccessfulTx`; only calls `setDeltaHeader`, `checkOnOperationApply`, and `maybeSetRefundableFeeMeta`
+- `GlobalParallelApplyLedgerState::commitChangesFromThreads:546-559` — calls `getReadWriteKeysForStage` then iterates thread entry maps, committing dirty entries
+- `getReadWriteKeysForStage:99-118` — builds unordered_set of RW keys from tx footprints; O(total_RW_keys) ≈ ~576 keys → ~10-20µs
+- `commitChangeFromThread:510-529` — per-dirty-entry: rescope + emplace/merge into global map; lightweight operations
+
+### Why It Failed
+
+The hypothesis's core mechanism is wrong. It claims `setEffectsDeltaFromSuccessfulTx` (with its expensive `getLiveEntryOpt` lookups and `shared_ptr` copies for every modified key) runs serially in `checkAllTxBundleInvariants`. In reality, this function runs on **parallel worker threads** during `parallelApply` (TransactionFrame.cpp:2243), inside `applySorobanStageClustersInParallel`. The actual serial section (`checkAllTxBundleInvariants` + `commitChangesFromThreads`) performs only lightweight operations: invariant checks, fee meta setting, RW key set construction (~10-20µs), and dirty entry merges. The real serial overhead is estimated at ~50-200µs per stage (<0.5% of a 50-100ms ledger), far below any measurable optimization threshold.
+
+### Lesson Learned
+
+When analyzing serial vs. parallel sections in the parallel apply pipeline, always trace function call sites to determine which thread context they execute in. `setEffectsDeltaFromSuccessfulTx` is called from `TransactionFrame::parallelApply` on worker threads, not from any function in the serial post-stage section. The serial inter-stage section (`checkAllTxBundleInvariants` + `commitChangesFromThreads`) is already quite lean.
