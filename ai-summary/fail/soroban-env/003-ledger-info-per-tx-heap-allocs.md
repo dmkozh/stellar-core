@@ -160,3 +160,32 @@ The optimization eliminates one unnecessary 32-byte heap allocation per Soroban 
 ### Test Results
 
 All 109 test cases tagged `[soroban]` passed (3,478,645 assertions in 109 test cases). No regressions detected. The change is semantics-preserving — same bytes, same error handling for wrong-length network IDs.
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-09
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Exercises claimed inefficiency**: PASS — the edited line is on the hot `CxxLedgerInfo -> LedgerInfo` bridge path executed for every Soroban transaction.
+2. **Realistic preconditions**: PASS — `network_id` conversion happens on all workloads that invoke host functions, so the benchmark matrix is representative enough to detect any material end-to-end win.
+3. **Inefficiency vs by-design**: PASS — replacing `clone().try_into()` with `try_from(as_slice())` is semantics-preserving and does remove one redundant allocation.
+4. **Benchmark improvement vs severity**: FAIL — against the current `ai-summary/baseline.csv`, the optimized tree regressed in 5 of 6 scenarios. The bridge-heavy SAC cases got materially slower instead of faster: `sac,TX=6400,T=1` moved from `753.70 / 840.51 / 870.22ms` to `836.49 / 999.60 / 1062.13ms` (p50/p95/p99, `-10.98% / -18.93% / -22.05%`), and `sac,TX=6400,T=8` moved from `612.44 / 677.51 / 699.36ms` to `731.10 / 812.18 / 850.82ms` (`-19.38% / -19.88% / -21.66%`).
+5. **In scope**: PASS — the change stays inside the C++↔Rust bridge and does not touch soroban-env-host internals.
+6. **Benchmark methodology**: PASS — independently rebuilt, ran the full existing test suite, then benchmarked with `python3 scripts/run_apply_load_matrix.py --stellar-core-bin ./src/stellar-core --build-tag optimized-h003-finalreview` and compared the resulting `/home/devbox/apply-load/optimized-h003-finalreview-20260409-171721/results.csv` against `ai-summary/baseline.csv`.
+7. **Alternative explanations**: FAIL — the only improvement appeared in `soroswap,TX=1600,T=1` (`+4.77% / +9.50% / +14.17%`), which is the opposite of the expected signature for a tiny bridge-allocation optimization. That mixed pattern is better explained by benchmark variance / ambient load than by removing one 32-byte `Vec<u8>` clone.
+8. **Novelty**: PASS — this is distinct from the already-confirmed cost-params caching optimization.
+
+### Rejection Reason
+
+The code change is correct but the performance claim is not supported by independent benchmarking. Its effect is below the noise floor of the project benchmark, and the measured workload pattern does not match the proposed mechanism.
+
+### Failed Checks
+
+- 4
+- 7
