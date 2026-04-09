@@ -3,7 +3,7 @@
   "hypothesis_not_viable": 0,
   "review_viable": 2,
   "review_not_viable": 0,
-  "poc_viable": 0,
+  "poc_viable": 1,
   "poc_not_viable": 0,
   "final_review_viable": 0,
   "final_review_not_viable": 0,
@@ -12,18 +12,22 @@
   "publishes": 0,
   "agent_errors": 0,
   "agent_timeouts": 0,
-  "total_spawned": 4,
+  "total_spawned": 5,
   "input_tokens": 0,
-  "output_tokens": 35722,
+  "output_tokens": 44429,
   "cache_read_tokens": 0,
   "per_subsystem": {
     "transaction-ledger": {
       "review_viable": 2
+    },
+    "crypto": {
+      "poc_viable": 1
     }
   },
   "per_model": {
     "claude-opus-4-6": {
-      "review_viable": 2
+      "review_viable": 2,
+      "poc_viable": 1
     }
   },
   "tokens_by_stage": {
@@ -31,12 +35,17 @@
       "input": 0,
       "output": 35722,
       "cache_read": 0
+    },
+    "poc": {
+      "input": 0,
+      "output": 8707,
+      "cache_read": 0
     }
   },
   "tokens_by_model": {
     "claude-opus-4-6": {
       "input": 0,
-      "output": 35722,
+      "output": 44429,
       "cache_read": 0
     }
   },
@@ -50,6 +59,11 @@
       "reviewer",
       "claude-opus-4-6",
       353.5
+    ],
+    [
+      "poc",
+      "claude-opus-4-6",
+      885.2
     ]
   ],
   "costs": {
@@ -58,22 +72,29 @@
         "models": {
           "claude-opus-4-6": {
             "input_tokens": 0,
-            "output_tokens": 35722,
+            "output_tokens": 44429,
             "cache_read_tokens": 0,
-            "total_cost": 0.18,
-            "premium_requests": 6
+            "total_cost": 0.27,
+            "premium_requests": 9
           }
         },
-        "provider_cost": 0.18
+        "provider_cost": 0.27
       }
     },
-    "total_cost": 0.18,
+    "total_cost": 0.27,
     "stages": {
       "reviewer": {
         "copilot": {
           "input_tokens": 0,
           "output_tokens": 35722,
           "premium_requests": 6
+        }
+      },
+      "poc": {
+        "copilot": {
+          "input_tokens": 0,
+          "output_tokens": 8707,
+          "premium_requests": 3
         }
       }
     }
