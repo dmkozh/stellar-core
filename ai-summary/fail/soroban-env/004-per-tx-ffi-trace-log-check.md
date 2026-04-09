@@ -143,3 +143,39 @@ The optimization replaces a per-TX FFI round-trip (CXX string construction → e
 ### Test Results
 
 Full test suite passes: `make check` with NUM_PARTITIONS=$(nproc) completed with exit code 0. All C++ Catch2 tests (selftest-nopg), non-determinism checks (check-nondet), and all Rust soroban-env-host tests pass with no regressions.
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-09
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Exercises claimed inefficiency**: YES — `is_tx_tracing_enabled()` is on the direct Soroban invocation path and the patch removes the repeated Rust→C++ log-level probe after the first call.
+2. **Realistic preconditions**: NO — on the project apply-load workloads, this check is too small a fraction of end-to-end ledger close time to produce a stable improvement.
+3. **Inefficiency vs by-design**: INEFFICIENCY — the repeated FFI + mutex + map lookup is avoidable work, but eliminating it does not translate into a benchmark win here.
+4. **Final severity**: REJECTED — the independent benchmark against `ai-summary/baseline.csv` regressed 5 of 6 scenarios:
+   - `sac,TX=6400,T=1`: `-8.14% / -11.08% / -13.09%` (p50 / p95 / p99)
+   - `sac,TX=6400,T=8`: `-18.40% / -20.21% / -22.15%`
+   - `custom_token,TX=3000,T=1`: `-4.68% / -5.42% / -4.15%`
+   - `custom_token,TX=3000,T=8`: `-12.09% / -11.78% / -5.62%`
+   - `soroswap,TX=1600,T=8`: `-10.49% / -5.58% / -3.52%`
+   - only `soroswap,TX=1600,T=1` improved: `+3.33% / +9.38% / +13.33%`
+5. **In scope**: YES — the change stays in `src/rust/src/log.rs` on the bridge side and does not touch `soroban-env-host` internals.
+6. **Benchmark methodology**: CORRECT — built the repo, ran the full existing test suite, then ran `python3 scripts/run_apply_load_matrix.py --stellar-core-bin ./src/stellar-core --build-tag optimized` and compared `/home/devbox/apply-load/optimized-20260409-180610/results.csv` with `ai-summary/baseline.csv`.
+7. **Alternative explanations**: NO SUPPORTIVE ONE — the lone positive `soroswap,TX=1600,T=1` result is plausibly noise, while the scenarios where bridge overhead should matter most trend negative overall.
+8. **Novelty**: NOVEL
+
+### Rejection Reason
+
+Independent apply-load benchmarking does not reproduce the claimed optimization. The patch is in scope and appears logically safe, but it does not deliver a consistent end-to-end improvement and instead regresses the SAC and custom-token workloads that should have been the clearest beneficiaries.
+
+### Failed Checks
+
+- 2
+- 4
+- 7
