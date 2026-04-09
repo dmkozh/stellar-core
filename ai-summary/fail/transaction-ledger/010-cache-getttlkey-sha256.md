@@ -155,3 +155,38 @@ The optimization eliminates redundant XDR serialization + SHA256 hashing in `get
 - All 21 tests in `[parallelapply]` passed (2,627,573 assertions)
 - All 68 tests in `[tx][soroban]` passed (49,311 assertions)
 - Full test suite (`make check`) passed: all partitioned tests + selftest-nopg + check-nondet
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-09
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Exercises claimed inefficiency**: YES — the changed call sites are exactly the parallel-apply setup / teardown paths identified in the hypothesis, so the benchmark does measure the intended optimization target.
+2. **Realistic preconditions**: YES — the fixed apply-load matrix repeatedly executes these paths under normal Soroban benchmark workloads.
+3. **Inefficiency vs by-design**: NOT DEMONSTRATED AS A NET INEFFICIENCY — although `getTTLKey` does repeated SHA256 work, the replacement adds `unordered_map<LedgerKey, LedgerKey>` lookups, allocations, and equality checks keyed by full `LedgerKey` objects. `std::hash<LedgerKey>` already hashes contract fields and SCVal content (`src/ledger/LedgerHashUtils.h`), so the cache is not a near-free memo table.
+4. **Benchmark impact**: FAIL — independent results against `ai-summary/baseline.csv` regress four of six scenarios materially:
+   - `sac,TX=6400,T=1`: p50 **-14.96%**, p95 **-12.92%**, p99 **-19.51%**
+   - `sac,TX=6400,T=8`: p50 **-21.54%**, p95 **-20.63%**, p99 **-20.16%**
+   - `custom_token,TX=3000,T=1`: p50 **-9.58%**, p95 **-10.17%**, p99 **-9.30%**
+   - `custom_token,TX=3000,T=8`: p50 **-14.81%**, p95 **-10.60%**, p99 **-3.04%**
+   Only `soroswap,TX=1600,T=1` improved materially, and `soroswap,TX=1600,T=8` was effectively flat / slightly worse.
+5. **In scope**: YES — the PoC stays within the C++ transaction-ledger parallel-apply code.
+6. **Benchmark methodology**: CORRECT — independent rebuild, full `make check`, then the project-provided `scripts/run_apply_load_matrix.py` against the provided baseline CSV.
+7. **Alternative explanations**: THE REGRESSION MATCHES THE MECHANISM — the saved SHA256 work is outweighed by hash-table churn on complex `LedgerKey` keys. The data is consistent with cache overhead dominating any reuse benefit on these workloads.
+8. **Novelty**: IRRELEVANT — the measured performance claim does not hold.
+
+### Rejection Reason
+
+Independent benchmarking shows this optimization is a net slowdown, not an improvement. The PoC removes some redundant `getTTLKey` recomputation, but replacing it with `unordered_map<LedgerKey, LedgerKey>` memoization adds enough key-hashing, equality, allocation, and cache-management overhead to make the real apply-load workloads slower overall.
+
+### Failed Checks
+
+- 3
+- 4
+- 7
