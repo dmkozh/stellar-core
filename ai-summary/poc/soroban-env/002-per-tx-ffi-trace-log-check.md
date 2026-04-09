@@ -121,3 +121,25 @@ Under parallel apply with T=8, all 8 threads contend on `mLogMutex` for every si
 - **Change description**: Replace per-TX FFI call with a Rust-side `AtomicBool` read. The cache can be refreshed (a) once per ledger close batch, (b) via a new bridge function called from `Logging::setLogLevel`, or (c) on a timer. Option (a) is simplest and sufficient since log levels don't change mid-ledger-close.
 - **Correctness check**: Existing Soroban invocation tests (e.g., `[soroban]` tagged tests) should continue to pass since trace hooks are disabled in tests anyway. The `StellarLogger::enabled()` method (log.rs:114) should NOT be changed — it needs the per-call FFI check since it handles arbitrary partitions.
 - **Benchmark focus**: Per-TX bridge overhead in apply-load benchmark. The improvement will be in the sub-microsecond range per TX (eliminating ~2-10μs of mutex+FFI overhead). Look for reduced lock contention in perf profiles under parallel apply. Total benchmark improvement is expected to be <1% — this is an Informational finding, not a benchmark-moving optimization.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-09
+**PoC by**: claude-opus-4-6, high
+
+### Changes Made
+
+- `src/rust/src/log.rs:48-49` — Added two static `AtomicBool` variables: `TX_TRACE_ENABLED` (caches the result) and `TX_TRACE_CACHE_VALID` (tracks cache validity). Both initialized to `false`.
+- `src/rust/src/log.rs:88-90` — In `init_logging()`, added cache invalidation (`TX_TRACE_CACHE_VALID.store(false, Release)`) after `set_max_level`. This is called from C++ `Logging::setLogLevel()` → `deinit()` → `init()` → `rust_bridge::init_logging()`, so the cache is automatically invalidated whenever log levels change.
+- `src/rust/src/log.rs:94-107` — Rewrote `is_tx_tracing_enabled()` with a fast path that reads the cached `AtomicBool` (single `Acquire` load + `Relaxed` load), and a slow path that falls through to the original FFI call, caches the result, and marks the cache valid. Uses standard flag-guarded publication pattern with `Acquire`/`Release` ordering.
+
+### Demonstration
+
+The optimization replaces a per-TX FFI round-trip (CXX string construction → extern "C++" call → recursive mutex acquisition → std::map lookup → return) with a single `AtomicBool::load(Acquire)` on the fast path. Under parallel apply with T=8, this eliminates mutex contention on `Logging::mLogMutex` across all 8 threads for every transaction. The cache is invalidated whenever `Logging::setLogLevel` is called (via the existing `init_logging` bridge callback), ensuring correctness when log levels change.
+
+### Test Results
+
+Full test suite passes: `make check` with NUM_PARTITIONS=$(nproc) completed with exit code 0. All C++ Catch2 tests (selftest-nopg), non-determinism checks (check-nondet), and all Rust soroban-env-host tests pass with no regressions.
