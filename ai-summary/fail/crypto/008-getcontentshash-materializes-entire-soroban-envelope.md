@@ -112,3 +112,32 @@ The optimization eliminates per-transaction heap allocation and an extra XDR tre
 - All 124 transaction tests passed (558,956 assertions)
 - All 7 fee bump tests passed (1,402 assertions)
 - Full test suite (`make check`) passed — all tests passed with no regressions
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-09
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Exercises claimed inefficiency**: PASS — `TransactionFrame::getContentsHash()` and `FeeBumpTransactionFrame::getContentsHash()` were switched from `sha256(xdr::xdr_to_opaque(...))` to streaming `xdrSha256(...)`, which removes the temporary `opaque_vec` allocation and the extra `xdr_argpack_size` traversal the hypothesis identified.
+2. **Realistic preconditions**: PASS — apply-load signs and validates distinct Soroban envelopes on every transaction, so these code paths are exercised under the `custom_token` and `soroswap` scenarios the hypothesis targeted.
+3. **Inefficiency vs by-design**: PASS — the removed materialization is not required for correctness; the streaming form is semantically equivalent and already used elsewhere, including `TransactionFrame::getFullHash()`.
+4. **Benchmark impact / severity**: FAIL — the benchmark signal is not stable enough to support a finding. Against `ai-summary/baseline.csv`, the first optimized run (`/home/devbox/apply-load/finalreview-getcontentshash-20260409-001853/results.csv`) showed wins in `soroswap` and mixed `custom_token`, but the rerun (`/home/devbox/apply-load/finalreview-getcontentshash-rerun-20260409-004538/results.csv`) flipped several key rows: `custom_token,TX=3000,T=1` moved from **-8.32% / -14.29% / -19.84%** (median/p95/p99) to **+5.27% / +4.27% / +4.83%**; `custom_token,TX=3000,T=8` moved from **+4.32% / +5.76% / +4.14%** to **-1.15% / +0.96% / -1.86%**; and `soroswap,TX=1600,T=8` moved from **+5.32% / +5.56% / +5.44%** to **+0.75% / +0.49% / -1.23%**.
+5. **In scope**: PASS — this is a C++ apply-path optimization in the crypto/transaction hashing boundary and does not touch soroban-env-host internals.
+6. **Benchmark methodology**: PASS — stellar-core was rebuilt, the full existing test suite completed successfully, and the project benchmark tool was run twice exactly as required: `python3 scripts/run_apply_load_matrix.py --stellar-core-bin ./src/stellar-core --build-tag finalreview-getcontentshash` and `python3 scripts/run_apply_load_matrix.py --stellar-core-bin ./src/stellar-core --build-tag finalreview-getcontentshash-rerun`.
+7. **Alternative explanations / attribution**: FAIL — the same binary produced materially different outcomes for the same scenarios across two back-to-back runs, including sign flips between regression and improvement. That level of instability means the apparent wins can be explained by ordinary benchmark variance or environment noise rather than the hashing change itself.
+8. **Novelty**: PASS — no duplicate of this exact finding was identified in the existing crypto fail set.
+
+### Rejection Reason
+
+The code change is semantically safe and does remove the temporary-buffer work the hypothesis described, but the authoritative apply-load benchmark does not produce a reproducible improvement. Because the same scenarios swing between regressions and gains across two independent runs, the performance claim is not attributable enough to confirm.
+
+### Failed Checks
+
+- 4
+- 7
