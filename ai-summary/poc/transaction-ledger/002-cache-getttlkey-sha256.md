@@ -121,3 +121,37 @@ Traced `getTTLKey` (LedgerTypeUtils.cpp:31-38) through all call sites in the par
 - **Change description**: Create a `getTTLKeyCached(LedgerKey const&, UnorderedMap<LedgerKey, LedgerKey>&)` helper that checks the cache before computing. Use it at all hot call sites. Alternatively, store computed TTL keys in `ThreadParallelApplyLedgerState` so they survive across function calls within the same cluster.
 - **Correctness check**: Existing tests for parallel apply should all pass unmodified — `[tx][soroban][parallelapply]` tag covers the parallel path. Also run `[tx][soroban]` tests for the sequential Soroban path.
 - **Benchmark focus**: Run apply-load benchmark with T=8 and soroswap or custom_token workloads. Measure median and p99 ledger apply time. Expected improvement: ~5-8% reduction in sequential overhead, translating to ~3-6% total wall time improvement at T=8.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-09
+**PoC by**: claude-opus-4-6, high
+
+### Changes Made
+
+- **`src/transactions/ParallelApplyUtils.cpp`** (anonymous namespace, ~line 99): Added `getTTLKeyCached(LedgerKey const&, UnorderedMap<LedgerKey, LedgerKey>&)` helper that performs cache lookup via `try_emplace` before falling through to `getTTLKey`. Returns a `const&` to the cached result to avoid copies.
+
+- **`src/transactions/ParallelApplyUtils.cpp:getReadWriteKeysForStage`** (~line 112): Added a local `UnorderedMap<LedgerKey, LedgerKey> ttlKeyCache` and replaced `getTTLKey(lk)` with `getTTLKeyCached(lk, ttlKeyCache)`. This eliminates redundant hashing across transactions sharing RW keys within a stage.
+
+- **`src/transactions/ParallelApplyUtils.h:ThreadParallelApplyLedgerState`** (~line 115): Added `mutable UnorderedMap<LedgerKey, LedgerKey> mTTLKeyCache` member. This cache persists across all function calls within a cluster's lifetime, covering `collectClusterFootprintEntriesFromGlobal`, `flushRoTTLBumpsInTxWriteFootprint`, `buildRoTTLSet`, and `commitChangesFromSuccessfulTx`.
+
+- **`src/transactions/ParallelApplyUtils.cpp:collectClusterFootprintEntriesFromGlobal`** (~line 602): Replaced `getTTLKey(key)` with `getTTLKeyCached(key, mTTLKeyCache)`.
+
+- **`src/transactions/ParallelApplyUtils.cpp:flushRoTTLBumpsInTxWriteFootprint`** (~line 639): Replaced `getTTLKey(lk)` with `getTTLKeyCached(lk, mTTLKeyCache)`.
+
+- **`src/transactions/ParallelApplyUtils.cpp:buildRoTTLSet`** (~line 149): Changed signature to accept `UnorderedMap<LedgerKey, LedgerKey>& ttlKeyCache` parameter, replaced `getTTLKey(ro)` with `getTTLKeyCached(ro, ttlKeyCache)`.
+
+- **`src/transactions/ParallelApplyUtils.cpp:commitChangesFromSuccessfulTx`** (~line 835): Updated `buildRoTTLSet` call to pass `mTTLKeyCache`.
+
+### Demonstration
+
+The optimization eliminates redundant XDR serialization + SHA256 hashing in `getTTLKey` by introducing a per-scope cache (`UnorderedMap<LedgerKey, LedgerKey>`) at two levels: a local cache in the sequential `getReadWriteKeysForStage` function, and a per-cluster member cache in `ThreadParallelApplyLedgerState` that persists across `collectClusterFootprintEntriesFromGlobal`, `buildRoTTLSet`, `flushRoTTLBumpsInTxWriteFootprint`, and `commitChangesFromSuccessfulTx`. For workloads with shared contract keys across transactions, this should reduce redundant `getTTLKey` calls by ~3-5x, removing ~7ms of serial overhead per ledger in T=8 scenarios.
+
+### Test Results
+
+- All 21 tests in `[parallelapply]` passed (2,627,573 assertions)
+- All 68 tests in `[tx][soroban]` passed (49,311 assertions)
+- Full test suite (`make check`) passed: all partitioned tests + selftest-nopg + check-nondet
