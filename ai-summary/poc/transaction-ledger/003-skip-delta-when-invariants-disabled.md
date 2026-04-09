@@ -126,3 +126,28 @@ However, **the severity is downgraded to Informational** because:
 - **Change description**: Thread a `bool enableInvariantChecks` (derived from `!config.INVARIANT_CHECKS.empty()`) through the parallel apply call chain. When false, skip delta construction on worker threads and skip the invariant check loop on the main thread.
 - **Correctness check**: All existing invariant tests explicitly enable invariants via `INVARIANT_CHECKS` config, so they will continue to construct deltas. Run `[invariant]` tagged tests plus the Soroban parallel apply tests (`[soroban]`, `[tx]`).
 - **Benchmark focus**: Measure `applySorobanStageClustersInParallel` wall time with and without the guard. Expected improvement: <5% (Informational). Focus on scenarios with high entry-count txs (20+ modified entries) for maximum signal.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-09
+**PoC by**: claude-opus-4-6, high
+
+### Changes Made
+
+- **`src/transactions/TransactionFrame.cpp:2243-2250`** — Wrapped the `threadState.setEffectsDeltaFromSuccessfulTx()` call in `parallelApply()` with a guard checking `!config.INVARIANT_CHECKS.empty()`. When invariants are disabled (default), the expensive `LedgerTxnDelta` construction with `make_shared<InternalLedgerEntry>` heap allocations is skipped entirely on worker threads. The subsequent `setLedgerChangesFromSuccessfulOp` call (which builds tx meta independently) remains unconditional.
+
+- **`src/ledger/LedgerManagerImpl.cpp:2478-2516`** — Added a `bool const checkInvariants = !config.INVARIANT_CHECKS.empty()` guard at the top of `checkAllTxBundleInvariants()`. The invariant check block (`setDeltaHeader` + `checkOnOperationApply`) is now conditional on this flag. The `maybeSetRefundableFeeMeta` call remains unconditional as it is meta-related, not invariant-related.
+
+### Demonstration
+
+When `INVARIANT_CHECKS` is empty (the default for validators and benchmarks), the optimization eliminates all `make_shared<InternalLedgerEntry>` heap allocations and `getLiveEntryOpt` lookups performed by `setEffectsDeltaFromSuccessfulTx` on worker threads. For a ledger with 200 Soroban txs each modifying 20 entries, this saves ~8000 heap allocations and ~8000 entry copies across all worker threads, reducing allocator contention under T=8 parallel execution. When invariants ARE enabled (test configs), the code path is unchanged — delta construction and invariant checking proceed as before.
+
+### Test Results
+
+- All 40 `[invariant]` tests pass (40,677 assertions) — confirms invariant checking still works when enabled via config
+- All 109 `[soroban]` tests pass (3,478,645 assertions) — confirms parallel Soroban apply is unbroken
+- All 124 `[tx]` tests pass (558,956 assertions) — confirms transaction processing is correct
+- Full `make check` suite passes (all partitions)
