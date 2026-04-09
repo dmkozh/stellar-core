@@ -140,3 +140,23 @@ At ~100-200μs per SAC transfer TX, this represents ~0.02-0.05% improvement — 
 - **Change description**: Eliminate one redundant 32-byte heap allocation per Soroban TX by converting the network_id `Vec<u8>` slice directly to `[u8; 32]` instead of cloning the Vec first. The `.as_slice()` returns `&[u8]` (no allocation), and `<[u8; 32]>::try_from(&[u8])` copies 32 bytes directly to the stack.
 - **Correctness check**: Run `[soroban]` tag tests — the `LedgerInfo` struct must contain the same network_id bytes. This is a semantics-preserving change (same bytes, same error case).
 - **Benchmark focus**: This change alone will not produce measurable benchmark improvement. It is a micro-optimization that eliminates unnecessary work. If combined with H001's cost params caching, the cumulative effect on bridge overhead would be more significant.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-09
+**PoC by**: claude-opus-4-6, high
+
+### Changes Made
+
+- `src/rust/src/soroban_proto_any.rs:70` — Changed `c.network_id.clone().try_into()` to `<[u8; 32]>::try_from(c.network_id.as_slice())`. This eliminates the redundant `Vec<u8>` clone (heap alloc + 32-byte memcpy + dealloc) by converting directly from the slice reference to `[u8; 32]` via a single 32-byte stack copy.
+
+### Demonstration
+
+The optimization eliminates one unnecessary 32-byte heap allocation per Soroban transaction by converting the `network_id` field from a borrowed slice rather than cloning the entire `Vec<u8>`. The `.as_slice()` method returns `&[u8]` without allocation, and `<[u8; 32]>::try_from(&[u8])` copies 32 bytes directly to the stack. While the per-TX saving (~30-50ns) is small in isolation, it removes pure waste from a hot path executed for every Soroban transaction.
+
+### Test Results
+
+All 109 test cases tagged `[soroban]` passed (3,478,645 assertions in 109 test cases). No regressions detected. The change is semantics-preserving — same bytes, same error handling for wrong-length network IDs.
