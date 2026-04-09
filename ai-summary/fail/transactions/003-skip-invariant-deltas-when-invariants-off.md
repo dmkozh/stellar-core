@@ -34,3 +34,32 @@ The benchmark template does not set `INVARIANT_CHECKS`, and config defaults init
 ## Anti-Evidence
 
 This optimization must not affect tests or deployments that deliberately enable invariants, and any interface used by metadata or post-apply logic has to remain available on those paths. The opportunity only exists because apply-load runs with the default empty invariant set.
+
+---
+
+## Review
+
+**Verdict**: NOT_VIABLE
+**Date**: 2026-04-09
+**Reviewed by**: claude-opus-4-6, high
+**Novelty**: FAIL — duplicate of ai-summary/reviewed/transaction-ledger/003-skip-delta-when-invariants-disabled.md
+**Failed At**: reviewer
+
+### Trace Summary
+
+This hypothesis describes the exact same mechanism as H003 ("Skip LedgerTxnDelta Construction When Invariant Checking Is Disabled"), which was already reviewed as VIABLE (Informational) in `ai-summary/reviewed/transaction-ledger/003-skip-delta-when-invariants-disabled.md`. Both identify: (1) unconditional `setEffectsDeltaFromSuccessfulTx` on worker threads building `LedgerTxnDelta` with `make_shared<InternalLedgerEntry>` allocations, (2) sole consumption by `checkAllTxBundleInvariants` → `InvariantManagerImpl::checkOnOperationApply` which no-ops when `INVARIANT_CHECKS` is empty.
+
+### Code Paths Examined
+
+- `src/transactions/TransactionFrame.cpp:2241-2247` — Same unconditional `setEffectsDeltaFromSuccessfulTx` call identified in H003
+- `src/transactions/ParallelApplyUtils.cpp:790-829` — Same delta construction with `make_shared` allocations identified in H003
+- `src/ledger/LedgerManagerImpl.cpp:2473-2514` — Same `checkAllTxBundleInvariants` consumer identified in H003
+- `src/invariant/InvariantManagerImpl.cpp:143-171` — Same empty `mEnabled` iteration identified in H003
+
+### Why It Failed
+
+This is a duplicate of H003 which was already reviewed and marked VIABLE (Informational) with full PoC guidance. The target code, mechanism, proposed fix, and impact analysis are substantially identical. H003 additionally provided a more thorough severity analysis showing the actual impact is below the 5% Low threshold.
+
+### Lesson Learned
+
+Cross-subsystem directory naming varies from skill names (e.g., "transaction-ledger" vs "transactions"). Duplicate checks should scan all subsystem directories under `reviewed/` and `fail/`, not just the exact subsystem name from the hypothesis.
