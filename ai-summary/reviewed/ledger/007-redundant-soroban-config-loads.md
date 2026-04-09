@@ -53,3 +53,39 @@ Run any Soroban apply-load benchmark. Profile `finalizeLedgerTxnChanges` and loo
 2. The dead code at line 2959 was likely intentional at some point (perhaps the eviction scan signature used to take a config parameter) and removing it is a trivial cleanup, not a performance optimization.
 3. Passing the config between `BucketManager::resolveBackgroundEvictionScan` and the caller would change the BucketManager API, adding coupling.
 4. The compiler may partially optimize these lookups if the LedgerTxn chain is hot in L1 cache from the preceding transaction execution.
+
+---
+
+## Review
+
+**Verdict**: VIABLE
+**Severity**: Informational
+**Date**: 2026-04-09
+**Reviewed by**: claude-opus-4-6, high
+**Novelty**: PASS — not previously investigated
+
+### Trace Summary
+
+Traced the four `SorobanNetworkConfig::loadFromLedger` call sites during a single ledger close. Confirmed that the variable `sorobanConfig` at `LedgerManagerImpl.cpp:2959` is assigned but never read — it is genuinely dead code. The `resolveBackgroundEvictionScan` at `BucketManager.cpp:1191` independently constructs its own `LedgerSnapshot` and loads its own config copy. The final load at line 3037 (`finalSorobanConfig`) is the only one whose result is consumed post-eviction. The first load at line 2656 is consumed by `applyParallelPhase`.
+
+### Code Paths Examined
+
+- `src/ledger/LedgerManagerImpl.cpp:finalizeLedgerTxnChanges:2942-3048` — Confirmed `sorobanConfig` at line 2959 is unused; the only reference is the assignment itself. Variable goes out of scope at end of `if` block (line 3029) without being read.
+- `src/bucket/BucketManager.cpp:resolveBackgroundEvictionScan:1181-1260` — Confirmed it creates its own `LedgerSnapshot(ltx)` at line 1188 and calls `loadFromLedger(ls)` at line 1191 independently of any caller-provided config.
+- `src/ledger/NetworkConfig.cpp:loadFromLedger:1754-1796` — Confirmed 14 base sub-loads plus 3 conditional V23+ loads plus 2 conditional V26+ loads. Each performs a `LedgerSnapshot::load()` with key construction and XDR extraction.
+- `src/ledger/LedgerManagerImpl.cpp:applyTransactions:2651-2657` — First load at line 2656 consumed by `applyParallelPhase` at line 2667.
+
+### Findings
+
+The dead code at line 2959 is confirmed — this is a real but trivial inefficiency. The variable was likely a leftover from a refactor where `resolveBackgroundEvictionScan` may have once accepted a config parameter.
+
+The redundant load inside `resolveBackgroundEvictionScan` (load #2) is a design choice: the BucketManager loads config independently to stay decoupled from its caller. Eliminating this would require passing the config as a parameter, which is a minor API change with correctness implications (the eviction scan specifically needs the config as seen through the current LedgerTxn state, which is the same as what the caller would pass on non-upgrade ledgers, but could theoretically differ on upgrade ledgers).
+
+**Impact assessment**: Each `loadFromLedger` costs ~10-20μs (14-19 hash map lookups + XDR extraction + LedgerSnapshot construction). Two redundant loads add ~20-40μs per ledger close. With ledger close times of 200-500ms, this is <0.02% — well below the 5% threshold for Low severity. The finding is real but the impact is Informational at best.
+
+### PoC Guidance
+
+- **Target code**: `src/ledger/LedgerManagerImpl.cpp:2959` — Remove the dead `auto sorobanConfig = SorobanNetworkConfig::loadFromLedger(ltx);` line.
+- **Change description**: Delete the unused variable assignment. This is a trivial dead-code removal. Optionally, refactor `resolveBackgroundEvictionScan` to accept a `SorobanNetworkConfig const&` parameter to eliminate the second redundant load, but this is lower priority and changes the BucketManager API.
+- **Correctness check**: All existing Soroban tests (tag `[soroban]`) and eviction tests should pass unchanged since the removed variable was never consumed.
+- **Benchmark focus**: No measurable benchmark improvement expected. This is a code quality fix, not a performance optimization. If benchmarked, look at `finalizeLedgerTxnChanges` time in any Soroban apply-load scenario, but expect <0.02% change.
