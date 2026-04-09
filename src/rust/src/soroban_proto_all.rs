@@ -92,6 +92,12 @@ pub(crate) mod p26 {
         v.interface.protocol
     }
 
+    pub(crate) fn get_protocol_cache(
+        cache: &SorobanModuleCache,
+    ) -> Option<&soroban_proto_any::ProtocolSpecificModuleCache> {
+        Some(&cache.p26_cache)
+    }
+
     pub fn invoke_host_function_with_trace_hook_and_module_cache<
         T: AsRef<[u8]>,
         I: ExactSizeIterator<Item = T>,
@@ -245,6 +251,12 @@ pub(crate) mod p25 {
 
     pub(crate) const fn get_version_protocol(v: &soroban_env_host::Version) -> u32 {
         v.interface.protocol
+    }
+
+    pub(crate) fn get_protocol_cache(
+        cache: &SorobanModuleCache,
+    ) -> Option<&soroban_proto_any::ProtocolSpecificModuleCache> {
+        Some(&cache.p25_cache)
     }
 
     pub fn invoke_host_function_with_trace_hook_and_module_cache<
@@ -402,6 +414,12 @@ pub(crate) mod p24 {
         v.interface.protocol
     }
 
+    pub(crate) fn get_protocol_cache(
+        cache: &SorobanModuleCache,
+    ) -> Option<&soroban_proto_any::ProtocolSpecificModuleCache> {
+        Some(&cache.p24_cache)
+    }
+
     pub fn invoke_host_function_with_trace_hook_and_module_cache<
         T: AsRef<[u8]>,
         I: ExactSizeIterator<Item = T>,
@@ -555,6 +573,12 @@ pub(crate) mod p23 {
 
     pub(crate) const fn get_version_protocol(v: &soroban_env_host::Version) -> u32 {
         v.interface.protocol
+    }
+
+    pub(crate) fn get_protocol_cache(
+        cache: &SorobanModuleCache,
+    ) -> Option<&soroban_proto_any::ProtocolSpecificModuleCache> {
+        Some(&cache.p23_cache)
     }
 
     pub fn invoke_host_function_with_trace_hook_and_module_cache<
@@ -741,6 +765,12 @@ pub(crate) mod p22 {
     }
     #[allow(dead_code)]
     pub(crate) trait CompilationContext: ErrorHandler + AsBudget {}
+
+    pub(crate) fn get_protocol_cache(
+        _cache: &SorobanModuleCache,
+    ) -> Option<&soroban_proto_any::ProtocolSpecificModuleCache> {
+        None
+    }
 
     // An adapter for some API breakage between p21 and p22.
     pub(crate) const fn get_version_pre_release(v: &soroban_env_host::Version) -> u32 {
@@ -930,6 +960,12 @@ pub(crate) mod p21 {
     }
     #[allow(dead_code)]
     pub(crate) trait CompilationContext: ErrorHandler + AsBudget {}
+
+    pub(crate) fn get_protocol_cache(
+        _cache: &SorobanModuleCache,
+    ) -> Option<&soroban_proto_any::ProtocolSpecificModuleCache> {
+        None
+    }
 
     // An adapter for some API breakage between p21 and p22.
     pub(crate) const fn get_version_pre_release(v: &soroban_env_host::Version) -> u32 {

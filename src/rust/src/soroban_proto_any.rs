@@ -11,7 +11,7 @@ use crate::{
     },
 };
 use log::{debug, error, trace, warn};
-use std::{fmt::Display, io::Cursor, panic, rc::Rc, time::Instant};
+use std::{fmt::Display, io::Cursor, panic, rc::Rc, sync::RwLock, time::Instant};
 
 // This module (soroban_proto_any) is bound to _multiple locations_ in the
 // module tree of this crate:
@@ -409,14 +409,24 @@ fn invoke_host_function_or_maybe_panic(
 
     let protocol_version = ledger_info.protocol_version;
 
+    // Use cached deserialized cost params when available (p23+), falling back
+    // to per-TX XDR deserialization for older protocols without a cache.
+    let proto_cache = super::get_protocol_cache(module_cache);
+    let (cpu_cost_params, mem_cost_params) = match proto_cache {
+        Some(pc) => (
+            pc.get_cpu_cost_params(&ledger_info.cpu_cost_params)?,
+            pc.get_mem_cost_params(&ledger_info.mem_cost_params)?,
+        ),
+        None => (
+            non_metered_xdr_from_cxx_buf::<ContractCostParams>(&ledger_info.cpu_cost_params)?,
+            non_metered_xdr_from_cxx_buf::<ContractCostParams>(&ledger_info.mem_cost_params)?,
+        ),
+    };
     let budget = Budget::try_from_configs(
         instruction_limit as u64,
         ledger_info.memory_limit as u64,
-        // These are the only non-metered XDR conversions that we perform. They
-        // have a small constant cost that is independent of the user-provided
-        // data.
-        non_metered_xdr_from_cxx_buf::<ContractCostParams>(&ledger_info.cpu_cost_params)?,
-        non_metered_xdr_from_cxx_buf::<ContractCostParams>(&ledger_info.mem_cost_params)?,
+        cpu_cost_params,
+        mem_cost_params,
     )?;
     let mut diagnostic_events = vec![];
     let ledger_seq_num = ledger_info.sequence_number;
@@ -707,6 +717,11 @@ pub(crate) struct ProtocolSpecificModuleCache {
     // threads, we make a throwaway `CompilationContext` on each `compile` call,
     // and _copy out_ the memory usage (which we want to publish back to core).
     pub(crate) mem_bytes_consumed: std::sync::atomic::AtomicU64,
+    // Cached deserialized ContractCostParams to avoid redundant per-TX XDR
+    // round-trips. The raw serialized bytes are stored alongside to detect
+    // when the params change (e.g., across ledger closes after config updates).
+    cached_cpu_cost_params: RwLock<Option<(Vec<u8>, ContractCostParams)>>,
+    cached_mem_cost_params: RwLock<Option<(Vec<u8>, ContractCostParams)>>,
 }
 
 #[allow(dead_code)]
@@ -717,6 +732,8 @@ impl ProtocolSpecificModuleCache {
         Ok(ProtocolSpecificModuleCache {
             module_cache,
             mem_bytes_consumed: std::sync::atomic::AtomicU64::new(0),
+            cached_cpu_cost_params: RwLock::new(None),
+            cached_mem_cost_params: RwLock::new(None),
         })
     }
 
@@ -772,6 +789,44 @@ impl ProtocolSpecificModuleCache {
         Ok(ProtocolSpecificModuleCache {
             module_cache,
             mem_bytes_consumed: std::sync::atomic::AtomicU64::new(0),
+            cached_cpu_cost_params: RwLock::new(None),
+            cached_mem_cost_params: RwLock::new(None),
         })
+    }
+
+    fn get_or_deserialize_cost_params(
+        cache: &RwLock<Option<(Vec<u8>, ContractCostParams)>>,
+        buf: &CxxBuf,
+    ) -> Result<ContractCostParams, HostError> {
+        // Fast path: check read lock for cache hit (same serialized bytes).
+        {
+            let guard = cache.read().unwrap();
+            if let Some((ref cached_bytes, ref cached_params)) = *guard {
+                if cached_bytes.as_slice() == buf.data.as_slice() {
+                    return Ok(cached_params.clone());
+                }
+            }
+        }
+        // Slow path: deserialize and update cache.
+        let params = non_metered_xdr_from_cxx_buf::<ContractCostParams>(buf)?;
+        {
+            let mut guard = cache.write().unwrap();
+            *guard = Some((buf.data.as_slice().to_vec(), params.clone()));
+        }
+        Ok(params)
+    }
+
+    pub(crate) fn get_cpu_cost_params(
+        &self,
+        buf: &CxxBuf,
+    ) -> Result<ContractCostParams, HostError> {
+        Self::get_or_deserialize_cost_params(&self.cached_cpu_cost_params, buf)
+    }
+
+    pub(crate) fn get_mem_cost_params(
+        &self,
+        buf: &CxxBuf,
+    ) -> Result<ContractCostParams, HostError> {
+        Self::get_or_deserialize_cost_params(&self.cached_mem_cost_params, buf)
     }
 }

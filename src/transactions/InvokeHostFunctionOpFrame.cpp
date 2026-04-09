@@ -55,8 +55,8 @@ getLedgerInfo(SorobanNetworkConfig const& sorobanConfig, uint32_t ledgerVersion,
         sorobanConfig.stateArchivalSettings().minTemporaryTTL;
     info.max_entry_ttl = sorobanConfig.stateArchivalSettings().maxEntryTTL;
 
-    auto cpu = sorobanConfig.cpuCostParams();
-    auto mem = sorobanConfig.memCostParams();
+    auto const& cpu = sorobanConfig.cpuCostParams();
+    auto const& mem = sorobanConfig.memCostParams();
 
     info.cpu_cost_params = toCxxBuf(cpu);
     info.mem_cost_params = toCxxBuf(mem);
