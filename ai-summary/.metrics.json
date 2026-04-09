@@ -1,8 +1,8 @@
 {
-  "hypothesis_viable": 5,
-  "hypothesis_not_viable": 2,
+  "hypothesis_viable": 0,
+  "hypothesis_not_viable": 0,
   "review_viable": 0,
-  "review_not_viable": 1,
+  "review_not_viable": 0,
   "poc_viable": 0,
   "poc_not_viable": 0,
   "final_review_viable": 0,
@@ -12,101 +12,17 @@
   "publishes": 0,
   "agent_errors": 0,
   "agent_timeouts": 0,
-  "total_spawned": 4,
+  "total_spawned": 2,
   "input_tokens": 0,
-  "output_tokens": 36019,
+  "output_tokens": 0,
   "cache_read_tokens": 0,
-  "per_subsystem": {
-    "bucket": {
-      "review_not_viable": 1
-    },
-    "transactions": {
-      "hypothesis_viable": 5,
-      "hypothesis_not_viable": 2
-    }
-  },
-  "per_model": {
-    "claude-opus-4-6": {
-      "review_not_viable": 1
-    },
-    "gpt-5.4": {
-      "hypothesis_viable": 5
-    }
-  },
-  "tokens_by_stage": {
-    "reviewer": {
-      "input": 0,
-      "output": 15984,
-      "cache_read": 0
-    },
-    "hypothesis": {
-      "input": 0,
-      "output": 20035,
-      "cache_read": 0
-    }
-  },
-  "tokens_by_model": {
-    "claude-opus-4-6": {
-      "input": 0,
-      "output": 15984,
-      "cache_read": 0
-    },
-    "gpt-5.4": {
-      "input": 0,
-      "output": 20035,
-      "cache_read": 0
-    }
-  },
-  "agent_durations": [
-    [
-      "reviewer",
-      "claude-opus-4-6",
-      418.4
-    ],
-    [
-      "hypothesis",
-      "gpt-5.4",
-      370.5
-    ]
-  ],
+  "per_subsystem": {},
+  "per_model": {},
+  "tokens_by_stage": {},
+  "tokens_by_model": {},
+  "agent_durations": [],
   "costs": {
-    "providers": {
-      "copilot": {
-        "models": {
-          "claude-opus-4-6": {
-            "input_tokens": 0,
-            "output_tokens": 15984,
-            "cache_read_tokens": 0,
-            "total_cost": 0.09,
-            "premium_requests": 3
-          },
-          "gpt-5.4": {
-            "input_tokens": 0,
-            "output_tokens": 20035,
-            "cache_read_tokens": 0,
-            "total_cost": 0.03,
-            "premium_requests": 1
-          }
-        },
-        "provider_cost": 0.12
-      }
-    },
-    "total_cost": 0.12,
-    "stages": {
-      "reviewer": {
-        "copilot": {
-          "input_tokens": 0,
-          "output_tokens": 15984,
-          "premium_requests": 3
-        }
-      },
-      "hypothesis": {
-        "copilot": {
-          "input_tokens": 0,
-          "output_tokens": 20035,
-          "premium_requests": 1
-        }
-      }
-    }
+    "providers": {},
+    "total_cost": 0.0
   }
 }
