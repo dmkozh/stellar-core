@@ -101,3 +101,26 @@ Traced the complete `processPostTxSetApply` loop (LedgerManagerImpl.cpp:2827-287
 - **Change description**: Refactor the loop to open a single `LedgerTxn` for the entire batch of refunds rather than one per transaction. Within the single LedgerTxn, for each tx: (1) load the fee source account (reusing if already loaded), (2) snapshot the balance before, (3) apply `addBalance` for the refund, (4) build `LedgerEntryChanges` manually from the before/after state, (5) call `setPostTxApplyFeeProcessing` with the manual changes. Commit once at the end. An alternative simpler approach: eliminate the inner LedgerTxn inside `refundSorobanFee` by inlining the refund logic directly into the outer loop's LedgerTxn, halving the LedgerTxn overhead.
 - **Correctness check**: Existing parallel Soroban tests (tag `[soroban]`, especially those testing fee refunds and fee-bump transactions with Soroban) should cover this path. Run `"[tx][soroban]"` and `"[txsetapply]"` test tags.
 - **Benchmark focus**: Run `scripts/run_apply_load_matrix.py` with `sac,TX=6400,T=8`. Measure the wall time of the `processPostTxSetApply` Tracy zone before and after the change. Expect ~40-60% reduction in that zone's duration (~10-15ms savings), translating to ~3-5% improvement in total ledger close time.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-10
+**PoC by**: claude-opus-4-6, high
+
+### Changes Made
+
+- **`src/transactions/TransactionFrame.cpp:1044-1090`** (`refundSorobanFee`): Removed the nested `LedgerTxn ltx(ltxOuter)` and its corresponding `ltx.commit()`. The function now works directly on `ltxOuter`, eliminating one heap-allocated `LedgerHeader` copy, one entry map setup, and one commit-merge cycle per Soroban transaction. All references to the inner `ltx` were changed to `ltxOuter`. A comment explains the safety reasoning: for Soroban fee refunds, the inner LedgerTxn's rollback capability is unnecessary because (a) `load()` returns empty without modifying the entry map when an account is merged, and (b) `addBalance` with a positive refund ≤ the fee charged cannot fail (no overflow possible, no selling-liability check for positive delta, and buying liabilities cannot increase during the Soroban parallel phase).
+
+### Demonstration
+
+This optimization eliminates one of two nested `LedgerTxn` create/commit/destroy cycles per Soroban transaction in the `processPostTxSetApply` loop. For 6400 transactions, this removes ~6400 heap allocations, ~6400 `LedgerHeader` copies (~300-500 bytes each), and ~6400 commit-merge operations. The estimated savings is ~10-16ms per ledger close (half of the ~20-32ms total post-processing overhead), representing a ~40-50% reduction in the `processPostTxSetApply` zone duration.
+
+### Test Results
+
+- All 68 tests in `[tx][soroban]` passed (49,282 assertions)
+- All 21 tests in `[parallelapply]` passed (2,797,082 assertions)
+- Full test suite passed via `selftest-parallel` with `NUM_PARTITIONS=$(nproc)` — all partitions completed successfully
+- Pre-existing failure in `lib/gperftools/tcm_min_asserts_unittest` is unrelated to this change
