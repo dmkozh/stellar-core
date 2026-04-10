@@ -107,3 +107,29 @@ The optimization replaces redundant per-tx XDR serialization of shared read-only
 ### Test Results
 
 All 21 `[parallelapply]` tests pass (2,797,082 assertions). All 68 `[tx][soroban]` tests pass (49,282 assertions). Full test suite (`make check` with NUM_PARTITIONS=$(nproc)) passes — all 2 test targets (selftest-nopg, check-nondet) succeeded.
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Claimed inefficiency**: REAL — `InvokeHostFunctionApplyHelper::addReads` still pays full XDR serialization cost per read-only entry per transaction when no cache is present.
+2. **Preconditions**: REALISTIC — apply-load scenarios do reuse contract code / instance entries heavily.
+3. **By-design vs inefficiency**: INEFFICIENCY — the original repeated marshaling is wasteful, but the proposed cache is not behavior-preserving.
+4. **Safety**: FAIL — the cache is keyed only by `LedgerKey` and lives for the entire `ThreadParallelApplyLedgerState`. Clusters explicitly include transactions that share a key when either side uses read-write footprint (`src/herder/ParallelTxSetBuilder.cpp:57-60`), and `LedgerManagerImpl::applyThread` reuses the same thread state across the whole cluster (`src/ledger/LedgerManagerImpl.cpp:2386-2407`). After a successful tx writes `K`, `commitChangesFromSuccessfulTx` updates `mThreadEntryMap` (`src/transactions/ParallelApplyUtils.cpp:832-843`) but nothing invalidates `mRoSerializationCache[K]`, so a later read-only tx on the same key can receive stale serialized bytes from `serializeLedgerEntryForBridge`.
+5. **Independent validation**: FULL TEST SUITE PASSED — `NUM_PARTITIONS=$(nproc) STELLAR_CORE_TEST_PARAMS='--ll fatal -r simple --abort --disable-dots' make check -j$(nproc)` succeeded, which means this is a coverage gap rather than a CI-visible regression.
+6. **Benchmarking**: NOT RUN — rejected before benchmarking because correctness failed first.
+
+### Rejection Reason
+
+The optimization is semantically unsafe. It assumes a key that is read-only in one transaction is immutable for the lifetime of the cluster, but the parallel apply scheduler deliberately clusters `RO(K)` and `RW(K)` transactions together. The new cache survives across those sequential transactions, so `RO(K) -> RW(K) -> RO(K)` can reuse stale serialized ledger-entry bytes after the write commits.
+
+### Failed Checks
+
+- Step 6 (Verify Safety)
