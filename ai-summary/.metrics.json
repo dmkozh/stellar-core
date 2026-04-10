@@ -1,7 +1,7 @@
 {
   "hypothesis_viable": 26,
   "hypothesis_not_viable": 20,
-  "review_viable": 9,
+  "review_viable": 10,
   "review_not_viable": 11,
   "poc_viable": 0,
   "poc_not_viable": 0,
@@ -12,14 +12,14 @@
   "publishes": 0,
   "agent_errors": 3,
   "agent_timeouts": 0,
-  "total_spawned": 35,
+  "total_spawned": 36,
   "input_tokens": 0,
-  "output_tokens": 680596,
+  "output_tokens": 693206,
   "cache_read_tokens": 0,
   "per_subsystem": {
     "bucket": {
       "review_not_viable": 2,
-      "review_viable": 2,
+      "review_viable": 3,
       "hypothesis_viable": 4,
       "hypothesis_not_viable": 1
     },
@@ -50,7 +50,7 @@
     "claude-opus-4-6": {
       "review_not_viable": 11,
       "errors": 3,
-      "review_viable": 9,
+      "review_viable": 10,
       "hypothesis_viable": 11
     },
     "gpt-5.4": {
@@ -62,7 +62,7 @@
   "tokens_by_stage": {
     "reviewer": {
       "input": 0,
-      "output": 287792,
+      "output": 300402,
       "cache_read": 0
     },
     "hypothesis": {
@@ -89,7 +89,7 @@
   "tokens_by_model": {
     "claude-opus-4-6": {
       "input": 0,
-      "output": 531288,
+      "output": 543898,
       "cache_read": 0
     },
     "gpt-5.4": {
@@ -263,6 +263,11 @@
       "hypothesis",
       "claude-opus-4-6",
       1989.6
+    ],
+    [
+      "reviewer",
+      "claude-opus-4-6",
+      294.1
     ]
   ],
   "costs": {
@@ -271,10 +276,10 @@
         "models": {
           "claude-opus-4-6": {
             "input_tokens": 0,
-            "output_tokens": 531288,
+            "output_tokens": 543898,
             "cache_read_tokens": 0,
-            "total_cost": 2.34,
-            "premium_requests": 78
+            "total_cost": 2.43,
+            "premium_requests": 81
           },
           "claude-sonnet-4-6": {
             "input_tokens": 0,
@@ -291,16 +296,16 @@
             "premium_requests": 5
           }
         },
-        "provider_cost": 2.52
+        "provider_cost": 2.61
       }
     },
-    "total_cost": 2.52,
+    "total_cost": 2.61,
     "stages": {
       "reviewer": {
         "copilot": {
           "input_tokens": 0,
-          "output_tokens": 287792,
-          "premium_requests": 66
+          "output_tokens": 300402,
+          "premium_requests": 69
         }
       },
       "hypothesis": {
