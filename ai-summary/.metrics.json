@@ -1,9 +1,9 @@
 {
-  "hypothesis_viable": 31,
-  "hypothesis_not_viable": 28,
+  "hypothesis_viable": 35,
+  "hypothesis_not_viable": 33,
   "review_viable": 18,
   "review_not_viable": 13,
-  "poc_viable": 5,
+  "poc_viable": 6,
   "poc_not_viable": 0,
   "final_review_viable": 0,
   "final_review_not_viable": 5,
@@ -12,9 +12,9 @@
   "publishes": 0,
   "agent_errors": 2,
   "agent_timeouts": 0,
-  "total_spawned": 58,
+  "total_spawned": 61,
   "input_tokens": 0,
-  "output_tokens": 1230591,
+  "output_tokens": 1329660,
   "cache_read_tokens": 0,
   "per_subsystem": {
     "soroban-env": {
@@ -31,7 +31,9 @@
       "review_not_viable": 4
     },
     "ledger": {
-      "review_viable": 2
+      "review_viable": 2,
+      "hypothesis_viable": 4,
+      "hypothesis_not_viable": 1
     },
     "bucket": {
       "poc_viable": 2,
@@ -46,7 +48,7 @@
       "review_viable": 2
     },
     "transactions": {
-      "poc_viable": 3,
+      "poc_viable": 4,
       "final_review_revisions": 1,
       "hypothesis_viable": 4,
       "hypothesis_not_viable": 1,
@@ -58,11 +60,15 @@
       "hypothesis_viable": 1,
       "hypothesis_not_viable": 4,
       "review_viable": 1
+    },
+    "database": {
+      "hypothesis_viable": 0,
+      "hypothesis_not_viable": 4
     }
   },
   "per_model": {
     "gpt-5.4": {
-      "hypothesis_viable": 21,
+      "hypothesis_viable": 25,
       "final_review_not_viable": 5,
       "final_review_revisions": 1
     },
@@ -70,7 +76,7 @@
       "review_not_viable": 13,
       "review_viable": 18,
       "hypothesis_viable": 10,
-      "poc_viable": 5,
+      "poc_viable": 6,
       "errors": 2
     },
     "claude-sonnet-4-6": {}
@@ -78,7 +84,7 @@
   "tokens_by_stage": {
     "hypothesis": {
       "input": 0,
-      "output": 481887,
+      "output": 556793,
       "cache_read": 0
     },
     "reviewer": {
@@ -93,7 +99,7 @@
     },
     "poc": {
       "input": 0,
-      "output": 180825,
+      "output": 204988,
       "cache_read": 0
     },
     "condensation": {
@@ -105,12 +111,12 @@
   "tokens_by_model": {
     "gpt-5.4": {
       "input": 0,
-      "output": 283691,
+      "output": 314287,
       "cache_read": 0
     },
     "claude-opus-4-6": {
       "input": 0,
-      "output": 939421,
+      "output": 1007894,
       "cache_read": 0
     },
     "claude-sonnet-4-6": {
@@ -399,6 +405,21 @@
       "reviewer",
       "claude-opus-4-6",
       345.4
+    ],
+    [
+      "poc",
+      "claude-opus-4-6",
+      1696.6
+    ],
+    [
+      "hypothesis",
+      "claude-opus-4-6",
+      1496.1
+    ],
+    [
+      "hypothesis",
+      "gpt-5.4",
+      692.5
     ]
   ],
   "costs": {
@@ -407,10 +428,10 @@
         "models": {
           "claude-opus-4-6": {
             "input_tokens": 0,
-            "output_tokens": 939421,
+            "output_tokens": 1007894,
             "cache_read_tokens": 0,
-            "total_cost": 3.87,
-            "premium_requests": 129
+            "total_cost": 4.05,
+            "premium_requests": 135
           },
           "claude-sonnet-4-6": {
             "input_tokens": 0,
@@ -421,22 +442,22 @@
           },
           "gpt-5.4": {
             "input_tokens": 0,
-            "output_tokens": 283691,
+            "output_tokens": 314287,
             "cache_read_tokens": 0,
-            "total_cost": 0.36,
-            "premium_requests": 12
+            "total_cost": 0.39,
+            "premium_requests": 13
           }
         },
-        "provider_cost": 4.26
+        "provider_cost": 4.47
       }
     },
-    "total_cost": 4.26,
+    "total_cost": 4.47,
     "stages": {
       "hypothesis": {
         "copilot": {
           "input_tokens": 0,
-          "output_tokens": 481887,
-          "premium_requests": 21
+          "output_tokens": 556793,
+          "premium_requests": 25
         }
       },
       "reviewer": {
@@ -456,8 +477,8 @@
       "poc": {
         "copilot": {
           "input_tokens": 0,
-          "output_tokens": 180825,
-          "premium_requests": 18
+          "output_tokens": 204988,
+          "premium_requests": 21
         }
       },
       "condensation": {
