@@ -133,3 +133,37 @@ The parallel-thread overhead is the most significant component because it increa
 - **Change description**: Add a config flag (or reuse the apply-load mode check) that suppresses the BUILD_TESTS meta overrides when running in benchmark mode. When the flag is set: (1) don't force `ledgerCloseMeta` allocation at line 1598-1607, (2) don't override `enableTxMeta` at line 2646-2650, (3) skip `mLastLedgerTxMeta` storage at lines 2592 and 2600-2603. The simplest approach is to add `DISABLE_TX_META_FOR_TESTING = true` to the benchmark configs and check it alongside the BUILD_TESTS guards.
 - **Correctness check**: All existing tests should continue to pass since the flag defaults to `false`. The apply-load benchmark tests should also pass since they don't inspect `mLastLedgerTxMeta`. Run `make check` to verify. Specifically verify that test cases that use `getLastLedgerTxMeta()` still work (they won't set the new flag).
 - **Benchmark focus**: Run the SAC benchmark (`apply-load` with `apply-load-benchmark-sac.cfg`) before and after the change. The primary metric is median ledger close time. Expect 5-10% improvement with 3000 txs at T=1 (single cluster). The improvement may be more visible at T=1 than T=8 since meta collection is serial overhead that doesn't parallelize. Also measure memory high-water mark — expect reduction from eliminated XDR allocations.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-10
+**PoC by**: claude-opus-4-6, high
+
+### Changes Made
+
+1. **`src/main/Config.h`** (line ~551-555): Added `bool DISABLE_TX_META_FOR_TESTING` config flag declaration, with documentation comment explaining its purpose.
+
+2. **`src/main/Config.cpp`** (line ~175): Initialized `DISABLE_TX_META_FOR_TESTING = false` in the Config constructor defaults, immediately after `DISABLE_SOROBAN_METRICS_FOR_TESTING`.
+
+3. **`src/main/Config.cpp`** (line ~1183-1186): Added config file parser entry for `DISABLE_TX_META_FOR_TESTING`, following the same pattern as `DISABLE_SOROBAN_METRICS_FOR_TESTING`.
+
+4. **`src/ledger/LedgerManagerImpl.cpp`** (line ~1598-1608): Modified the first BUILD_TESTS override to check `!mApp.getConfig().DISABLE_TX_META_FOR_TESTING` before forcing `ledgerCloseMeta` allocation. When the flag is set, the `ledgerCloseMeta` pointer remains null (as intended by `METADATA_OUTPUT_STREAM = ""`), skipping `populateTxSet` deep copy and all downstream per-tx `getChanges()` calls guarded by `if (ledgerCloseMeta)`.
+
+5. **`src/ledger/LedgerManagerImpl.cpp`** (line ~2646-2653): Modified the second BUILD_TESTS override to check `!mApp.getConfig().DISABLE_TX_META_FOR_TESTING` before forcing `enableTxMeta = true`. When the flag is set, `enableTxMeta` remains false (since `ledgerCloseMeta` is null), making all `TransactionMetaBuilder` operations no-ops including `setLedgerChangesFromSuccessfulOp` on parallel worker threads.
+
+6. **`src/ledger/LedgerManagerImpl.cpp`** (line ~2592, 2601-2603): Guarded both `mLastLedgerTxMeta.emplace_back()` calls with `!mApp.getConfig().DISABLE_TX_META_FOR_TESTING` to avoid storing per-tx `TransactionMeta` copies when benchmarking.
+
+7. **`docs/apply-load-benchmark-sac.cfg`** (line ~19-20): Added `DISABLE_TX_META_FOR_TESTING = true` to the SAC benchmark config.
+
+8. **`docs/apply-load-benchmark-token.cfg`** (line ~19-20): Added `DISABLE_TX_META_FOR_TESTING = true` to the custom token benchmark config.
+
+### Demonstration
+
+When `DISABLE_TX_META_FOR_TESTING = true` is set in benchmark configs, the three BUILD_TESTS metadata overrides are suppressed. This eliminates: (1) the per-ledger `populateTxSet` deep copy of all transaction envelopes, (2) per-tx `getChanges()` XDR deep copies in fee processing and post-apply paths, (3) per-operation `setLedgerChangesFromSuccessfulOp` XDR deep copies on parallel Soroban worker threads, and (4) per-tx `TransactionMeta` finalization and storage. For a 3000-tx SAC benchmark, this avoids hundreds of thousands of XDR entry copies and significant memory allocations, reducing both CPU time and memory pressure during the measured benchmark path.
+
+### Test Results
+
+All tests passed: `make check` with `NUM_PARTITIONS=$(nproc)` completed successfully — "All 2 tests passed" (the two test partitions: `selftest-nopg` and `check-nondet`, which together cover the full C++ and Rust test suites). The flag defaults to `false`, so all existing tests that rely on `getLastClosedLedgerTxMeta()` (EventTests, InvokeHostFunctionTests, TxTests) continue to work unchanged.

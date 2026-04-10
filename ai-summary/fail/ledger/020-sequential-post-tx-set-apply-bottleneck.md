@@ -124,3 +124,39 @@ This optimization eliminates one of two nested `LedgerTxn` create/commit/destroy
 - All 21 tests in `[parallelapply]` passed (2,797,082 assertions)
 - Full test suite passed via `selftest-parallel` with `NUM_PARTITIONS=$(nproc)` — all partitions completed successfully
 - Pre-existing failure in `lib/gperftools/tcm_min_asserts_unittest` is unrelated to this change
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Exercises claimed inefficiency**: PASS — the change directly removes the inner `LedgerTxn` that was opened inside `TransactionFrame::refundSorobanFee`, so it does target one real source of per-transaction overhead in the sequential post-processing loop.
+2. **Realistic preconditions**: PASS — Soroban apply-load scenarios execute this path for every transaction, and the merged-account / overflow refund edge cases are covered by existing tests (`refund account merged`, `fee bump refund account merged`, and the overflow-blocked refund case in `InvokeHostFunctionTests.cpp`).
+3. **Inefficiency vs. by-design**: PASS — the inner `LedgerTxn` appears to be defensive structure rather than essential behavior for the common Soroban refund path, and the independent test run did not expose a correctness regression from removing it.
+4. **Benchmark improvement / severity**: FAIL — the required benchmark matrix did not show a measurable win. Independent results versus `ai-summary/baseline.csv` were:
+   - `sac,TX=3200,T=1`: p50 **+2.79%**, p95 **+1.07%**, p99 **+3.26%**
+   - `sac,TX=3200,T=8`: p50 **-8.71%**, p95 **-10.67%**, p99 **-3.90%**
+   - `custom_token,TX=1600,T=1`: p50 **-2.47%**, p95 **-1.76%**, p99 **+1.23%**
+   - `custom_token,TX=1600,T=8`: p50 **-1.74%**, p95 **-2.53%**, p99 **-0.39%**
+   - `soroswap,TX=1000,T=1`: p50 **-1.76%**, p95 **-1.63%**, p99 **-2.40%**
+   - `soroswap,TX=1000,T=8`: p50 **-1.97%**, p95 **-1.42%**, p99 **+0.78%**
+   No scenario improved by 5%, and the primary target (`sac,TX=3200,T=8`) regressed materially.
+5. **In scope**: PASS — this is a C++ ledger / transaction-path optimization, not a Soroban host-engine change.
+6. **Benchmark methodology**: PASS — used the project benchmark tool `scripts/run_apply_load_matrix.py`, compared against the provided `ai-summary/baseline.csv`, and ran the full 200-ledger matrix on the same host.
+7. **Alternative explanations**: FAIL — the observed small gains are inconsistent and outweighed by regressions, so noise / run-to-run variance explains the result better than a real improvement from this optimization.
+8. **Novelty**: PASS — nothing in the reviewed artifacts suggested duplication, but novelty does not overcome the failed performance validation.
+
+### Rejection Reason
+
+The production change is behavior-safe enough to pass existing tests, but the optimization claim is not supported by independent benchmarking. The apply-load matrix showed no scenario with a >=5% improvement and regressed the main parallel SAC scenario that the hypothesis was supposed to help.
+
+### Failed Checks
+
+- 4
+- 7
