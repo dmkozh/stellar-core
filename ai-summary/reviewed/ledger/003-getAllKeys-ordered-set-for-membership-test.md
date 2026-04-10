@@ -94,3 +94,82 @@ non-zero eviction candidates.
 3. `LedgerKeyHash` uses SipHash which hashes all fields including complex `SCVal` keys — hash computation for CONTRACT_DATA keys may not be dramatically cheaper than the ordered comparison, especially with early-exit on type mismatch in `LedgerEntryIdCmp`.
 4. In the benchmark, with H010 applied, this optimization provides zero additional benefit. The hypothesis is primarily valuable for production validators with actual eviction workloads.
 5. The actual `mEntry` size in the benchmark depends on the workload and how entries are batched. If many transactions modify the same keys (e.g., same contract's storage), the effective n may be smaller than `TX_count × entries_per_tx`.
+
+---
+
+## Review
+
+**Verdict**: VIABLE
+**Severity**: Informational
+**Date**: 2026-04-10
+**Reviewed by**: claude-opus-4-6, high
+**Novelty**: PASS — not previously investigated
+
+### Trace Summary
+
+Traced `getAllKeysWithoutSealing` (LedgerTxn.cpp:1704-1722) which builds a
+`std::set<LedgerKey, LedgerEntryIdCmp>` from all `LEDGER_ENTRY`-typed keys in
+`mEntry`. Confirmed the sole consumer `resolveBackgroundEvictionScan`
+(BucketManager.cpp:1181-1242) uses only `find()` for membership testing at lines
+1220 and 1222. Verified `LedgerKey` hash support exists in `LedgerHashUtils.h`
+(lines 136-203) with `std::hash<LedgerKey>` using SipHash-based `xdrComputeHash`
+for CONTRACT_DATA SCVal fields. The optimization is correct but the benchmark
+impact is negligible given H010's lazy construction already eliminates this cost
+in benchmark scenarios.
+
+### Code Paths Examined
+
+- `src/ledger/LedgerTxn.cpp:Impl::getAllKeysWithoutSealing:1704-1722` — iterates `mEntry`, inserts each `LEDGER_ENTRY` key into `LedgerKeySet` (ordered BST) via `result.emplace(k.ledgerKey())`; each insertion is O(log n) with `LedgerEntryIdCmp`
+- `src/util/types.h:18` — `LedgerKeySet` is `std::set<LedgerKey, LedgerEntryIdCmp>`, confirmed ordered BST
+- `src/bucket/LedgerCmp.h:55-124` — `LedgerEntryIdCmp` for CONTRACT_DATA (lines 90-96) calls `lexCompare(contract, contract, key, key, durability, durability)` — requires recursive traversal of SCVal for keys within the same contract
+- `src/ledger/LedgerHashUtils.h:136-203` — `std::hash<LedgerKey>` for CONTRACT_DATA (lines 178-184) uses `std::hash<SCAddress>` + `shortHash::xdrComputeHash(key)` + `std::hash<int32_t>(durability)` — single-pass XDR SipHash
+- `src/crypto/ShortHash.h:47-55` — `xdrComputeHash` uses `XDRShortHasher` which serializes XDR and runs SipHash — visits all fields exactly once
+- `src/bucket/BucketManager.cpp:resolveBackgroundEvictionScan:1181-1242` — uses `modifiedKeys.find()` at lines 1220 and 1222 only; no sorted iteration, no range queries
+- `src/ledger/LedgerManagerImpl.cpp:finalizeLedgerTxnChanges:2960-2962` — sole production call site, passes result directly to `resolveBackgroundEvictionScan`
+- `src/bucket/test/BucketTestUtils.cpp:222` and `src/invariant/test/InvariantTests.cpp:407` — test call sites that also pass `LedgerKeySet` to `resolveBackgroundEvictionScan`
+
+### Findings
+
+**The inefficiency is real**: `std::set` with `LedgerEntryIdCmp` is O(n log n) with
+expensive per-comparison cost for CONTRACT_DATA keys. The BST ordering is entirely
+unused — the sole consumer performs only `find()` membership checks. An
+`std::unordered_set<LedgerKey>` using the existing `std::hash<LedgerKey>` would
+reduce construction to O(n) amortized.
+
+**Hash vs comparison cost analysis**: For CONTRACT_DATA keys (dominant in Soroban
+workloads), the ordered comparator `LedgerEntryIdCmp::lexCompare` must compare
+`SCAddress`, then `SCVal`, then `durability`. When entries share the same contract
+(common in SAC benchmark — all entries are for one SAC contract), the comparison
+must fall through past the `SCAddress` to the `SCVal` field every time. With ~16
+comparisons per BST insertion, this means ~16 full SCVal comparisons per element.
+In contrast, `std::hash<LedgerKey>` for CONTRACT_DATA does `xdrComputeHash(key)` —
+a single SipHash pass over XDR-serialized SCVal. While SipHash+serialization is not
+free, one hash is strictly cheaper than 16 recursive comparisons.
+
+**Benchmark impact is negligible**: H010 (reviewed/ledger/010, VIABLE) proposes lazy
+construction of this set, completely eliminating the cost when eviction candidates
+are empty — which is always the case in benchmarks (`APPLY_LOAD_BL_SIMULATED_LEDGERS=0`).
+Even without H010, the set construction is ~5-20ms out of ~300-500ms total ledger
+close time (SAC TX=3200), yielding at best a ~1-4% improvement from the container
+switch alone — below the 5% threshold for Low severity.
+
+**Production value**: On validators with mature BucketLists and non-zero eviction
+candidates, H010's lazy construction won't help (the set must be built). Here,
+the container switch from O(n log n) to O(n) with cheaper per-element cost provides
+a real improvement. This is strictly a production optimization.
+
+**Interface considerations**: The change requires modifying:
+1. `getAllKeysWithoutSealing` return type (from `LedgerKeySet` to a new unordered type)
+2. `resolveBackgroundEvictionScan` parameter type
+3. The virtual function declaration in `AbstractLedgerTxn` (line 684)
+4. Two test call sites
+
+The global `LedgerKeySet` typedef should NOT be changed — other consumers (QueryServer,
+BucketListSnapshot, invariants) may rely on ordering.
+
+### PoC Guidance
+
+- **Target code**: `src/ledger/LedgerTxn.cpp:getAllKeysWithoutSealing:1704-1722`, `src/ledger/LedgerTxn.h:684` (virtual decl), `src/ledger/LedgerTxnImpl.h:439`, `src/bucket/BucketManager.h:350-352`, `src/bucket/BucketManager.cpp:1181-1183`
+- **Change description**: Define a new type alias (e.g., `using LedgerKeyUnorderedSet = UnorderedSet<LedgerKey>;`) in `types.h` or locally. Change `getAllKeysWithoutSealing` to return `LedgerKeyUnorderedSet` instead of `LedgerKeySet`. Update `resolveBackgroundEvictionScan` to accept `LedgerKeyUnorderedSet const&`. Update the virtual declaration in `AbstractLedgerTxn` and the `Impl` declaration. Update test call sites in `BucketTestUtils.cpp:222` and `InvariantTests.cpp:407`.
+- **Correctness check**: Run `./src/stellar-core test --ll fatal -r simple --abort --disable-dots "[bucket]"` and `./src/stellar-core test --ll fatal -r simple --abort --disable-dots "[ledgertxn]"`. Also run eviction-specific tests: `./src/stellar-core test --ll fatal -r simple --abort --disable-dots "eviction"`.
+- **Benchmark focus**: This optimization provides zero measurable benchmark improvement when H010 is also applied (which it should be). To measure in isolation (without H010), run SAC TX=3200 and compare `finalizeLedgerTxnChanges` wall time. For production measurement, run on a validator with active eviction workloads.
