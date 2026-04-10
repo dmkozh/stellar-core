@@ -63,3 +63,33 @@ Recording mode and simulation still need the current `LedgerEntryChange` shape,
 so this likely has to be an additional core-specific helper rather than a full
 replacement. Some output-side work remains unavoidable: core still needs
 encoded modified entries, encoded events, and rent changes for correctness.
+
+---
+
+## Review
+
+**Verdict**: NOT_VIABLE
+**Date**: 2026-04-10
+**Reviewed by**: claude-opus-4-6, high
+**Novelty**: PASS — not previously investigated
+**Failed At**: reviewer
+
+### Trace Summary
+
+Traced the full path from the bridge layer (`soroban_proto_any.rs:488-497`) through the host crate's `invoke_host_function` (`e2e_invoke.rs:493-510`) into `get_ledger_changes` (`e2e_invoke.rs:183-293`). Confirmed the hypothesis correctly identifies real waste: `encoded_key` is serialized for every footprint item (line 208) but never consumed by `extract_rent_changes` or `extract_ledger_effects`; old entries are re-serialized (lines 227-228) solely to compute `buf.len()` for rent size. However, all this work occurs inside `soroban-env-host` crate internals, not in the bridge layer.
+
+### Code Paths Examined
+
+- `src/rust/soroban/p26/soroban-env-host/src/e2e_invoke.rs:183-293` — `get_ledger_changes` allocates `Vec<LedgerEntryChange>`, serializes keys (line 208) and old entries (lines 227-228) for every footprint item. This is inside the host crate.
+- `src/rust/soroban/p26/soroban-env-host/src/e2e_invoke.rs:493-510` — `invoke_host_function` calls `get_ledger_changes` internally and returns `InvokeHostFunctionResult` with the full `Vec<LedgerEntryChange>`. The bridge cannot intervene.
+- `src/rust/soroban/p26/soroban-env-host/src/e2e_invoke.rs:324-366` — `extract_rent_changes` is a public function in the host crate that filters the already-materialized changes.
+- `src/rust/src/soroban_proto_any.rs:261-302` — `extract_ledger_effects` in the bridge layer consumes the full `Vec<LedgerEntryChange>`, keeping only modified entries and TTL changes.
+- `src/rust/src/soroban_proto_any.rs:488-497` — bridge calls `extract_rent_changes` then `extract_ledger_effects` on the result it receives from the host.
+
+### Why It Failed
+
+**Out of scope**: The optimization requires modifying `get_ledger_changes` and/or adding a new core-specific result function inside `soroban-env-host/src/e2e_invoke.rs`. The scope note explicitly states: "If an optimization requires changes inside `soroban-env-host` crate internals, it is out of scope for this objective." The bridge layer (`soroban_proto_any.rs`) only receives the final `InvokeHostFunctionResult` after all the wasteful allocations and serializations have already occurred inside the host crate. There is no way to avoid the waste from the bridge side — by the time the bridge touches the data, the work is done.
+
+### Lesson Learned
+
+When a hypothesis identifies waste in the host crate's result-construction path (e.g., `get_ledger_changes`), verify whether the fix can be applied purely in the bridge layer. If the host crate's public API (`invoke_host_function` → `InvokeHostFunctionResult`) already embeds the wasteful work, the bridge cannot avoid it without modifying the host crate internals. This aligns with fail meta-pattern #7: "When dominant cost is inside an out-of-scope crate's API boundary, bridge-layer optimization is limited to data preparation before and result processing after the call."

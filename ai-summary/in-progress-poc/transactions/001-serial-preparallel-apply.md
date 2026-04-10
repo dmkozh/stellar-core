@@ -122,3 +122,32 @@ The optimization splits the serial `preParallelApply` bottleneck into two phases
 - All 21 `[parallelapply]` tests passed (2,797,084 assertions)
 - All 124 `[tx]` tests passed (572,733 assertions)
 - Full test suite (`make check`): All tests passed
+
+---
+
+## Final Review — Needs Revision
+
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+
+### What Needs Fixing
+
+- `TransactionFrame::preValidateSorobanPure` only caches `{valid, resourceFee}`. When any cached pure check fails, `TransactionFrame::commonValidPreSeqNum` now immediately sets `txSOROBAN_INVALID` and returns, regardless of the original failure reason. That changes apply-time semantics for Soroban transactions entering the parallel-apply path: failures that previously surfaced as `txNOT_SUPPORTED`, `txMALFORMED`, `txMISSING_OPERATION`, `txTOO_EARLY`, `txTOO_LATE`, `txINSUFFICIENT_FEE`, or `txFROZEN_KEY_ACCESSED` are all collapsed to `txSOROBAN_INVALID` once the cache is populated. See `src/transactions/TransactionFrame.cpp:1333-1385`, `src/transactions/TransactionFrame.cpp:1387-1616`, and `src/transactions/TransactionFrame.cpp:2190-2384`.
+- `OperationFrame::checkValidForSorobanPreApply` is not a semantic replacement for the old apply-time `checkValid(..., forApply=true, ...)` path. In particular, it skips the `opNO_ACCOUNT` check for `mOperation.sourceAccount`. The old path explicitly reloaded `getSourceID()` during apply-time validation; the new lightweight helper only checks `isOpSupported()` and then calls `doCheckValidForSoroban()`, while `parallelApply()` assumes validation already happened and does not re-check. That can let a Soroban operation with a missing operation source account reach host execution instead of failing as `txFAILED/opNO_ACCOUNT`. See `src/transactions/OperationFrame.cpp:321-327`, `src/transactions/OperationFrame.cpp:362-373`, `src/transactions/TransactionFrame.cpp:2421-2431`, and `src/transactions/OperationFrame.cpp:175-188`.
+- The cache is stored on `TransactionFrame` itself and is consumed from the general `commonValidPreSeqNum` / `commonPreApply` paths, but it is not scoped to a specific ledger header or cleared after use. That makes the optimization vulnerable to stale cached results or stale precomputed resource fees if the same transaction object is validated again under a different header/config/close-time context. See `src/transactions/TransactionFrame.h:75-84`, `src/transactions/TransactionFrame.cpp:2140-2149`, and `src/transactions/TransactionFrame.cpp:2190-2384`.
+
+### Revision Instructions
+
+1. Do not cache failed pure validation as a bare boolean. Either cache only successful pure validation and recompute failures in the serial path, or cache the exact failure code plus any required diagnostic information and replay that exact result.
+2. Restore the apply-time operation-source-account check in the Soroban pre-parallel validation path. `checkValidForSorobanPreApply()` must either preserve the `getSourceID()` existence check from `checkValid(..., forApply=true, ...)` or fall back to the full helper when an operation has its own source account.
+3. Scope or clear the cache so it cannot leak across later validations with a different header/config/close-time context. A one-shot preParallelApply-only cache is the safest starting point.
+4. Add regression coverage that exercises Soroban apply-time validation through the parallel-apply path and verifies exact result codes are preserved across the cached path, especially for frozen-key failures, close-time-dependent failures, and missing operation-source accounts.
+5. Re-run the performance benchmark matrix only after the validation semantics match the pre-change behavior.
+
+### Checks Passed So Far
+
+- The claimed bottleneck is real and in scope: `GlobalParallelApplyLedgerState::preParallelApplyAndCollectModifiedClassicEntries` still performs a serial pre-pass before worker execution.
+- The tree builds successfully.
+- Existing `"[tx][envelope]"` tests passed.
+- Existing `"[frozenledgerkeys][tx]"` tests passed.
+- Benchmark confirmation is blocked on the semantic regression above.
