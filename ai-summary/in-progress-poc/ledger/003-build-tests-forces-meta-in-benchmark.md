@@ -167,3 +167,37 @@ When `DISABLE_TX_META_FOR_TESTING = true` is set in benchmark configs, the three
 ### Test Results
 
 All tests passed: `make check` with `NUM_PARTITIONS=$(nproc)` completed successfully — "All 2 tests passed" (the two test partitions: `selftest-nopg` and `check-nondet`, which together cover the full C++ and Rust test suites). The flag defaults to `false`, so all existing tests that rely on `getLastClosedLedgerTxMeta()` (EventTests, InvokeHostFunctionTests, TxTests) continue to work unchanged.
+
+---
+
+## Final Review — Needs Revision
+
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+
+### What Needs Fixing
+
+The core code-path claim is correct, and the change is behavior-safe under the existing test suite, but the benchmark evidence is too mixed to confirm this as a net optimization. My independent matrix run at `/home/devbox/apply-load/final-review-20260410-115504/results.csv` showed:
+
+- `sac,TX=3200,T=1`: **+3.80% p50**, **+0.41% p95**, **+0.49% p99**
+- `sac,TX=3200,T=8`: **-7.93% p50**, **-11.67% p95**, **-5.07% p99**
+- `custom_token,TX=1600,T=1`: **-2.30% p50**, **+1.67% p95**, **+3.06% p99**
+- `custom_token,TX=1600,T=8`: **+0.75% p50**, **+0.23% p95**, **-3.33% p99**
+- `soroswap,TX=1000,T=1`: **+7.36% p50**, **+8.37% p95**, **+9.37% p99**
+- `soroswap,TX=1000,T=8`: **+0.05% p50**, **-0.55% p95**, **-0.33% p99**
+
+That is enough to show the overhead is not purely theoretical, but not enough to prove this change is a reliable overall win for the benchmark matrix. The SAC T=8 regression is too large to wave away without explanation.
+
+### Revision Instructions
+
+1. Re-run the affected benchmarks under more controlled conditions and show whether `sac,TX=3200,T=8` is a stable regression or just run-to-run noise.
+2. If the regression is real, explain why removing tx-meta work helps Soroswap T=1 but hurts SAC T=8, or narrow the claim to the workloads that actually improve.
+3. If repeated runs show the SAC T=8 result was noise, append the repeated benchmark data and variance analysis so the finding can be confirmed at the appropriate final severity.
+4. Update the framing to reflect the actual benchmark scope: the matrix runner uses `docs/apply-load-benchmark-sac.cfg` as its single template and overrides scenario-specific settings in-memory; editing `docs/apply-load-benchmark-token.cfg` does not affect the matrix run.
+
+### Checks Passed So Far
+
+- Code trace confirms `BUILD_TESTS` forces `ledgerCloseMeta` allocation and `enableTxMeta = true` in the apply-load path unless suppressed.
+- The new config flag is wired correctly and is active in the generated benchmark configs.
+- Full existing test suite passed (`make check`).
+- Independent matrix benchmark completed successfully with the results above.
