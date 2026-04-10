@@ -78,3 +78,29 @@ The finding is real and the fix is straightforward, but confident prediction of 
 - **Change description**: In `loadKeysFromBucket`, track the last `std::streamoff` and the last `BucketT const*` used for a `FILE_OFFSET` read. When the next key produces the same offset from the same bucket, instead of calling `getEntryAtOffset` (which seeks and re-reads the page), re-scan the existing `mBuf` in the `XDRInputFileStream` for the new key. This could be implemented either (a) by adding a `readPageCached(key)` method to `XDRInputFileStream` that checks whether the buffer already contains the target page, or (b) by modifying `loadKeysFromBucket` to batch same-page keys and resolve them all from a single `readPage` call. Approach (b) is cleaner since it keeps the caching logic local to the bulk-load path.
 - **Correctness check**: Existing tests in `src/bucket/test/BucketIndexTests.cpp` (bulk load tests with `loadKeys` / `loadKeysFromBucket`) cover this path. The `BucketListIsConsistentWithDatabase` and `BucketIndexTests` test suites should pass unchanged.
 - **Benchmark focus**: Measure bulk `loadKeys` latency with a batch of 1000+ keys that have moderate page sharing (e.g., many trustlines for the same asset). The metric to watch is total CPU time in `loadKeysFromBucket` and `readPage`, especially page reads per unique page touched. Expect modest improvement (likely < 5% on overall apply-load benchmarks, potentially higher on microbenchmarks of the bulk-load path in isolation).
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-10
+**PoC by**: claude-opus-4.6, high
+
+### Changes Made
+
+1. **`src/util/XDRStream.h` (added `scanPage` method, ~45 lines)** — Added `scanPage()` template method to `XDRInputFileStream` that re-scans the existing `mBuf` for a different key without seeking or re-reading from disk. Handles boundary-crossing entries by reading extra bytes from the stream (which is correctly positioned at the byte after `mBuf`'s content — the invariant maintained by `readPage`).
+
+2. **`src/bucket/BucketListSnapshot.h` (added declaration, ~5 lines)** — Declared `getEntryFromExistingPage()` protected method on `SearchableBucketListSnapshot<BucketT>`, parallel to the existing `getEntryAtOffset()`.
+
+3. **`src/bucket/BucketListSnapshot.cpp` (added `getEntryFromExistingPage` + modified `loadKeysFromBucket`, ~35 lines changed)** — Implemented `getEntryFromExistingPage()` which calls `stream.scanPage()` instead of `seek()` + `readPage()`. Modified `loadKeysFromBucket()` to track `lastPageOffset` (`std::streamoff`, initialized to -1). When a `FILE_OFFSET` result matches `lastPageOffset`, the existing page buffer is re-scanned via `getEntryFromExistingPage()` instead of re-reading from disk.
+
+### Demonstration
+
+When multiple sorted keys in a bulk-load batch fall within the same 16KB index page of a bucket, the optimization eliminates redundant `seek()` syscalls, 16KB `read()` memcpy operations, and duplicate XDR deserialization passes. Instead of one full page read per key, same-page keys re-scan the already-loaded in-memory buffer. This reduces CPU overhead on the bulk prefetch path proportional to the page-sharing density of the key set.
+
+### Test Results
+
+- All 13 `[bucketindex]` tests passed (1,088,147 assertions)
+- All 47 `[bucket]` tests passed (1,791,020 assertions)
+- Full `make check` suite passed (all partitions, including Rust tests)
