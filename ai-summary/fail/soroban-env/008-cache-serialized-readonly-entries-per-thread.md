@@ -74,3 +74,67 @@ a cluster share readOnly contract code/instance entries.
 - The cache adds per-thread memory overhead and code complexity
 - Similar "below noise floor" optimizations have been rejected in this subsystem before
 - CxxBuf requires `unique_ptr<vector<uint8_t>>` ownership, so cached bytes must be copied (not shared) into each CxxBuf
+
+---
+
+## Review
+
+**Verdict**: NOT_VIABLE
+**Date**: 2026-04-10
+**Reviewed by**: claude-opus-4-6, high
+**Novelty**: PASS — not previously investigated
+**Failed At**: reviewer
+
+### Trace Summary
+
+Traced the full path from `InvokeHostFunctionParallelApplyHelper` through
+`addReads()` (InvokeHostFunctionOpFrame.cpp:360-503), confirming that each TX
+independently calls `getLedgerEntryOpt(lk)` → `toCxxBuf(*entryOpt)` for every
+footprint key. The `toCxxBuf` template (TransactionUtils.h:372-376) calls
+`xdr::xdr_to_opaque(t)` which serializes into a freshly-allocated
+`std::vector<uint8_t>`. For `ContractCodeEntry`, the XDR payload is dominated
+by the `code` field (`xdr::opaque_vec<>`), which is serialized as a 4-byte
+length prefix followed by a raw memcpy of the WASM bytes.
+
+### Code Paths Examined
+
+- `src/transactions/InvokeHostFunctionOpFrame.cpp:449-466` — `addReads()` inner loop: calls `getLedgerEntryOpt(lk)` then `toCxxBuf(*entryOpt)` per TX per footprint key
+- `src/transactions/TransactionUtils.h:372-376` — `toCxxBuf<T>()`: wraps `xdr::xdr_to_opaque(t)` in a `CxxBuf{std::make_unique<std::vector<uint8_t>>(...)}`
+- `src/transactions/ParallelApplyUtils.cpp:886-903` — `TxParallelApplyLedgerState::getLiveEntryOpt()`: looks up mTxEntryMap then falls through to ThreadParallelApplyLedgerState
+- `src/transactions/ParallelApplyUtils.cpp:700-735` — `ThreadParallelApplyLedgerState::getLiveEntryOpt()`: looks up mThreadEntryMap (pre-populated via `collectClusterFootprintEntriesFromGlobal`), then InMemorySorobanState or LCL snapshot
+- `src/protocol-curr/xdr/Stellar-ledger-entries.h:4232-4233` — `ContractCodeEntry` structure: `Hash hash{}; xdr::opaque_vec<> code{};` — the `code` field dominates serialization cost
+
+### Why It Failed
+
+The aggregate savings from caching are too small to produce a measurable
+benchmark improvement, for two compounding reasons:
+
+1. **XDR serialization of large entries is already dominated by memcpy.**
+   `ContractCodeEntry` XDR consists of a small ext union, a 32-byte hash, and
+   the raw WASM `opaque_vec<>`. For a 50KB WASM, ~99.9% of the serialization
+   cost is the memcpy of the code bytes. Even with caching, each `CxxBuf`
+   requires its own `unique_ptr<vector<uint8_t>>`, so the cached bytes must
+   be memcpy'd into a new vector. The savings from caching are only the XDR
+   field-traversal overhead (~100-200ns) and avoidance of vector growth
+   reallocations during serialization. For a 50KB entry, actual savings per
+   serialization are ~1-3μs (reallocation avoidance), not the 50% claimed.
+
+2. **Total savings are <0.3% of baseline.** Even using the hypothesis's own
+   generous estimates (~2.8ms per thread for custom_token), this represents
+   0.3-0.4% of the 700-900ms T=8 baseline. With the more realistic savings
+   estimate (avoiding only reallocation overhead), the actual savings would be
+   ~0.5-1.5ms per thread, or ~0.1-0.2% of baseline. This is well below the
+   5% Low severity threshold and within benchmark measurement noise.
+
+The code complexity of a per-thread cache (UnorderedMap, cache population
+logic, memory overhead) is not justified by unmeasurable savings.
+
+### Lesson Learned
+
+When evaluating serialization caching hypotheses, check whether the
+serialization cost is dominated by the actual data copy (memcpy) vs. the
+format traversal overhead. For XDR types with large opaque byte fields,
+serialization is already essentially memcpy, and caching only avoids the
+small overhead of vector growth reallocation. The cache still requires a
+full memcpy into the new owned buffer, eliminating most of the potential
+savings.

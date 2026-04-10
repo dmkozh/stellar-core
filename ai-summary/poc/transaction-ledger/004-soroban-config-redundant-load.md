@@ -134,3 +134,25 @@ Traced the full lookup path from `SorobanNetworkConfig::loadFromLedger(ltx)` at 
 - **Change description**: Replace the 15-19 BucketList lookups with a reference to the already-cached config from the apply state. The change is a single-line replacement. Add `releaseAssert(mApplyState.getLedgerState()->hasSorobanConfig())` before the access for safety.
 - **Correctness check**: Existing Soroban tests (tag `[soroban]`) cover the `applyTransactions` path. Also run `[tx]` tests. The `ApplyLoadTest` benchmark would also exercise this path.
 - **Benchmark focus**: Profile `SorobanNetworkConfig::loadFromLedger` time within `applyTransactions` using Tracy. Expect elimination of ~2-190µs per ledger, which would be visible in Tracy flamegraph but NOT in aggregate benchmark results (< 0.4% improvement).
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-10
+**PoC by**: claude-opus-4-6, high
+
+### Changes Made
+
+- `src/ledger/LedgerManagerImpl.cpp:2651-2662` — Replaced the call to `SorobanNetworkConfig::loadFromLedger(ltx)` (which performed 15-19 individual BucketList lookups of CONFIG_SETTING entries) with a copy from the already-cached config in `mApplyState.getLedgerState()->getSorobanConfig()`. Added a `releaseAssert(ledgerState->hasSorobanConfig())` guard before access for safety. The change eliminates all redundant entry lookups while preserving identical behavior since CONFIG_SETTING entries are immutable during transaction application.
+
+### Demonstration
+
+The optimization replaces 15-19 sequential BucketList lookups of CONFIG_SETTING entries with a single copy from the already-cached `CompleteConstLedgerState` in the apply state. Each lookup previously traversed the full LedgerTxn hierarchy (ltx entry map miss → LedgerTxnRoot cache miss → BucketList `loadLiveEntry`), totaling ~2-190µs per ledger close. While the absolute savings are small relative to total apply time, this is a correct code simplification that removes unnecessary I/O from the critical apply path.
+
+### Test Results
+
+- All 109 `[soroban]` test cases passed (3,650,114 assertions)
+- All 124 `[tx]` test cases passed (572,729 assertions)
+- All 7 `[ledger]` test cases passed (4,682 assertions)

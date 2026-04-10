@@ -151,3 +151,31 @@ When `INVARIANT_CHECKS` is empty (the default for validators and benchmarks), th
 - All 109 `[soroban]` tests pass (3,478,645 assertions) — confirms parallel Soroban apply is unbroken
 - All 124 `[tx]` tests pass (558,956 assertions) — confirms transaction processing is correct
 - Full `make check` suite passes (all partitions)
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-09
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Exercises claimed inefficiency**: YES — the change removes the worker-side `LedgerTxnDelta` construction and the main-thread `checkAllTxBundleInvariants` walk when `config.INVARIANT_CHECKS` is empty.
+2. **Realistic preconditions**: YES — the apply-load benchmark config leaves `INVARIANT_CHECKS` empty, so the optimization would activate in the measured workload.
+3. **Inefficiency vs by-design**: FAIL — the original code keys invariant execution off the invariant manager's live enabled set, not directly off `config.INVARIANT_CHECKS`. `AppConnector::checkOnOperationApply` forwards to `InvariantManagerImpl::checkOnOperationApply`, which iterates `mEnabled` (`src/main/AppConnector.cpp:77-83`, `src/invariant/InvariantManagerImpl.cpp:143-159`). Invariants can be enabled programmatically after startup even when the config vector is empty (`src/invariant/test/InvariantTests.cpp:249-277`, `src/invariant/OrderBookIsNotCrossed.cpp:186-193`). The new guard therefore changes behavior: serial apply would still enforce those invariants, while parallel Soroban apply would silently skip both delta construction and invariant checks.
+4. **Final severity**: REJECTED — no severity is assigned because the optimization introduces a correctness regression before performance can be credited.
+5. **In scope**: YES — the change is entirely within the C++ transaction-ledger apply path.
+6. **Benchmark methodology**: NOT RUN — once the safety review found that the optimization can disable enabled invariants, benchmark data could not make the change acceptable.
+7. **Alternative explanations**: NONE — this is a direct semantic mismatch between the config guard and the actual invariant-dispatch mechanism.
+8. **Novelty**: NOT MATERIAL — the rejection is based on correctness, not duplicate handling.
+
+### Rejection Reason
+
+The optimization is keyed to `config.INVARIANT_CHECKS.empty()`, but invariant execution in the apply path is keyed to the invariant manager's actual enabled set. Because invariants can be enabled programmatically after config load, this change makes parallel Soroban apply skip invariants that remain active on the serial path, creating a silent semantic divergence in correctness-critical code.
+
+### Failed Checks
+
+- 3
