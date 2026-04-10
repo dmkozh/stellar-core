@@ -104,3 +104,33 @@ When multiple sorted keys in a bulk-load batch fall within the same 16KB index p
 - All 13 `[bucketindex]` tests passed (1,088,147 assertions)
 - All 47 `[bucket]` tests passed (1,791,020 assertions)
 - Full `make check` suite passed (all partitions, including Rust tests)
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Does the change address a real inefficiency?** YES — adjacent keys that map to the same bucket-index page can avoid a redundant `seek()` + `readPage()` cycle.
+2. **Are the preconditions realistic?** FAIL — the apply-load workloads do not show enough same-page reuse in the hot path for this optimization to matter at ledger-close scale.
+3. **Is the original code inefficient or working as designed?** MINOR INEFFICIENCY — the original path does redundant buffered reads, but the cost is much smaller than the hypothesis severity assumed.
+4. **Does benchmark improvement match the claimed severity?** FAIL — independent `run_apply_load_matrix.py` results do not show a sustained win. Median latency regressed in `sac,TX=3200,T=1` (-6.22%), `sac,TX=3200,T=8` (-5.73%), `custom_token,TX=1600,T=1` (-0.21%), and `soroswap,TX=1000,T=1` (-3.48%). The only >=5% gain was `soroswap,TX=1000,T=8` p99 (+5.49%), with the same scenario improving only +1.11% p50 and +2.69% p95.
+5. **Is the optimization in scope?** YES — this is bucket lookup code exercised by apply-load prefetch.
+6. **Is the benchmark methodology correct?** YES — used the repository baseline in `ai-summary/baseline.csv` and the project benchmark tool `scripts/run_apply_load_matrix.py`, producing `/home/devbox/apply-load/bucket-page-reuse-final-review-20260410-022959/results.csv`.
+7. **Can the improvement be explained without the optimization?** FAIL — the single borderline tail-latency win is overshadowed by broader regressions and is better explained as run-to-run variance than a reliable improvement.
+8. **Is this optimization novel?** YES — but novelty does not overcome the negative benchmark result.
+
+### Rejection Reason
+
+The code change removes a real micro-inefficiency, but the independent apply-load benchmark run shows no net benefit and substantial regressions in the SAC scenarios, including a **19.03% worse p99** for `sac,TX=3200,T=1`. The optimization claim is therefore not supported for the project's benchmarked workloads.
+
+### Failed Checks
+
+- 2
+- 4
+- 7

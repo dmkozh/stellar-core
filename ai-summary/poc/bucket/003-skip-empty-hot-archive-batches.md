@@ -89,3 +89,27 @@ The hypothesis mechanism is confirmed. When `HotArchiveBucket::fresh()` is calle
 - **Change description**: In `HotArchiveBucket::fresh()`, if both `archivedEntries` and `restoredEntries` are empty, return `std::make_shared<HotArchiveBucket>()` without creating a file. In `prepareFirstLevel<HotArchiveBucket>`, if the snap from `fresh()` is empty (`isEmpty()`), set the next curr to `mCurr` directly instead of calling `prepare()`. The spill cascade in `addBatchInternal` still runs normally.
 - **Correctness check**: Run `[bucket]` tag tests — especially any HotArchiveBucketList tests. Also `[bucketlist]` tests. The BucketList hash must remain identical when the hot archive receives no entries.
 - **Benchmark focus**: Metric `bucket.merge-time.level-0` and `bucket.batch.archiveObjectInsert` timers for hot archive. Expected improvement: microseconds per ledger — likely not measurable in wall-clock benchmarks, but should eliminate the unnecessary file I/O visible in filesystem traces.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-10
+**PoC by**: claude-opus-4.6, high
+
+### Changes Made
+
+1. **`src/bucket/HotArchiveBucket.cpp:fresh` (lines 16-44)** — Added early return at the top of `fresh()`: if both `archivedEntries` and `restoredEntries` are empty, return `std::make_shared<HotArchiveBucket>()` immediately. This avoids creating a `BucketOutputIterator` (which opens a temp file and writes a METAENTRY), computing a hash, building an index, and calling `adoptFileAsBucket`.
+
+2. **`src/bucket/BucketListBase.cpp:prepareFirstLevel<HotArchiveBucket>` (lines 240-254)** — After calling `fresh()`, check `snap->isEmpty()`. If the fresh bucket is empty (no entries this ledger), return without calling `prepare()`. The subsequent `commit()` in `addBatchInternal` is a no-op since `mNextCurr` remains in `FB_CLEAR` state, leaving `mCurr` unchanged. The spill cascade in `addBatchInternal` still runs normally for all 11 levels.
+
+### Demonstration
+
+The optimization eliminates unnecessary file I/O, SHA256 hashing, index creation, and merge machinery for empty hot-archive batches. When no entries are archived or restored (common in apply-load benchmarks with high TTLs), `fresh()` returns instantly without touching the filesystem. This removes the per-ledger overhead of creating a temp file, writing ~50 bytes of METAENTRY XDR, computing a hash, and going through the adopt/dedup path — saving an estimated 50-200µs per ledger in steady state.
+
+### Test Results
+
+- All 47 tests tagged `[bucket]` pass (1,791,020 assertions)
+- All 17 tests tagged `[bucketlist]` pass (177,243 assertions)
+- Full test suite (`make check`): 1 pre-existing failure in "online self-check runs on a schedule" (SelfCheckTests.cpp) — confirmed to fail identically without the optimization. All other partitions pass.
