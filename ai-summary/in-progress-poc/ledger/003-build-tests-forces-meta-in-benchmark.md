@@ -293,3 +293,38 @@ Full test suite passed: `make check` with `NUM_PARTITIONS=$(nproc)` — "All 2 t
 ### Summary
 
 The SAC T=8 "regression" reported in the final review was environmental noise, not a real regression. Baseline-to-baseline variance reaches ±8.84%, and same-session comparison shows SAC T=8 is neutral (+0.60%). The optimization reliably improves T=1 workloads by 7-9% (above the noise floor) and is neutral for T=8 workloads. The change removes unnecessary XDR deep-copy overhead from the benchmark measurement path, making absolute throughput numbers more accurate and raising the optimization ceiling for future work.
+
+---
+
+## Final Review — Needs Revision
+
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+
+### What Needs Fixing
+
+My independent benchmark run does not support the current framing. The code-path claim still looks real, but the measured result is internally inconsistent with the proposed mechanism: the run at `/home/devbox/apply-load/final-review-h003-20260410-160600/results.csv` showed large wins in the 8-thread cases while the 1-thread cases were flat-to-worse, including large tail regressions:
+
+- `sac,TX=3200,T=1`: **-1.95% p50**, **-16.00% p95**, **-15.20% p99**
+- `sac,TX=3200,T=8`: **+17.76% p50**, **+8.03% p95**, **+12.70% p99**
+- `custom_token,TX=1600,T=1`: **+0.25% p50**, **-8.54% p95**, **-9.51% p99**
+- `custom_token,TX=1600,T=8`: **+13.81% p50**, **-0.61% p95**, **-4.82% p99**
+- `soroswap,TX=1000,T=1`: **-3.77% p50**, **-23.68% p95**, **-27.78% p99**
+- `soroswap,TX=1000,T=8`: **+25.99% p50**, **+24.85% p95**, **+25.94% p99**
+
+That pattern is the opposite of what the writeup currently argues. Removing tx-meta deep-copy work should, if anything, be easier to see in the more serial `T=1` cases, not produce double-digit tail regressions there while the `T=8` cases improve dramatically. On the current evidence I cannot tell whether the improvement is real, whether the regressions are real, or whether this is still benchmark noise / host-load drift.
+
+### Revision Instructions
+
+1. Re-run baseline and optimized builds as a paired experiment under the same session conditions instead of relying on `ai-summary/baseline.csv` alone. Alternate or otherwise control run order so host-load drift cannot map onto `T=1` vs `T=8`.
+2. Explain why my independent run shows regressions in all three `T=1` scenarios but large wins in `T=8`, or narrow the claim to the scenarios that remain positive across repeated paired runs.
+3. Include repeated paired measurements and variance for every scenario you want to claim as improved. A single mixed matrix result is not enough for confirmation in this shared benchmark environment.
+4. Only bring this back for confirmation once the claimed improvement survives an adversarial comparison that rules out uncontrolled noise as the explanation.
+
+### Checks Passed So Far
+
+- Code tracing still confirms that `BUILD_TESTS` forces tx-meta work in the benchmark path unless suppressed by the new flag.
+- The new config flag remains wired correctly and the matrix runner preserves it from `docs/apply-load-benchmark-sac.cfg`.
+- Build succeeded, and focused tx-meta-dependent smoke tests passed (`payment events`, `Failed write still causes ttl observation`).
+- The full suite showed no ledger-related regression signal: `make check` twice failed only in the unrelated overlay test `TCPPeer can communicate`, and rerunning that exact test plus the exact failing partition passed.
+- An independent apply-load matrix completed at `/home/devbox/apply-load/final-review-h003-20260410-160600/results.csv`.
