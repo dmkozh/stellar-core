@@ -113,3 +113,32 @@ The optimization eliminates unnecessary file I/O, SHA256 hashing, index creation
 - All 47 tests tagged `[bucket]` pass (1,791,020 assertions)
 - All 17 tests tagged `[bucketlist]` pass (177,243 assertions)
 - Full test suite (`make check`): 1 pre-existing failure in "online self-check runs on a schedule" (SelfCheckTests.cpp) — confirmed to fail identically without the optimization. All other partitions pass.
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Exercises claimed inefficiency**: YES — the patch removes the meta-only bucket creation and merge setup on empty hot-archive ledgers.
+2. **Realistic preconditions**: YES — the apply-load benchmark configs use very large TTLs, so empty hot-archive batches are normal.
+3. **Inefficiency vs by-design**: BY DESIGN — those meta-only buckets are part of the canonical hot-archive bucket state. `BucketManager::snapshotLedger` folds the hot-archive bucket-list hash into `LedgerHeader.bucketListHash`, and `HistoryArchiveState` / `ResolveSnapshotWork` rely on the resulting bucket lineage being publishable and self-checkable. Replacing protocol-versioned meta-only buckets with zero-hash empty buckets changes state, not just local work.
+4. **Final severity**: NOT ASSESSED — the optimization is unsafe, so performance impact does not matter.
+5. **In scope**: YES — this is bucket/apply-load code.
+6. **Benchmark methodology**: NOT RUN — correctness failed before benchmark validation.
+7. **Alternative explanations**: RULED OUT — the failing self-check partition reproduces with the optimization and passes after reverting only `src/bucket/BucketListBase.cpp` and `src/bucket/HotArchiveBucket.cpp`.
+8. **Novelty**: IRRELEVANT — the change is not admissible.
+
+### Rejection Reason
+
+The optimization is not behavior-preserving. On protocol-23+ ledgers with no archival activity, the current code still creates protocol-versioned meta-only hot-archive buckets, and those hashes flow into the canonical hot-archive bucket list and `LedgerHeader.bucketListHash`. The PoC replaces them with zero-hash empty buckets and skips the level-0 merge, which invalidates the publish/self-check path: the full-suite failure reproduces in the `online self-check runs on a schedule` partition with a `ResolveSnapshotWork.cpp:43` assertion, and the exact same partition passes after reverting the two bucket changes and rebuilding.
+
+### Failed Checks
+
+- 3 — The removed work is part of the canonical bucket-list/history-state evolution, not redundant local overhead.
+- 6 — Performance validation was blocked by a correctness regression.
