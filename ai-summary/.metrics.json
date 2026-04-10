@@ -1,7 +1,7 @@
 {
-  "hypothesis_viable": 59,
-  "hypothesis_not_viable": 52,
-  "review_viable": 32,
+  "hypothesis_viable": 61,
+  "hypothesis_not_viable": 54,
+  "review_viable": 33,
   "review_not_viable": 26,
   "poc_viable": 12,
   "poc_not_viable": 0,
@@ -12,9 +12,9 @@
   "publishes": 0,
   "agent_errors": 2,
   "agent_timeouts": 0,
-  "total_spawned": 108,
+  "total_spawned": 110,
   "input_tokens": 0,
-  "output_tokens": 2266995,
+  "output_tokens": 2315704,
   "cache_read_tokens": 0,
   "per_subsystem": {
     "soroban-env": {
@@ -43,8 +43,8 @@
     "bucket": {
       "poc_viable": 2,
       "final_review_not_viable": 2,
-      "hypothesis_viable": 6,
-      "hypothesis_not_viable": 4,
+      "hypothesis_viable": 8,
+      "hypothesis_not_viable": 6,
       "review_viable": 6
     },
     "crypto": {
@@ -76,7 +76,7 @@
       "hypothesis_viable": 6,
       "hypothesis_not_viable": 5,
       "review_not_viable": 3,
-      "review_viable": 2
+      "review_viable": 3
     }
   },
   "per_model": {
@@ -87,8 +87,8 @@
     },
     "claude-opus-4-6": {
       "review_not_viable": 26,
-      "review_viable": 32,
-      "hypothesis_viable": 20,
+      "review_viable": 33,
+      "hypothesis_viable": 22,
       "poc_viable": 12,
       "errors": 2
     },
@@ -97,12 +97,12 @@
   "tokens_by_stage": {
     "hypothesis": {
       "input": 0,
-      "output": 906388,
+      "output": 936977,
       "cache_read": 0
     },
     "reviewer": {
       "input": 0,
-      "output": 764819,
+      "output": 782939,
       "cache_read": 0
     },
     "final_review": {
@@ -129,7 +129,7 @@
     },
     "claude-opus-4-6": {
       "input": 0,
-      "output": 1738392,
+      "output": 1787101,
       "cache_read": 0
     },
     "claude-sonnet-4-6": {
@@ -668,6 +668,16 @@
       "poc",
       "claude-opus-4-6",
       3217.0
+    ],
+    [
+      "reviewer",
+      "claude-opus-4-6",
+      358.2
+    ],
+    [
+      "hypothesis",
+      "claude-opus-4-6",
+      813.6
     ]
   ],
   "costs": {
@@ -676,10 +686,10 @@
         "models": {
           "claude-opus-4-6": {
             "input_tokens": 0,
-            "output_tokens": 1738392,
+            "output_tokens": 1787101,
             "cache_read_tokens": 0,
-            "total_cost": 7.38,
-            "premium_requests": 246
+            "total_cost": 7.56,
+            "premium_requests": 252
           },
           "claude-sonnet-4-6": {
             "input_tokens": 0,
@@ -696,23 +706,23 @@
             "premium_requests": 23
           }
         },
-        "provider_cost": 8.1
+        "provider_cost": 8.28
       }
     },
-    "total_cost": 8.1,
+    "total_cost": 8.28,
     "stages": {
       "hypothesis": {
         "copilot": {
           "input_tokens": 0,
-          "output_tokens": 906388,
-          "premium_requests": 41
+          "output_tokens": 936977,
+          "premium_requests": 44
         }
       },
       "reviewer": {
         "copilot": {
           "input_tokens": 0,
-          "output_tokens": 764819,
-          "premium_requests": 177
+          "output_tokens": 782939,
+          "premium_requests": 180
         }
       },
       "final_review": {
