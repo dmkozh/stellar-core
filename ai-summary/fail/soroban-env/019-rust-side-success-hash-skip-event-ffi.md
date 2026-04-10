@@ -120,3 +120,42 @@ preservation), these bridge optimizations accumulate.
 4. When metadata IS enabled (production), events still need to cross FFI for
    meta population, so savings are reduced to just the hash computation
    (~400-800ns per TX).
+
+---
+
+## Review
+
+**Verdict**: NOT_VIABLE
+**Date**: 2026-04-10
+**Reviewed by**: claude-opus-4-6, high
+**Novelty**: FAIL — duplicate of reviewed soroban-env/H002 and reviewed soroban/H004
+**Failed At**: reviewer
+
+### Trace Summary
+
+Traced the complete success path from Rust host output through FFI to C++ processing. Confirmed the claimed inefficiency is real (decode + re-encode cycle for hashing). However, this optimization is already fully captured by reviewed H002 ("Hash Success Preimage From Returned XDR and Skip C++ Decode When Meta Is Off") which proposes raw-byte hashing on the C++ side. Reviewed soroban/H004 covers the identical optimization from a different subsystem angle. The ONLY incremental claim of H001 beyond H002 is moving the hash to Rust and skipping event FFI transfer — but the incremental savings are negligibly small.
+
+### Code Paths Examined
+
+- `src/rust/src/soroban_proto_any.rs:488-516` — Success path wraps `encoded_invoke_result` and `encoded_contract_events` as `RustBuf` vectors. The `.into()` and `.map(RustBuf::from).collect()` operations involve lightweight `Vec<u8>` wrapping, not deep copies.
+- `src/rust/src/bridge.rs:34-55` — `InvokeHostFunctionOutput.contract_events` is `Vec<RustBuf>`. CXX transfers these as `rust::Vec<RustBuf>` which involves pointer-level moves, not byte-level copies.
+- `src/transactions/InvokeHostFunctionOpFrame.cpp:706-753` — `collectEvents()` iterates event buffers. The `buf.data.size()` calls for size validation are cheap. The `xdr_from_opaque` decode at line 735 is the expensive part — already addressed by H002.
+- `src/transactions/InvokeHostFunctionOpFrame.cpp:816-829` — `finalizeSuccess()` decode + hash — already addressed by H002.
+
+### Why It Failed
+
+This hypothesis is substantially equivalent to already-reviewed H002 (soroban-env) and H004 (soroban). The core optimization — hash from raw XDR bytes and skip C++ decode when meta is off — is identical across all three.
+
+The only novel claim is that computing the hash on the Rust side and skipping event buffer FFI transfer saves additional time. Analysis of the incremental savings:
+
+1. **Hash computation location (Rust vs C++)**: The SHA-256 computation cost is identical regardless of which side performs it (~200-300ns). No savings from relocation.
+
+2. **Skipping event FFI transfer**: CXX transfers `rust::Vec<RustBuf>` by moving pointers, not copying bytes. The `RustBuf::from(Vec<u8>)` wrapping on the Rust side is a zero-copy wrapper. The actual FFI transfer cost per event is ~10-30ns (pointer move + metadata), not the ~100-150ns estimated in the hypothesis. For SAC (1 event): ~10-30ns. For soroswap (4 events): ~40-120ns. At 6400 TXs: 0.06-0.19ms — completely unmeasurable against ~750ms baseline.
+
+3. **Added complexity**: Requires a new `meta_enabled` FFI parameter, a `success_preimage_hash` field in `InvokeHostFunctionOutput`, conditional event buffer construction in Rust, and new SHA-256 dependency in the bridge code. This is significantly more invasive than H002's C++-only change.
+
+The incremental improvement (~0.01-0.03%) does not justify the added FFI interface complexity, and the optimization it shares with H002 is already captured there.
+
+### Lesson Learned
+
+When a hypothesis positions itself as a "more aggressive variant" of an existing optimization, the incremental savings must be evaluated against the base optimization, not against the unoptimized baseline. CXX FFI transfer of `rust::Vec<RustBuf>` is pointer-level, not byte-copy-level, making FFI transfer avoidance less impactful than it appears.
