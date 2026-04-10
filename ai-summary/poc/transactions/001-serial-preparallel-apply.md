@@ -58,7 +58,7 @@ The `GlobalParallelApplyLedgerState` constructor (ParallelApplyUtils.cpp:300-322
 - `src/transactions/TransactionFrame.cpp:1584-1636` (`processSignatures`) — Creates LedgerSnapshot, checks op signatures, removes one-time signers, checks all signatures used.
 - `src/ledger/LedgerManagerImpl.cpp:2534-2553` (`applySorobanStages`) — Constructs `GlobalParallelApplyLedgerState` (triggers the serial pre-pass), then iterates stages calling `applySorobanStage`.
 - `src/ledger/LedgerManagerImpl.cpp:2427-2450` (`applySorobanStageClustersInParallel`) — Launches `std::async` threads per cluster; this is the parallel phase that happens AFTER the serial pre-pass.
-- `src/transactions/InvokeHostFunctionOpFrame.cpp:1282-1311` (`doCheckValidForSoroban`) — Only checks wasm size or asset validity; trivially thread-safe.
+- `src/transactions/InvokeHostFunctionOpFrame.cpp:1282-1311` (`doCheckValidForSoroban`) — Only checks wasm size or asset validity; trivially thread-safe and should be moved to the parallel phase or done in the pre-validation pass.
 - `src/simulation/ApplyLoad.cpp:2136-2149` — Benchmark primes signature cache and validates txs before timing starts.
 
 ### Findings
@@ -77,3 +77,48 @@ The `GlobalParallelApplyLedgerState` constructor (ParallelApplyUtils.cpp:300-322
 - **Change description**: Split `preParallelApply` into two phases: (1) A parallel pre-validation pass that computes resource fees, validates Soroban resources, performs footprint dedup, and runs op-level `checkValid` for all txs concurrently; (2) A minimal serial mutation pass that only opens a LedgerTxn, loads the source account, checks seq num, calls `processSeqNum`, `processSignatures`, commits, and records meta. The op-level `checkValid` for `InvokeHostFunctionOpFrame::doCheckValidForSoroban` (line 1282) only checks wasm size or asset validity — trivially thread-safe and should be moved to the parallel phase or done in the pre-validation pass.
 - **Correctness check**: Existing tests covering parallel apply: search for `[soroban]` tag tests, `ParallelSorobanLedgerClose` tests, and the apply-load benchmark itself. The key invariant to preserve is that `processSeqNum` must see the committed state from all previously-processed txs (the ordering within the serial loop must be maintained for mutations).
 - **Benchmark focus**: Run `scripts/run_apply_load_matrix.py` comparing T=1 vs T=8 for `sac,TX=6400`. The metric to improve is total ledger close time at T=8. Profile the serial pre-pass duration (TracyZone `preParallelApply`) vs. the parallel `parallelApply` duration. Target: 10-20% reduction in T=8 close time for SAC workload.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-10
+**PoC by**: claude-opus-4.6, high
+
+### Changes Made
+
+1. **`src/transactions/TransactionFrame.h`** (~lines 77-83, 308-327): Added `SorobanPreValidationResult` struct (holds `valid` flag and pre-computed `FeePair resourceFee`), `mSorobanPreValidation` mutable cache member, and two `preValidateSorobanPure()` method declarations (public single-arg overload and private multi-arg overload).
+
+2. **`src/transactions/TransactionFrame.cpp`** (~lines 2188-2362): Implemented `preValidateSorobanPure()` — extracts all pure (state-independent) checks from `commonValidPreSeqNum` into a standalone method: envelope type checks, extra signer validation, Soroban ops consistency, Soroban resource validation, resource fee computation (Rust FFI), footprint dedup (UnorderedSet), time bounds, and frozen key check. Fee-related checks that depend on `chargeFee` (resource fee vs full fee, inclusion fee minimum) are skipped in v23+ and deferred to the serial phase.
+
+3. **`src/transactions/TransactionFrame.cpp`** (~lines 1336-1390): Modified `commonValidPreSeqNum` to check `mSorobanPreValidation` cache at entry — when populated and valid, skips all pure checks and jumps directly to source account loading. Runs deferred v23+ fee checks with correct `chargeFee` context. When invalid, immediately returns `txSOROBAN_INVALID`.
+
+4. **`src/transactions/TransactionFrame.cpp`** (~lines 2128-2143): Modified `commonPreApply` to use cached `sorobanResourceFee` from pre-validation when available, avoiding redundant Rust FFI call.
+
+5. **`src/transactions/TransactionFrame.cpp`** (~lines 2400-2410): Modified `preParallelApply` to use `checkValidForSorobanPreApply` instead of `OperationFrame::checkValid`, avoiding redundant LedgerSnapshot creation and source account loading.
+
+6. **`src/transactions/TransactionFrameBase.h`** (~lines 169-173): Added pure virtual `preValidateSorobanPure()` declaration.
+
+7. **`src/transactions/FeeBumpTransactionFrame.h`** (~line 90): Added `preValidateSorobanPure` override declaration.
+
+8. **`src/transactions/FeeBumpTransactionFrame.cpp`** (~lines 122-140): Implemented `preValidateSorobanPure` — delegates to inner tx's method, passing the outer envelope's contents hash (needed for `isFreezeBypassTx` check).
+
+9. **`src/transactions/OperationFrame.h`** (~line 92): Added `checkValidForSorobanPreApply` declaration.
+
+10. **`src/transactions/OperationFrame.cpp`** (~lines 220-245): Implemented `checkValidForSorobanPreApply` — lightweight Soroban op validation that calls `isOpSupported` + `doCheckValidForSoroban` directly, skipping LedgerSnapshot creation and redundant source account loading.
+
+11. **`src/transactions/ParallelApplyUtils.cpp`** (~lines 324-370): Added parallel pre-validation phase in `preParallelApplyAndCollectModifiedClassicEntries` — collects all Soroban txs, batches them across `std::thread::hardware_concurrency()` threads via `std::async`, runs `preValidateSorobanPure` on each tx in parallel, then awaits all futures before the existing serial loop.
+
+12. **`src/transactions/test/TransactionTestFrame.h/cpp`**: Added `preValidateSorobanPure` override to satisfy the pure virtual requirement (delegates to inner frame).
+
+### Demonstration
+
+The optimization splits the serial `preParallelApply` bottleneck into two phases: a parallel pre-validation pass that performs all pure (state-independent) checks concurrently across worker threads, and a minimal serial mutation pass that only handles the truly order-dependent operations (sequence number updates, signature processing). The serial `commonValidPreSeqNum` then skips all previously-validated pure checks via a per-tx cache, reducing main-thread time per transaction. Additionally, the op-level `checkValid` in the serial phase is replaced with a lightweight variant that avoids creating a redundant LedgerSnapshot and reloading the source account. Together, these changes should reduce the Amdahl's-law ceiling on T=8 parallel apply by moving 50-60% of per-tx serial work to a concurrent phase.
+
+### Test Results
+
+- All 109 `[soroban]` tests passed (3,650,088 assertions)
+- All 21 `[parallelapply]` tests passed (2,797,084 assertions)
+- All 124 `[tx]` tests passed (572,733 assertions)
+- Full test suite (`make check`): All tests passed
