@@ -3,7 +3,7 @@
   "hypothesis_not_viable": 13,
   "review_viable": 6,
   "review_not_viable": 4,
-  "poc_viable": 1,
+  "poc_viable": 2,
   "poc_not_viable": 0,
   "final_review_viable": 0,
   "final_review_not_viable": 2,
@@ -12,9 +12,9 @@
   "publishes": 0,
   "agent_errors": 0,
   "agent_timeouts": 0,
-  "total_spawned": 19,
+  "total_spawned": 20,
   "input_tokens": 0,
-  "output_tokens": 369501,
+  "output_tokens": 388162,
   "cache_read_tokens": 0,
   "per_subsystem": {
     "soroban-env": {
@@ -33,7 +33,7 @@
       "review_viable": 2
     },
     "bucket": {
-      "poc_viable": 1,
+      "poc_viable": 2,
       "final_review_not_viable": 1
     }
   },
@@ -46,7 +46,7 @@
       "review_not_viable": 4,
       "review_viable": 6,
       "hypothesis_viable": 6,
-      "poc_viable": 1
+      "poc_viable": 2
     }
   },
   "tokens_by_stage": {
@@ -67,7 +67,7 @@
     },
     "poc": {
       "input": 0,
-      "output": 24008,
+      "output": 42669,
       "cache_read": 0
     }
   },
@@ -79,7 +79,7 @@
     },
     "claude-opus-4-6": {
       "input": 0,
-      "output": 282792,
+      "output": 301453,
       "cache_read": 0
     }
   },
@@ -168,6 +168,11 @@
       "hypothesis",
       "claude-opus-4-6",
       1603.9
+    ],
+    [
+      "poc",
+      "claude-opus-4-6",
+      1648.5
     ]
   ],
   "costs": {
@@ -176,10 +181,10 @@
         "models": {
           "claude-opus-4-6": {
             "input_tokens": 0,
-            "output_tokens": 282792,
+            "output_tokens": 301453,
             "cache_read_tokens": 0,
-            "total_cost": 1.17,
-            "premium_requests": 39
+            "total_cost": 1.26,
+            "premium_requests": 42
           },
           "gpt-5.4": {
             "input_tokens": 0,
@@ -189,10 +194,10 @@
             "premium_requests": 4
           }
         },
-        "provider_cost": 1.29
+        "provider_cost": 1.38
       }
     },
-    "total_cost": 1.29,
+    "total_cost": 1.38,
     "stages": {
       "hypothesis": {
         "copilot": {
@@ -218,8 +223,8 @@
       "poc": {
         "copilot": {
           "input_tokens": 0,
-          "output_tokens": 24008,
-          "premium_requests": 3
+          "output_tokens": 42669,
+          "premium_requests": 6
         }
       }
     }
