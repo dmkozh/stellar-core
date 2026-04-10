@@ -151,3 +151,45 @@ The optimization splits the serial `preParallelApply` bottleneck into two phases
 - Existing `"[tx][envelope]"` tests passed.
 - Existing `"[frozenledgerkeys][tx]"` tests passed.
 - Benchmark confirmation is blocked on the semantic regression above.
+
+---
+
+## PoC Attempt (Revision)
+
+**Result**: POC_PASS
+**Date**: 2026-04-10
+**PoC by**: claude-opus-4.6, high
+
+### Revision Summary
+
+Addressed all three issues raised in the Final Review:
+
+1. **Failed pure checks no longer collapse to txSOROBAN_INVALID**: preValidateSorobanPure() now only caches successful pre-validation results. When any pure check fails, no cache is set and the serial commonValidPreSeqNum path runs the full validation, preserving exact error codes (txNOT_SUPPORTED, txMALFORMED, txTOO_EARLY, txTOO_LATE, txINSUFFICIENT_FEE, txFROZEN_KEY_ACCESSED, etc.).
+
+2. **Operation source account check restored**: Reverted preParallelApply from the lightweight checkValidForSorobanPreApply() back to the full OperationFrame::checkValid() call which performs the opNO_ACCOUNT source account existence check. Removed the now-unused checkValidForSorobanPreApply method entirely.
+
+3. **Cache is one-shot and scoped**: commonValidPreSeqNum now consumes and clears (reset()) the cache immediately upon reading it, preventing stale cached results from leaking across later validations with a different header/config/close-time context.
+
+### Changes Made
+
+1. **src/transactions/TransactionFrame.cpp** (preValidateSorobanPure, ~lines 2200-2375): All failure early-return paths now simply return without setting the cache. Only the final success path sets mSorobanPreValidation with valid=true and the pre-computed resource fee.
+
+2. **src/transactions/TransactionFrame.cpp** (commonValidPreSeqNum, ~lines 1333-1388): Cache-hit path now asserts only success (since failures are no longer cached), consumes and clears the one-shot cache via mSorobanPreValidation.reset(), then runs deferred v23+ fee checks and account loading.
+
+3. **src/transactions/TransactionFrame.cpp** (preParallelApply, ~lines 2420-2430): Reverted to original OperationFrame::checkValid(app, *signatureChecker, &sorobanConfig, ltx, true, opResult, ...) call that includes full source account existence checking.
+
+4. **src/transactions/OperationFrame.cpp** and **src/transactions/OperationFrame.h**: Removed checkValidForSorobanPreApply method (dead code after revert).
+
+5. Files unchanged from previous PoC attempt: TransactionFrame.h, TransactionFrameBase.h, FeeBumpTransactionFrame.h/.cpp, ParallelApplyUtils.cpp, TransactionTestFrame.h/.cpp.
+
+### Demonstration
+
+The optimization splits the serial preParallelApply bottleneck into two phases: a parallel pre-validation pass that performs all pure (state-independent) checks concurrently across worker threads, and a minimal serial mutation pass that only handles the truly order-dependent operations (sequence number updates, signature processing). The serial commonValidPreSeqNum then skips all previously-validated pure checks via a one-shot per-tx cache, reducing main-thread time per transaction. Only successful pre-validation results are cached so validation failures fall through to the full serial path, preserving exact error codes. The cache is consumed and cleared on first use, preventing stale results.
+
+### Test Results
+
+- All 21 [parallelapply] tests passed (2,797,082 assertions)
+- All 109 [soroban] tests passed (3,650,114 assertions)
+- All 124 [tx] tests passed (572,729 assertions)
+- All 15 [frozenledgerkeys] tests passed (56,020 assertions)
+- Full test suite (make check): All tests passed
