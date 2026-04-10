@@ -141,3 +141,37 @@ close time. This falls below the Low (5-10%) threshold into Informational.
 - **Change description**: Replace individual `toCxxBuf` calls with a batch serialization approach: (1) compute total size via `xdr_argpack_size` for all entries, (2) allocate a single contiguous buffer, (3) serialize all entries with length prefixes, (4) pass the single buffer plus an offset/length array across the FFI boundary. On the Rust side (soroban_proto_any.rs), create a custom iterator that yields `&[u8]` slices from the contiguous buffer — the existing `e2e_invoke::invoke_host_function` API already accepts `I: ExactSizeIterator<Item = T>` where `T: AsRef<[u8]>`, so no soroban-env-host changes needed.
 - **Correctness check**: Run `[soroban]` and `[tx]` tagged tests with `--ll fatal -r simple --abort --disable-dots` to verify no regressions
 - **Benchmark focus**: SAC scenario at T=1 and T=8. Expected improvement: <5% of per-tx time. Use Tracy or perf to measure `toCxxBuf` + `addReads` time specifically to confirm the micro-level improvement even if end-to-end close time change is within noise.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2025-07-23
+**PoC by**: claude-opus-4.6, high
+
+### Changes Made
+
+1. **`src/rust/src/bridge.rs`** (~lines 17-24): Added `CxxBatchBuf` struct with `data: UniquePtr<CxxVector<u8>>` and `lengths: UniquePtr<CxxVector<u32>>`. Changed `invoke_host_function` signature: `auth_entries`, `ledger_entries`, `ttl_entries` params from `&Vec<CxxBuf>` to `&CxxBatchBuf`.
+
+2. **`src/rust/src/common.rs`** (~lines 34-78): Added `BatchBufIter<'a>` struct implementing `Iterator<Item = &'a [u8]>` and `ExactSizeIterator`. Added `CxxBatchBuf::iter()` method that yields `&[u8]` slices by walking the contiguous data buffer using the lengths array.
+
+3. **`src/rust/src/lib.rs`**: Added `use rust_bridge::CxxBatchBuf;` re-export.
+
+4. **`src/rust/src/soroban_invoke.rs`** (~lines 15-19): Updated `invoke_host_function` signature to accept `&CxxBatchBuf` for the three batch params.
+
+5. **`src/rust/src/soroban_proto_any.rs`** (~lines 317-323, 398-404, 443-458): Updated `invoke_host_function` and `invoke_host_function_or_maybe_panic` signatures. Changed inner call to pass `.as_ref()` for individual `CxxBuf` params and `.iter()` for `CxxBatchBuf` params to satisfy the generic `T: AsRef<[u8]>, I: ExactSizeIterator<Item = T>` bounds.
+
+6. **`src/rust/src/soroban_proto_all.rs`** (~lines 1169-1174): Updated `HostModule::invoke_host_function` fn pointer type to use `&CxxBatchBuf`.
+
+7. **`src/rust/src/soroban_test_extra_protocol.rs`** (~lines 27-31): Updated `maybe_invoke_host_function_again_and_compare_outputs` signature.
+
+8. **`src/transactions/InvokeHostFunctionOpFrame.cpp`** (~lines 40-97, 324-326, 366-367, 504-522, 579-607, 1084, 1141-1145): Added `CxxBatchBufBuilder` class in anonymous namespace. Replaced `rust::Vec<CxxBuf> mLedgerEntryCxxBufs/mTtlEntryCxxBufs` with `CxxBatchBufBuilder mLedgerEntryBatch/mTtlEntryBatch`. Updated `addReads` to use `append()`/`appendEmpty()`. Updated `invokeHostFunction` to build batch buffers and pass them. Updated `handleArchivedEntry` to use batch builders.
+
+### Demonstration
+
+The optimization replaces per-entry `CxxBuf` heap allocations (2 allocations per entry, 2N total per batch) with a single contiguous `CxxBatchBuf` containing all serialized XDR data plus a parallel lengths array (2 allocations total regardless of batch size). For a SAC transfer with ~11 CxxBufs (22 heap allocations), this reduces to 6 allocations (3 batches x 2 allocations each). The Rust-side `BatchBufIter` yields zero-copy `&[u8]` slices that satisfy the existing `ExactSizeIterator<Item: AsRef<[u8]>>` generic bounds in soroban-env-host, requiring no changes to the host internals.
+
+### Test Results
+
+All 109 Soroban-tagged tests passed (3,650,114 assertions). Full test suite (`make check` with NUM_PARTITIONS=$(nproc)) passed: all selftest-nopg partitions and check-nondet passed with exit code 0. No regressions detected.
