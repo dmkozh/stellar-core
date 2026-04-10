@@ -124,3 +124,33 @@ The optimization eliminates redundant SHA-256 + XDR serialization from every `un
 ### Test Results
 
 Full test suite passed: `make check` with `NUM_PARTITIONS=$(nproc)` completed with "All 2 tests passed" (selftest-nopg and check-nondet partitioned test suites). All Rust tests also passed. No regressions detected.
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Exercises claimed inefficiency**: YES — `ValueEntry::copyKey()` / `hash()` do recompute `getTTLKey()` and its SHA-256 work, and the patch removes that recomputation.
+2. **Realistic preconditions**: NO — `collectClusterFootprintEntriesFromGlobal()` preloads most Soroban footprint and TTL entries into `mThreadEntryMap`, so `mInMemorySorobanState.get()` is not a normal hot-path lookup. The remaining `updateState()` work is once per ledger, and the expensive invariant snapshot copy is disabled with `INVARIANT_EXTRA_CHECKS=false`.
+3. **Inefficiency vs by-design**: INEFFICIENCY — the recomputation is unnecessary for correctness, but it is too cold to matter in the measured apply-load path.
+4. **Benchmark outcome**: FAIL — the independent apply-load matrix at `/home/devbox/apply-load/ledger-ttl-hash-review-20260410-102807/results.csv` shows no consistent end-to-end win. Measured deltas versus `ai-summary/baseline.csv`: `sac,TX=3200,T=8` regressed p50 **-4.73%** / p95 **-4.65%**; `soroswap,TX=1000,T=1` regressed p99 **-8.89%**; `soroswap,TX=1000,T=8` regressed p50 **-9.13%**, p95 **-7.89%**, p99 **-5.38%**. The only >5% improvement was `custom_token,TX=1600,T=1` p99 **+6.98%**, which is isolated and outweighed by broader losses.
+5. **In scope**: YES — this is a ledger apply-path data structure.
+6. **Benchmark methodology**: CORRECT — rebuilt the tree, ran `NUM_PARTITIONS=$(nproc) STELLAR_CORE_TEST_PARAMS='--ll fatal -r simple --abort --disable-dots' make check -j$(nproc)`, then ran `python3 scripts/run_apply_load_matrix.py --stellar-core-bin ./src/stellar-core --build-tag ledger-ttl-hash-review` against the saved baseline on the same host with 200 ledgers per scenario.
+7. **Alternative explanations**: PLAUSIBLE — the small positive deltas fit normal run-to-run variance, and the extra 32-byte cached hash per contract-data entry plausibly increases memory pressure enough to erase the micro-optimization.
+8. **Novelty**: LIKELY NOVEL — nothing in the reviewed materials suggested this was a duplicate.
+
+### Rejection Reason
+
+The patch removes a real micro-inefficiency, but that work is not material in the apply-load benchmark path. The independent matrix does not show a stable improvement and instead regresses multiple scenarios, especially soroswap with 8 threads. That is not enough evidence to keep the optimization in the optimized branch.
+
+### Failed Checks
+
+- 2 — realistic preconditions
+- 4 — benchmark improvement / severity support
+- 7 — alternative explanations
