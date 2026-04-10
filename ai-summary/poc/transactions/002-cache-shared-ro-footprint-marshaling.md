@@ -77,3 +77,33 @@ Correctness constraints are preserved: the Rust bridge receives `const` referenc
 - **Change description**: Introduce an `unordered_map<LedgerKey, pair<vector<uint8_t>, vector<uint8_t>>>` on the `ThreadParallelApplyLedgerState` (or passed into each helper). On first access of an RO key, serialize and store the bytes. On subsequent accesses, create `CxxBuf` by copying from the cached bytes instead of calling `toCxxBuf`. Only cache entries from the `readOnly` footprint path (the `isReadOnly=true` call in `addFootprint`).
 - **Correctness check**: Existing Soroban parallel apply tests (`src/transactions/test/ParallelApplyTest.cpp`) and the apply-load benchmark itself validate correctness. The optimization must produce byte-identical CxxBuf contents.
 - **Benchmark focus**: Run `sac,TX=6400,T=8` and `soroswap,TX=1600,T=8` via `scripts/run_apply_load_matrix.py`. The metric to watch is total apply phase time (median and p99). Profile `addReads` specifically with Tracy/perf to measure the fraction of apply time spent in `toCxxBuf`. Expect 5-10% improvement on overall apply time for high-tx-count scenarios with shared RO footprints.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-10
+**PoC by**: claude-opus-4.6, high
+
+### Changes Made
+
+- **`src/transactions/ParallelApplyUtils.h`** (lines 113-127, 189-197): Added `mRoSerializationCache` (`mutable UnorderedMap<LedgerKey, std::vector<uint8_t>>`) to `ThreadParallelApplyLedgerState` and a `getRoSerializationCache()` accessor. The cache stores only serialized LedgerEntry bytes — TTL entries are deliberately excluded (see below).
+
+- **`src/transactions/InvokeHostFunctionOpFrame.cpp`** (lines 328-343): Added virtual methods `serializeLedgerEntryForBridge()` and `serializeTtlEntryForBridge()` to `InvokeHostFunctionApplyHelper` base class with default `toCxxBuf` behavior. Modified `addReads()` (lines 468-482) to call these virtual methods instead of `toCxxBuf` directly.
+
+- **`src/transactions/InvokeHostFunctionOpFrame.cpp`** (lines 1023-1025, 1190-1222, 1231): In `InvokeHostFunctionParallelApplyHelper`: added `mParallelThreadState` reference; overrode `serializeLedgerEntryForBridge()` to cache RO ledger entry bytes via `try_emplace`; overrode `serializeTtlEntryForBridge()` to NOT cache TTL entries (always delegates to `toCxxBuf`).
+
+### Important Correctness Finding
+
+The reviewer's guidance suggested caching both LedgerEntry and TTLEntry serializations. However, **TTL entries must NOT be cached** because `flushRoTTLBumpsInTxWriteFootprint()` can write buffered RO TTL bumps into `mThreadEntryMap` when a later RW tx in the same cluster overlaps. After flushing, `getLiveEntryOpt(ttlKey)` returns the bumped value, but the Rust host would receive stale cached bytes, causing the assertion `ttl(entry) >= ttl(oldEntryOpt.value())` at `ParallelApplyUtils.cpp:775` to fail. This was caught by the existing test "parallel txs / multi RO extensions with a single RW extension in a single stage and cluster."
+
+The optimization still achieves the primary benefit: contract code and contract instance entries (1KB-50KB) are the expensive serializations, while TTL entries (~40 bytes) have negligible serialization cost.
+
+### Demonstration
+
+The optimization replaces redundant per-tx XDR serialization of shared read-only ledger entries with a per-thread cache that serializes each unique RO entry once and copies the cached bytes for subsequent transactions. For SAC TX=6400,T=8, this reduces ~3,200 XDR serializations per thread to ~4 serializations + ~3,196 memcpy operations, eliminating the field-by-field XDR traversal overhead for contract code/instance entries in the 1KB-50KB range.
+
+### Test Results
+
+All 21 `[parallelapply]` tests pass (2,797,082 assertions). All 68 `[tx][soroban]` tests pass (49,282 assertions). Full test suite (`make check` with NUM_PARTITIONS=$(nproc)) passes — all 2 test targets (selftest-nopg, check-nondet) succeeded.
