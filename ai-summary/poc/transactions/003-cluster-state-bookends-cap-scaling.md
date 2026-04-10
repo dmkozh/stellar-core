@@ -85,3 +85,32 @@ The parallel apply bookend phases on the main thread perform significant redunda
 - **Change description**: The highest-impact single change is caching TTL key derivation to avoid repeated SHA-256. Options: (a) Add a `mutable UnorderedMap<LedgerKey, LedgerKey> mTTLKeyCache` on `TransactionFrameBase` or `ApplyStage`, populated lazily on first call; (b) Precompute all TTL keys during `ApplyStage` construction and store them in a stage-level map; (c) In `collectClusterFootprintEntriesFromGlobal`, check `mThreadEntryMap` for the TTL key BEFORE computing `getTTLKey` — this requires knowing the TTL key hash without computing it, so option (a) or (b) is preferable. Additionally, precompute `getReadWriteKeysForStage` result during `ApplyStage` construction (or lazily cache it on the stage) to avoid the post-worker rescan.
 - **Correctness check**: Existing parallel apply tests (`[soroban]` tag tests, apply-load benchmark). The TTL key cache must produce byte-identical results to `getTTLKey` since the SHA-256 output is used as the `keyHash` field in TTL ledger entries. Run `./src/stellar-core test --ll fatal -r simple --abort --disable-dots "[soroban]"` and the apply-load benchmark.
 - **Benchmark focus**: Run `scripts/run_apply_load_matrix.py` with `sac,TX=6400,T=8` and `custom_token,TX=3000,T=8`. Profile main-thread time in `collectClusterFootprintEntriesFromGlobal` and `getReadWriteKeysForStage` (TracyZone scoped). Target: 10-20% reduction in T=8 ledger close time by eliminating ~30-50ms of bookend SHA-256 overhead.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-10
+**PoC by**: claude-opus-4.6, high
+
+### Changes Made
+
+1. **`src/transactions/ParallelApplyStage.h`** (lines 7-10, 107-119, 144-158): Added `#include` for `LedgerHashUtils.h` and `UnorderedMap.h`. Added `mTTLKeyCache` (`UnorderedMap<LedgerKey, LedgerKey>`) and `mReadWriteKeys` (`std::unordered_set<LedgerKey>`) members to `ApplyStage`, along with `getReadWriteKeys()`, `getTTLKeyCache()` accessors and private `precomputeKeyCaches()` method.
+
+2. **`src/transactions/ParallelApplyStage.cpp`** (lines 5-57): Added `#include` for `LedgerTypeUtils.h` and `TransactionFrameBase.h`. Moved constructor out-of-line to call `precomputeKeyCaches()`. Implemented `precomputeKeyCaches()` which iterates all tx footprints once, computing and caching every TTL key and building the RW key set. Added accessor implementations.
+
+3. **`src/transactions/ParallelApplyUtils.h`** (lines 89-92, 133-137, 275-278): Added `mTTLKeyCache` const reference member to `ThreadParallelApplyLedgerState`. Updated constructor signature and corresponding `friend` declaration in `GlobalParallelApplyLedgerState` to accept the cache.
+
+4. **`src/transactions/ParallelApplyUtils.cpp`** (lines 99-157, 574-590, 593-602, 617-627, 822): Removed `getReadWriteKeysForStage()` free function entirely. Updated `buildRoTTLSet()` to use the TTL cache instead of `getTTLKey()`. Updated `commitChangesFromThreads()` to use `stage.getReadWriteKeys()` instead of rescanning. Updated `collectClusterFootprintEntriesFromGlobal()` to look up `mTTLKeyCache` instead of calling `getTTLKey()`. Updated `flushRoTTLBumpsInTxWriteFootprint()` to use `mTTLKeyCache`. Updated constructor to accept and store the cache reference.
+
+5. **`src/ledger/LedgerManagerImpl.cpp`** (line 2444-2445): Updated `ThreadParallelApplyLedgerState` construction to pass `stage.getTTLKeyCache()`.
+
+### Demonstration
+
+The optimization precomputes all TTL key derivations (SHA-256 over XDR-serialized keys) once during `ApplyStage` construction, and caches the stage-level RW key set. This eliminates ~51,000 redundant SHA-256 invocations from the main-thread bookend phases for SAC TX=6400,T=8 (est. 30-50ms), plus additional SHA-256 calls on worker threads in `flushRoTTLBumpsInTxWriteFootprint` and `buildRoTTLSet`. All `getTTLKey()` calls in the parallel apply path are replaced with O(1) cache lookups, reducing Amdahl's-law serial overhead and improving T=8 scaling.
+
+### Test Results
+
+- All 109 `[soroban]` tests passed (3,650,114 assertions), including 4 parallel apply partitioning tests (tiny/small/medium/large scenarios)
+- Full test suite passed: `selftest-nopg` PASS, `check-nondet` PASS, all Rust tests passed
