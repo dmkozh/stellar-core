@@ -1,8 +1,8 @@
 {
   "hypothesis_viable": 26,
   "hypothesis_not_viable": 20,
-  "review_viable": 10,
-  "review_not_viable": 11,
+  "review_viable": 11,
+  "review_not_viable": 12,
   "poc_viable": 0,
   "poc_not_viable": 0,
   "final_review_viable": 0,
@@ -12,21 +12,21 @@
   "publishes": 0,
   "agent_errors": 3,
   "agent_timeouts": 0,
-  "total_spawned": 36,
+  "total_spawned": 38,
   "input_tokens": 0,
-  "output_tokens": 693206,
+  "output_tokens": 731433,
   "cache_read_tokens": 0,
   "per_subsystem": {
     "bucket": {
       "review_not_viable": 2,
-      "review_viable": 3,
+      "review_viable": 4,
       "hypothesis_viable": 4,
       "hypothesis_not_viable": 1
     },
     "transaction-ledger": {
       "hypothesis_viable": 9,
       "hypothesis_not_viable": 10,
-      "review_not_viable": 4
+      "review_not_viable": 5
     },
     "ledger": {
       "final_review_revisions": 1,
@@ -48,9 +48,9 @@
   },
   "per_model": {
     "claude-opus-4-6": {
-      "review_not_viable": 11,
+      "review_not_viable": 12,
       "errors": 3,
-      "review_viable": 10,
+      "review_viable": 11,
       "hypothesis_viable": 11
     },
     "gpt-5.4": {
@@ -62,7 +62,7 @@
   "tokens_by_stage": {
     "reviewer": {
       "input": 0,
-      "output": 300402,
+      "output": 338629,
       "cache_read": 0
     },
     "hypothesis": {
@@ -89,7 +89,7 @@
   "tokens_by_model": {
     "claude-opus-4-6": {
       "input": 0,
-      "output": 543898,
+      "output": 582125,
       "cache_read": 0
     },
     "gpt-5.4": {
@@ -268,6 +268,16 @@
       "reviewer",
       "claude-opus-4-6",
       294.1
+    ],
+    [
+      "reviewer",
+      "claude-opus-4-6",
+      438.1
+    ],
+    [
+      "reviewer",
+      "claude-opus-4-6",
+      431.4
     ]
   ],
   "costs": {
@@ -276,10 +286,10 @@
         "models": {
           "claude-opus-4-6": {
             "input_tokens": 0,
-            "output_tokens": 543898,
+            "output_tokens": 582125,
             "cache_read_tokens": 0,
-            "total_cost": 2.43,
-            "premium_requests": 81
+            "total_cost": 2.61,
+            "premium_requests": 87
           },
           "claude-sonnet-4-6": {
             "input_tokens": 0,
@@ -296,16 +306,16 @@
             "premium_requests": 5
           }
         },
-        "provider_cost": 2.61
+        "provider_cost": 2.79
       }
     },
-    "total_cost": 2.61,
+    "total_cost": 2.79,
     "stages": {
       "reviewer": {
         "copilot": {
           "input_tokens": 0,
-          "output_tokens": 300402,
-          "premium_requests": 69
+          "output_tokens": 338629,
+          "premium_requests": 75
         }
       },
       "hypothesis": {

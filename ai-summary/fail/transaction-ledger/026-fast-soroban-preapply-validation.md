@@ -119,3 +119,52 @@ serially. Profile with Tracy or perf to measure time spent in
 3. **Code complexity.** Adding a separate `fastPreParallelApply` path
    increases maintenance burden. The existing `commonPreApply` is shared
    between parallel and sequential apply paths.
+
+---
+
+## Review
+
+**Verdict**: NOT_VIABLE
+**Date**: 2026-04-10
+**Reviewed by**: claude-opus-4-6, high
+**Novelty**: PASS — not previously investigated (distinct from fail 024 which proposed parallelizing the sweep, not reducing per-tx work)
+**Failed At**: reviewer
+
+### Trace Summary
+
+Traced the full `preParallelApply` → `commonPreApply` → `commonValid` → `commonValidPreSeqNum` chain, plus `processSignatures` and `OperationFrame::checkValid`. Confirmed that redundant static validation work exists (checkSorobanResources, footprint dedup, signature verification, op-level checkValid). However, the impact is significantly overstated: the benchmark uses 3200 txs (not 6400), the per-tx redundant cost is ~3-5µs (not 9.75µs), and a fast path would still require fee computation, LedgerTxn, seq num processing, one-time signer removal, and meta capture.
+
+### Code Paths Examined
+
+- `src/transactions/TransactionFrame.cpp:preParallelApply:2126-2188` — calls commonPreApply, then OperationFrame::checkValid; confirmed the full validation chain runs
+- `src/transactions/TransactionFrame.cpp:commonPreApply:2049-2123` — constructs SignatureChecker, computes soroban resource fee (REQUIRED for refund tracker), opens LedgerTxn, calls commonValid, processSeqNum, processSignatures
+- `src/transactions/TransactionFrame.cpp:commonValid:1666-1774` — runs commonValidPreSeqNum (static checks), seq num validation, signature verification, balance check (no-op when applying since feeToPay=0 for v9+)
+- `src/transactions/TransactionFrame.cpp:commonValidPreSeqNum:1319-1490` — protocol checks (trivial), checkSorobanResources (xdr_size on ~7 keys + full envelope), resource fee arithmetic, footprint dedup (UnorderedSet with ~7 keys)
+- `src/transactions/TransactionFrame.cpp:checkSorobanResources:826-1000` — iterates footprint keys calling xdr_size, calls getSize() on full envelope; confirmed this is redundant work
+- `src/transactions/TransactionFrame.cpp:processSignatures:1584-1636` — creates LedgerSnapshot, checkOperationSignatures, removeOneTimeSignerFromAllSourceAccounts (opens nested LedgerTxn, loads account, searches for preAuthTxKey)
+- `src/transactions/OperationFrame.cpp:checkValid:282-359` — loads source account, calls doCheckValidForSoroban which is trivial for InvokeHostFunction (just wasm size check)
+- `src/transactions/ParallelApplyUtils.cpp:363-372` — serial loop calling preParallelApply on all txs in all stages
+- `src/transactions/TransactionFrame.cpp:processFeeSeqNum:1777-1816` — confirms fees are charged BEFORE preParallelApply; seq num NOT bumped here for v10+ (done in commonPreApply)
+- `src/ledger/LedgerManagerImpl.cpp:1642-1644` — confirms processFeesSeqNums runs before applyTransactions
+
+### Why It Failed
+
+**The impact estimate is overstated by ~5x.** Three critical errors:
+
+1. **Wrong tx count**: The hypothesis claims 6400 SAC transactions, but the standard benchmark matrix runs TX=3200 for SAC at T=8 (per `run_apply_load_matrix.py` scenarios). This alone halves the claimed impact.
+
+2. **Inflated per-tx redundant cost**: The hypothesis claims ~9.75µs of redundant work per tx. Actual redundant work is ~3-5µs because:
+   - `computePreApplySorobanResourceFee` (~1µs) is NOT redundant — it's REQUIRED for `initializeRefundableFeeTracker` (line 2089-2096)
+   - `LedgerTxn` + `LedgerSnapshot` construction (~0.5-1µs) is REQUIRED for `processSeqNum` and `removeOneTimeSignerFromAllSourceAccounts`
+   - `processSignatures` includes `removeOneTimeSignerFromAllSourceAccounts` which is REQUIRED (opens nested LedgerTxn, loads account, checks for pre-auth signers) — even if typically a no-op for Soroban, it must still run for correctness
+   - The truly redundant components are: `checkSorobanResources` (~0.5-1µs), footprint dedup (~0.3-0.5µs), `SignatureChecker` construction + `checkAllTransactionSignatures` (~1-2µs), `OperationFrame::checkValid` (~0.5-1µs), trivial protocol checks (~0.1µs)
+
+3. **Actual impact**: 3200 × 4µs ≈ 12.8ms of redundant work out of ~612ms close time = **2.1%** — well below the 5% Low severity threshold. This is consistent with fail 024 which reported "serial sweep is <20ms" for the entire preParallelApply loop.
+
+**Additionally**, the "fast path" would still require: fee computation, refund tracker init, LedgerTxn creation, source account loading, seq num bumping, one-time signer removal, meta capture, and commit. A separate `fastPreParallelApply` function would share ~70% of the code with `commonPreApply`, saving only the validation checks — a high code-complexity cost for ~13ms savings.
+
+**Correctness concern**: A classic MergeOp in the sequential phase could delete a Soroban tx's source account before preParallelApply runs. The current validation catches this; a fast path would need alternative error handling.
+
+### Lesson Learned
+
+When combining multiple small redundancies into a single optimization hypothesis, verify that (a) the benchmark tx count matches the claim, (b) per-component costs are independently validated rather than summed from estimates, and (c) components counted as "redundant" are not actually required by adjacent logic (e.g., fee computation for refund tracking). The total preParallelApply serial sweep at ~16-20ms for 3200 txs is <3.3% of close time, setting a hard ceiling on any optimization targeting this loop. This is consistent with fail 024's finding and the meta-pattern that serial loops over lightweight operations are not bottlenecks.
