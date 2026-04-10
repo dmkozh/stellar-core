@@ -69,7 +69,7 @@ Severity downgraded from Low to Informational: the estimated improvement is well
 ### PoC Guidance
 
 - **Target code**: `src/transactions/TransactionMeta.cpp` — `TransactionMetaBuilder` constructor (lines 924-974); `src/transactions/TransactionMeta.h` — `OperationMetaBuilder` class (mMeta member)
-- **Change description**: When `!metaEnabled`, skip `mOperationMetas` emplace/resize and `mOperationMetaBuilders` construction. Either (a) add a thread-local static `OperationMetaV2 dummy` for disabled builders to reference, or (b) convert `OperationMetaBuilder::mMeta` to `std::variant<..., std::monostate>` and guard accesses. The `TransactionMetaWrapper` initialization can also be skipped since all accessor methods check `mEnabled`.
+- **Change description**: When `!metaEnabled`, skip `mOperationMetas.emplace<...>()` and `mOperationMetaBuilders` construction. Either (a) add a thread-local static `OperationMetaV2 dummy` for disabled builders to reference, or (b) convert `OperationMetaBuilder::mMeta` to `std::variant<..., std::monostate>` and guard accesses. The `TransactionMetaWrapper` initialization can also be skipped since all accessor methods check `mEnabled`.
 - **Correctness check**: Existing parallel apply tests (`[tx]`, `[soroban]`) cover this path. Run `./src/stellar-core test --ll fatal -r simple --abort --disable-dots "[soroban]"` to verify correctness.
 - **Benchmark focus**: Measure setup phase duration in `applyParallelPhase` before `applySorobanStages` on `sac,TX=6400,T=8`. Expected improvement: <1ms (~0.1-0.5% of total ledger close time). May not be visible above noise in current benchmarks.
 
@@ -98,3 +98,39 @@ When `metaEnabled=false`, the `TransactionMetaBuilder` constructor now skips all
 ### Test Results
 
 Full test suite passed: `NUM_PARTITIONS=$(nproc) make check -j$(nproc)` — all C++ unit/integration tests and all Rust tests passed with zero failures.
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Does the change actually address the claimed inefficiency?** **PARTIALLY.** The patch removes the per-operation XDR `xvector` allocation when `metaEnabled=false`, but it still constructs `TxEffects`, `TransactionMetaBuilder`, `TransactionMetaWrapper`, and `mOperationMetaBuilders`. The implemented savings are therefore materially smaller than the PoC write-up claims.
+2. **Are the preconditions realistic?** **YES.** The stock apply-load benchmark uses `METADATA_OUTPUT_STREAM=""`, so the meta-disabled path is exercised in normal benchmark runs.
+3. **Is the original code inefficient or working as designed?** **INEFFICIENCY.** The disabled path was doing real dead work, but it was a small amount of dead work.
+4. **Does the benchmark improvement match the claimed severity?** **NO.** Independent apply-load results from `/home/devbox/apply-load/final-review-h005-20260410-083724/results.csv` showed:
+   - `sac,TX=3200,T=1`: p50 **+4.49%**, p95 **+1.77%**, p99 **+0.82%**
+   - `sac,TX=3200,T=8`: p50 **-8.44%**, p95 **-13.73%**, p99 **-11.74%**
+   - `custom_token,TX=1600,T=1`: p50 **-3.91%**, p95 **-2.46%**, p99 **-4.78%**
+   - `custom_token,TX=1600,T=8`: p50 **-2.95%**, p95 **-3.25%**, p99 **-1.95%**
+   - `soroswap,TX=1000,T=1`: p50 **-1.96%**, p95 **-2.69%**, p99 **-3.26%**
+   - `soroswap,TX=1000,T=8`: p50 **-12.20%**, p95 **-9.27%**, p99 **-6.00%**
+   Only one metric in one scenario improved, and it stayed below the 5% Low threshold.
+5. **Is the optimization in scope?** **YES.** This is a transactions-subsystem change on the ledger apply path.
+6. **Is the benchmark methodology correct?** **YES.** The review used the project benchmark tool (`scripts/run_apply_load_matrix.py`) against the checked-out tree, compared to `ai-summary/baseline.csv`, after a clean successful `make -j$(nproc)` and `NUM_PARTITIONS=$(nproc) STELLAR_CORE_TEST_PARAMS='--ll fatal -r simple --abort --disable-dots' make check -j$(nproc)`.
+7. **Can the improvement be explained without the optimization?** **YES.** The single +4.49% p50 improvement on `sac,TX=3200,T=1` is outweighed by five regressions, including two double-digit threaded regressions. The measured variation is more consistent with noise and system effects than with a stable end-to-end speedup from this patch.
+8. **Is this optimization novel?** **IRRELEVANT.** Novelty does not change the lack of measurable benefit.
+
+### Rejection Reason
+
+The code change removes a small piece of dead metadata work, but the independent benchmark matrix does not support it as a worthwhile optimization. The only observed improvement was a sub-threshold +4.49% p50 on single-threaded SAC, while the other five scenarios regressed, including `sac,TX=3200,T=8` and `soroswap,TX=1000,T=8` by 8-12% on p50. That makes the claimed optimization benefit unsubstantiated for this objective.
+
+### Failed Checks
+
+- 4
+- 7
