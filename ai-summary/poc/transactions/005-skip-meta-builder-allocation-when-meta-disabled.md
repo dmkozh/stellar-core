@@ -72,3 +72,29 @@ Severity downgraded from Low to Informational: the estimated improvement is well
 - **Change description**: When `!metaEnabled`, skip `mOperationMetas` emplace/resize and `mOperationMetaBuilders` construction. Either (a) add a thread-local static `OperationMetaV2 dummy` for disabled builders to reference, or (b) convert `OperationMetaBuilder::mMeta` to `std::variant<..., std::monostate>` and guard accesses. The `TransactionMetaWrapper` initialization can also be skipped since all accessor methods check `mEnabled`.
 - **Correctness check**: Existing parallel apply tests (`[tx]`, `[soroban]`) cover this path. Run `./src/stellar-core test --ll fatal -r simple --abort --disable-dots "[soroban]"` to verify correctness.
 - **Benchmark focus**: Measure setup phase duration in `applyParallelPhase` before `applySorobanStages` on `sac,TX=6400,T=8`. Expected improvement: <1ms (~0.1-0.5% of total ledger close time). May not be visible above noise in current benchmarks.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-10
+**PoC by**: claude-opus-4.6, high
+
+### Changes Made
+
+- **`src/transactions/TransactionMeta.h`** (lines 53-57, 65-67): Added `std::monostate` as the first alternative in `OperationMetaBuilder::mMeta` variant, and declared a new disabled-mode private constructor that takes no XDR meta reference.
+
+- **`src/transactions/TransactionMeta.cpp`** (lines 516-529): Implemented the disabled-mode `OperationMetaBuilder` constructor that initializes `mMeta` with `std::monostate{}` and sets `mEnabled=false`, avoiding any XDR allocation.
+
+- **`src/transactions/TransactionMeta.cpp`** (lines 965-978): Added early-return path in `TransactionMetaBuilder` constructor when `!metaEnabled`. This skips the `mOperationMetas.emplace<...>()` and `resize()` calls entirely, constructing `OperationMetaBuilder`s via the lightweight disabled-mode constructor instead.
+
+- **`src/transactions/TransactionMeta.cpp`** (lines 374-384, 449-461): Updated `std::visit` lambdas in `setLedgerChanges` and `setLedgerChangesFromSuccessfulOp` with `if constexpr` guards to handle the `std::monostate` variant (compile-time safety; these paths are already unreachable at runtime when disabled due to early-return checks).
+
+### Demonstration
+
+When `metaEnabled=false`, the `TransactionMetaBuilder` constructor now skips all XDR operation-meta vector allocation (`emplace`/`resize` on `xdr::xvector<OperationMetaV2>`) and constructs `OperationMetaBuilder`s with a `std::monostate` meta reference instead of heap-allocated XDR structs. For 6400 Soroban txs in the benchmark setup loop, this eliminates ~12,800 unnecessary heap allocations (2 per tx: xvector resize + OperationMetaBuilder vector element) and ~3.2MB of dead XDR struct initialization, reducing cache pollution before the parallel apply phase begins.
+
+### Test Results
+
+Full test suite passed: `NUM_PARTITIONS=$(nproc) make check -j$(nproc)` — all C++ unit/integration tests and all Rust tests passed with zero failures.

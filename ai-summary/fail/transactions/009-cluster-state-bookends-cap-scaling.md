@@ -114,3 +114,37 @@ The optimization precomputes all TTL key derivations (SHA-256 over XDR-serialize
 
 - All 109 `[soroban]` tests passed (3,650,114 assertions), including 4 parallel apply partitioning tests (tiny/small/medium/large scenarios)
 - Full test suite passed: `selftest-nopg` PASS, `check-nondet` PASS, all Rust tests passed
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Exercises claimed inefficiency**: PARTIAL — the patch removes repeated `getTTLKey()` calls in `collectClusterFootprintEntriesFromGlobal`, `buildRoTTLSet`, `flushRoTTLBumpsInTxWriteFootprint`, and the post-worker `getReadWriteKeysForStage()` rescan, but it also moves that TTL-key derivation work into `ApplyStage::precomputeKeyCaches()`, which still runs during `LedgerManagerImpl::applyParallelPhase` on the measured ledger-close path.
+2. **Realistic preconditions**: YES — the independent `run_apply_load_matrix.py` sweep exercises the targeted parallel apply scenarios (`T=8`) under the same benchmark harness used for the objective baseline.
+3. **Inefficiency vs by-design**: NOT MATERIAL ENOUGH — redundant rescans exist, but under the project benchmark they are not a dominant end-to-end bottleneck once the new cache construction and maintenance costs are included.
+4. **Final severity**: REJECTED — independent benchmark results were neutral-to-worse overall, with the targeted parallel scenarios regressing:
+   - `sac,TX=3200,T=8`: p50 **-5.50%**, p95 **-6.21%**, p99 **+2.49%**
+   - `custom_token,TX=1600,T=8`: p50 **-4.48%**, p95 **-5.80%**, p99 **-3.40%**
+   - `soroswap,TX=1000,T=8`: p50 **-5.65%**, p95 **-4.37%**, p99 **-1.23%**
+   The best isolated gain was a small p99 improvement in one scenario, well below the Low threshold and outweighed by median/p95 regressions.
+5. **In scope**: YES — the change stays within C++ transaction parallel-apply code.
+6. **Benchmark methodology**: CORRECT — built with `make -j$(nproc)`, ran the full existing test suite with `NUM_PARTITIONS=$(nproc) STELLAR_CORE_TEST_PARAMS='--ll fatal -r simple --abort --disable-dots' make check -j$(nproc)`, then benchmarked with `python3 scripts/run_apply_load_matrix.py --stellar-core-bin ./src/stellar-core --build-tag final-review-h003` and compared `/home/devbox/apply-load/final-review-h003-20260410-080112/results.csv` against `ai-summary/baseline.csv`.
+7. **Alternative explanations**: PRESENT — the observed regressions are consistent with shifting the hashing/XDR work earlier into `ApplyStage::precomputeKeyCaches()` and adding stage-global cache/set bookkeeping rather than removing enough work from the hot path to produce an end-to-end win.
+8. **Novelty**: YES — but novelty does not compensate for the lack of measured improvement.
+
+### Rejection Reason
+
+Independent apply-load benchmarks do not support the optimization claim. The implementation precomputes TTL-key and RW-key caches during `ApplyStage` construction, but that work still occurs on the ledger-close critical path and yields net regressions on the target `T=8` scenarios instead of the claimed scaling improvement.
+
+### Failed Checks
+
+- 1
+- 4
+- 7
