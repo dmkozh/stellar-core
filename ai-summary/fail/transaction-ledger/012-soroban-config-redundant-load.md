@@ -156,3 +156,39 @@ The optimization replaces 15-19 sequential BucketList lookups of CONFIG_SETTING 
 - All 109 `[soroban]` test cases passed (3,650,114 assertions)
 - All 124 `[tx]` test cases passed (572,729 assertions)
 - All 7 `[ledger]` test cases passed (4,682 assertions)
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Does the change actually address the claimed inefficiency?** **YES.** Replacing `SorobanNetworkConfig::loadFromLedger(ltx)` with the cached config from `mApplyState.getLedgerState()` does remove redundant `CONFIG_SETTING` lookups in `applyTransactions`.
+2. **Are the preconditions realistic?** **PARTIALLY.** The path runs on every Soroban ledger, but the eliminated work is only one config reload per ledger and is microsecond-scale relative to hundreds of milliseconds of close time.
+3. **Is the original code inefficient or working as designed?** **MINOR INEFFICIENCY.** The old reload is redundant for post-LCL transaction apply, but it is not a material source of end-to-end apply-load cost.
+4. **Does the benchmark improvement match the claimed severity?** **NO.** Independent apply-load benchmarking against `ai-summary/baseline.csv` showed regressions in every scenario, not a Low-severity improvement:
+   - `sac,TX=3200,T=1`: p50 **-10.733%**, p95 **-25.636%**, p99 **-31.279%**
+   - `sac,TX=3200,T=8`: p50 **-18.927%**, p95 **-26.327%**, p99 **-36.013%**
+   - `custom_token,TX=1600,T=1`: p50 **-4.109%**, p95 **-8.869%**, p99 **-6.605%**
+   - `custom_token,TX=1600,T=8`: p50 **-1.559%**, p95 **-5.252%**, p99 **-4.073%**
+   - `soroswap,TX=1000,T=1`: p50 **-11.248%**, p95 **-29.366%**, p99 **-34.400%**
+   - `soroswap,TX=1000,T=8`: p50 **-16.606%**, p95 **-15.297%**, p99 **-12.068%**
+   Results: `/home/devbox/apply-load/final-review-004-20260410-011813/results.csv`
+5. **Is the optimization in scope?** **YES.** This is ledger apply-path C++ code, not a Soroban host-internals change.
+6. **Is the benchmark methodology correct?** **YES.** The review used the project benchmark harness `scripts/run_apply_load_matrix.py` against the stored baseline CSV after a clean rebuild and a full `make check` pass.
+7. **Can the improvement be explained without the optimization?** **YES.** The only defensible explanation is that the eliminated config reload is too small to move end-to-end close time, so run-to-run/system variance dominates the measurements. The code change itself cannot plausibly cause 10-36% regressions across all scenarios, which means the benchmark provides no attributable positive signal.
+8. **Is this optimization novel?** **YES.** The idea appears novel, but novelty alone is insufficient without benchmark support.
+
+### Rejection Reason
+
+The optimization claim is not supported by the project's benchmark tool. Although the code change is likely safe and removes a small redundant reload, the independent apply-load matrix showed no measurable benefit and instead regressed relative to baseline in all six scenarios. That means the targeted work is below the benchmark's noise floor and does not qualify as a confirmed performance finding.
+
+### Failed Checks
+
+- 4. Benchmark improvement does not support the claimed optimization
+- 7. Any theoretical savings are overwhelmed by measurement variance, so no attributable improvement was demonstrated
