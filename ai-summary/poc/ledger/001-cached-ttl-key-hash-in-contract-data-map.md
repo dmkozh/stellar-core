@@ -98,3 +98,29 @@ Downgrading severity from **Low** to **Informational**: the improvement is real 
 - **Change description**: Add `uint256 mCachedKeyHash` member to `ValueEntry`, computed once in the constructor via `getTTLKey(LedgerEntryKey(*entry.ledgerEntry)).ttl().keyHash`. Update `copyKey()` to return `mCachedKeyHash` and `hash()` to return `std::hash<uint256>{}(mCachedKeyHash)`. Update `clone()` to propagate the cached hash. Memory cost: 32 bytes per entry.
 - **Correctness check**: Existing tests for `InMemorySorobanState` (search for `InMemorySorobanState` in test files, particularly `[soroban]` tagged tests) should pass unchanged since the behavior is identical — only internal implementation detail changes.
 - **Benchmark focus**: Per-ledger `updateState()` time. Expected improvement: <1% (Informational). The invariant snapshot copy (if `INVARIANT_EXTRA_CHECKS` is enabled) would see a more noticeable improvement proportional to total contract data entry count.
+
+---
+
+## PoC Attempt
+
+**Result**: POC_PASS
+**Date**: 2026-04-10
+**PoC by**: claude-opus-4.6, high
+
+### Changes Made
+
+- `src/ledger/InMemorySorobanState.h` (lines 136–187, `ValueEntry` struct):
+  - Added `uint256 mCachedKeyHash` private member to cache the TTL key hash.
+  - Added a private constructor accepting a pre-computed `uint256` hash, used by `clone()` to avoid recomputing SHA-256.
+  - Modified the public constructor to compute `mCachedKeyHash` once via `getTTLKey(LedgerEntryKey(*entry.ledgerEntry)).ttl().keyHash`.
+  - Updated `copyKey()` to return `mCachedKeyHash` (O(1) instead of SHA-256 + XDR serialization).
+  - Updated `hash()` to use `mCachedKeyHash` directly.
+  - Updated `clone()` to propagate `mCachedKeyHash` via the private constructor, avoiding SHA-256 recomputation during copy.
+
+### Demonstration
+
+The optimization eliminates redundant SHA-256 + XDR serialization from every `unordered_set` operation on `ValueEntry` (hash, equality, insert, erase, rehash, clone). The cached hash is computed once at construction time and reused for all subsequent operations. This is the same pattern already used by `QueryKey` and costs only 32 bytes of additional memory per entry.
+
+### Test Results
+
+Full test suite passed: `make check` with `NUM_PARTITIONS=$(nproc)` completed with "All 2 tests passed" (selftest-nopg and check-nondet partitioned test suites). All Rust tests also passed. No regressions detected.

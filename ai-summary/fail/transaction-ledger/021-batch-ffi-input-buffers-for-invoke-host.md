@@ -175,3 +175,44 @@ The optimization replaces per-entry `CxxBuf` heap allocations (2 allocations per
 ### Test Results
 
 All 109 Soroban-tagged tests passed (3,650,114 assertions). Full test suite (`make check` with NUM_PARTITIONS=$(nproc)) passed: all selftest-nopg partitions and check-nondet passed with exit code 0. No regressions detected.
+
+---
+
+## Final Review
+
+**Verdict**: REJECTED
+**Date**: 2026-04-10
+**Final review by**: gpt-5.4, high
+**Failed At**: final-review
+
+### Adversarial Analysis
+
+1. **Does the change address the claimed inefficiency?** Yes at a micro level. The new `CxxBatchBuf` path does remove per-entry `CxxBuf` allocations in `InvokeHostFunctionOpFrame`, and the Rust bridge still feeds `&[u8]` slices into the existing host API.
+2. **Are the preconditions realistic?** No for this objective. The independent apply-load matrix did not show the expected payoff on the actual SAC/custom-token/soroswap workloads, so the allocation reduction is not material under the benchmarked ledger-close path.
+3. **Is the original code inefficient or by design?** There is real allocation churn, but the benchmark shows it is not a dominant end-to-end cost in these workloads.
+4. **Does the benchmark improvement match the claim?** No. Independent results versus `ai-summary/baseline.csv` were:
+
+| Scenario | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: |
+| sac,TX=3200,T=1 | +0.02% | -8.82% | -8.63% |
+| sac,TX=3200,T=8 | -1.69% | -2.32% | +0.19% |
+| custom_token,TX=1600,T=1 | -4.10% | -3.17% | +0.31% |
+| custom_token,TX=1600,T=8 | +1.15% | +0.32% | +1.26% |
+| soroswap,TX=1000,T=1 | -3.58% | -8.46% | -7.59% |
+| soroswap,TX=1000,T=8 | +1.41% | +2.48% | +2.05% |
+
+The best observed win was only **+2.48% p95** on `soroswap,TX=1000,T=8`, well below the Low threshold, while several scenarios regressed materially in tail latency.
+5. **Is the optimization in scope?** Yes. The change stays within the C++↔Rust bridge / marshaling layer.
+6. **Is the benchmark methodology correct?** Yes. The final review rebuilt the tree, ran the full existing test suite, and then ran `python3 scripts/run_apply_load_matrix.py --stellar-core-bin ./src/stellar-core --build-tag ffi-batch-review`, comparing the resulting CSV to `ai-summary/baseline.csv`.
+7. **Can the improvement be explained without the optimization?** Yes. The tiny positive deltas are within normal run-to-run variance and are outweighed by regressions elsewhere.
+8. **Is this optimization novel?** Likely yes, but novelty does not overcome the missing benchmark support.
+
+### Rejection Reason
+
+The code change is technically coherent, but the independent benchmark run does not support the performance finding. End-to-end apply-load results are flat to negative overall, with only noise-sized gains in two scenarios and larger p95/p99 regressions in several others, so the claimed optimization does not meet the bar for this objective.
+
+### Failed Checks
+
+- 2. Realistic preconditions
+- 4. Benchmark improvement vs. claim
+- 7. Alternative explanation / measurement noise
