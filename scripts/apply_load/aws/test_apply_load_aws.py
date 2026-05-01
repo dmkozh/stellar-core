@@ -76,6 +76,19 @@ class ApplyLoadAwsTests(unittest.TestCase):
             ["apply-load", "--console", "--conf", "/config.cfg"],
         )
 
+    def test_run_streams_child_output(self) -> None:
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            apply_load_aws.run([
+                sys.executable,
+                "-c",
+                "print('child-output')",
+            ])
+
+        self.assertIn("Running:", output.getvalue())
+        self.assertIn("child-output", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -156,14 +156,36 @@ def format_command(command: Sequence[Any]) -> str:
 
 def run(command: Sequence[Any], capture_output: bool = False,
         check: bool = True) -> subprocess.CompletedProcess[str]:
-    printable_command = format_command(command)
+    command_args = [str(part) for part in command]
+    printable_command = format_command(command_args)
     print(f"Running: {printable_command}")
-    result = subprocess.run(
-        [str(part) for part in command],
-        capture_output=capture_output,
-        check=False,
-        text=True,
-    )
+    if capture_output:
+        result = subprocess.run(
+            command_args,
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    else:
+        process = subprocess.Popen(
+            command_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        output_lines = []
+        assert process.stdout is not None
+        with process.stdout:
+            for line in process.stdout:
+                print(line, end="")
+                output_lines.append(line)
+        result = subprocess.CompletedProcess(
+            command_args,
+            process.wait(),
+            "".join(output_lines),
+            None,
+        )
     if check and result.returncode != 0:
         if result.stdout:
             print(result.stdout.rstrip())
