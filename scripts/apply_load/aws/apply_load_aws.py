@@ -494,7 +494,7 @@ def install_awscli(instance_id: str, region: str) -> None:
     """Install AWS CLI on Ubuntu Linux machine."""
     print("Installing AWS CLI...")
     install_command = " ".join([
-        "set -euo pipefail;",
+        "set -eu;",
         "apt-get update;",
         "apt-get install -y unzip curl;",
         "curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o awscliv2.zip;",
