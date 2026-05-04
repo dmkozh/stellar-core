@@ -411,8 +411,36 @@ def run_ssm_command(instance_id: str, region: str, command: str) -> None:
 
     print(f"Waiting for command {command_id} to complete...")
     terminal_statuses = {"Success", "Failed", "Cancelled", "TimedOut"}
-    for _ in range(SSM_COMMAND_POLLS):
-        time.sleep(5)
+    for attempt in range(SSM_COMMAND_POLLS):
+        status_command = [
+            "aws",
+            "ssm",
+            "get-command-invocation",
+            "--command-id",
+            command_id,
+            "--instance-id",
+            instance_id,
+            "--region",
+            region,
+            "--query",
+            "Status",
+            "--output",
+            "text",
+        ]
+        status_result = run(status_command, capture_output=True, check=False)
+        if status_result.returncode != 0 or not status_result.stdout:
+            time.sleep(5)
+            continue
+
+        status = status_result.stdout.strip()
+        print(
+            f"Command status: {status} "
+            f"({attempt + 1}/{SSM_COMMAND_POLLS})"
+        )
+        if status not in terminal_statuses:
+            time.sleep(5)
+            continue
+
         invocation_command = [
             "aws",
             "ssm",
@@ -428,12 +456,11 @@ def run_ssm_command(instance_id: str, region: str, command: str) -> None:
             invocation_command, capture_output=True, check=False
         )
         if invocation_result.returncode != 0 or not invocation_result.stdout:
-            continue
+            raise SystemExit(
+                f"Failed to fetch final SSM invocation output for '{command}'"
+            )
 
         result = json.loads(invocation_result.stdout)
-        status = result.get("Status")
-        if status not in terminal_statuses:
-            continue
 
         stdout = result.get("StandardOutputContent", "").strip()
         stderr = result.get("StandardErrorContent", "").strip()

@@ -126,6 +126,39 @@ class ApplyLoadAwsTests(unittest.TestCase):
             "us-west-2",
         ])
 
+    def test_run_ssm_command_logs_status_and_polls(self) -> None:
+        with mock.patch.object(
+            apply_load_aws,
+            "run_capture_output",
+            return_value="command-123",
+        ):
+            with mock.patch.object(apply_load_aws, "run") as run_command:
+                run_command.side_effect = [
+                    mock.Mock(returncode=0, stdout="InProgress\n"),
+                    mock.Mock(returncode=0, stdout="Success\n"),
+                    mock.Mock(
+                        returncode=0,
+                        stdout=(
+                            '{"Status":"Success",'
+                            '"StandardOutputContent":"done",'
+                            '"StandardErrorContent":""}'
+                        ),
+                    ),
+                ]
+                with mock.patch.object(apply_load_aws.time, "sleep") as sleep:
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        apply_load_aws.run_ssm_command(
+                            "i-1234567890abcdef0",
+                            "us-west-2",
+                            "echo hello",
+                        )
+
+        self.assertIn("Command status: InProgress", output.getvalue())
+        self.assertIn("Command status: Success", output.getvalue())
+        self.assertIn("Command output: done", output.getvalue())
+        sleep.assert_called_once_with(5)
+
 
 if __name__ == "__main__":
     unittest.main()
