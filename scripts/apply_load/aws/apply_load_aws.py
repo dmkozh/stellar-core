@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import shlex
 import string
 import subprocess
 import tempfile
@@ -20,6 +21,7 @@ APPLY_LOAD_SCRIPT_DIR = Path(__file__).resolve().parent
 USER_DIR = "/home/ubuntu"
 REMOTE_APPLY_LOAD_DIR = f"{USER_DIR}/apply_load"
 REMOTE_SCRIPT_PATH = f"{REMOTE_APPLY_LOAD_DIR}/apply_load_aws.py"
+APPLY_LOAD_LOG_FILE_PATH = f"{REMOTE_APPLY_LOAD_DIR}/apply-load.log"
 
 # Path to the ephemeral NVMe drive on AWS instance.
 NVME_DRIVE = "/dev/nvme1n1"
@@ -63,14 +65,15 @@ MODE_CONFIGS = {
 }
 
 
+FIXED_TEMPLATE_VALUES = {
+    "log_file_path": APPLY_LOAD_LOG_FILE_PATH,
+}
+
+
 PARAMETER_DEFINITIONS = {
     "dependent_tx_clusters": ParameterDefinition(
         int,
         "Number of dependent transaction clusters.",
-    ),
-    "log_file_path": ParameterDefinition(
-        str,
-        "Path to the stellar-core apply-load log file.",
     ),
     "ledger_max_disk_read_bytes": ParameterDefinition(
         int,
@@ -230,6 +233,7 @@ def get_mode_parameters(mode_name: str) -> list[str]:
     undefined_parameters = [
         parameter for parameter in parameters
         if parameter not in PARAMETER_DEFINITIONS
+        and parameter not in FIXED_TEMPLATE_VALUES
     ]
     if undefined_parameters:
         joined = ", ".join(undefined_parameters)
@@ -240,12 +244,24 @@ def get_mode_parameters(mode_name: str) -> list[str]:
     return parameters
 
 
+def get_mode_cli_parameters(mode_name: str) -> list[str]:
+    return [
+        parameter for parameter in get_mode_parameters(mode_name)
+        if parameter not in FIXED_TEMPLATE_VALUES
+    ]
+
+
 def render_config(mode_name: str, values: Mapping[str, Any]) -> str:
     template_path = MODE_CONFIGS[mode_name]["template"]
     parameter_names = get_mode_parameters(mode_name)
+    template_values = {
+        parameter: FIXED_TEMPLATE_VALUES[parameter]
+        for parameter in parameter_names
+        if parameter in FIXED_TEMPLATE_VALUES
+    }
     missing_parameters = [
         parameter for parameter in parameter_names
-        if values.get(parameter) is None
+        if parameter not in template_values and values.get(parameter) is None
     ]
     if missing_parameters:
         joined = ", ".join(sorted(missing_parameters))
@@ -254,16 +270,18 @@ def render_config(mode_name: str, values: Mapping[str, Any]) -> str:
             f"{joined}"
         )
 
-    template_values = {
-        parameter: values[parameter] for parameter in parameter_names
-    }
+    template_values.update({
+        parameter: values[parameter]
+        for parameter in parameter_names
+        if parameter not in FIXED_TEMPLATE_VALUES
+    })
     template = template_path.read_text(encoding="utf-8")
     return template.format(**template_values)
 
 
 def add_template_arguments(parser: argparse.ArgumentParser,
                            mode_name: str) -> None:
-    for parameter in get_mode_parameters(mode_name):
+    for parameter in get_mode_cli_parameters(mode_name):
         definition = PARAMETER_DEFINITIONS[parameter]
         argument_name = f"--{parameter.replace('_', '-')}"
         kwargs = {
@@ -287,6 +305,29 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "--iops",
         type=int,
         help="Optional disk IOPS limit for the NVMe device.",
+    )
+
+
+def add_aws_run_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--instance-id",
+        required=True,
+        help="EC2 instance id to run apply-load on.",
+    )
+    parser.add_argument(
+        "--region",
+        required=True,
+        help="AWS region of the instance.",
+    )
+    parser.add_argument(
+        "--s3-bucket",
+        required=True,
+        help="S3 bucket to upload the apply-load log to.",
+    )
+    parser.add_argument(
+        "--s3-log-key",
+        required=True,
+        help="S3 key to upload the apply-load log to.",
     )
 
 
@@ -314,6 +355,42 @@ def build_docker_command(config_path: str, image: str,
         "/config.cfg",
     ])
     return command
+
+
+def build_apply_load_command(mode_name: str, values: Mapping[str, Any],
+                             image: str, iops: Optional[int]) -> list[str]:
+    command = [
+        "python3",
+        "apply_load_aws.py",
+        mode_name,
+        "--image",
+        image,
+    ]
+    if iops is not None:
+        command.extend(["--iops", str(iops)])
+    for parameter in get_mode_cli_parameters(mode_name):
+        command.extend([
+            f"--{parameter.replace('_', '-')}",
+            str(values[parameter]),
+        ])
+    return command
+
+
+def build_remote_apply_load_command(mode_name: str, values: Mapping[str, Any],
+                                    image: str,
+                                    iops: Optional[int]) -> str:
+    inner_command = [
+        "rm",
+        "-f",
+        APPLY_LOAD_LOG_FILE_PATH,
+        "&&",
+        "cd",
+        REMOTE_APPLY_LOAD_DIR,
+        "&&",
+        *build_apply_load_command(mode_name, values, image, iops),
+    ]
+    shell_command = " ".join(shlex.quote(str(part)) for part in inner_command)
+    return "sudo -u ubuntu bash -lc " + shlex.quote(shell_command)
 
 
 def start_ec2_instance(ami: str, region: str, security_group: str,
@@ -613,6 +690,58 @@ def run_apply_load(config: str, image: str, iops: Optional[int]) -> None:
         Path(config_path).unlink(missing_ok=True)
 
 
+def copy_apply_load_log_to_s3(instance_id: str, region: str, s3_bucket: str,
+                              s3_key: str) -> None:
+    s3_uri = f"s3://{s3_bucket}/{s3_key}"
+    remote_copy_command = "sudo -u ubuntu bash -lc " + shlex.quote(
+        " ".join([
+            "if",
+            "[",
+            "-f",
+            shlex.quote(APPLY_LOAD_LOG_FILE_PATH),
+            "];",
+            "then",
+            "aws",
+            "s3",
+            "cp",
+            shlex.quote(APPLY_LOAD_LOG_FILE_PATH),
+            shlex.quote(s3_uri),
+            ";",
+            "else",
+            "echo",
+            shlex.quote(
+                f"WARNING: apply-load log not found at "
+                f"{APPLY_LOAD_LOG_FILE_PATH}"
+            ),
+            ";",
+            "fi",
+        ])
+    )
+    try:
+        run_ssm_command(instance_id, region, remote_copy_command)
+    except SystemExit as exc:
+        print(f"WARNING: failed to copy apply-load log to {s3_uri}: {exc}")
+
+
+def run_apply_load_on_instance(instance_id: str, region: str, s3_bucket: str,
+                               s3_log_key: str, mode_name: str,
+                               values: Mapping[str, Any], image: str,
+                               iops: Optional[int]) -> None:
+    run_error = None
+    remote_command = build_remote_apply_load_command(
+        mode_name, values, image, iops
+    )
+    try:
+        run_ssm_command(instance_id, region, remote_command)
+    except SystemExit as exc:
+        run_error = exc
+
+    copy_apply_load_log_to_s3(instance_id, region, s3_bucket, s3_log_key)
+
+    if run_error is not None:
+        raise run_error
+
+
 def handle_aws_init(args: argparse.Namespace) -> None:
     aws_init(
         args.ubuntu_ami,
@@ -630,6 +759,19 @@ def handle_local_aws_init(_: argparse.Namespace) -> None:
 def handle_run_mode(args: argparse.Namespace) -> None:
     config = render_config(args.apply_load_mode, vars(args))
     run_apply_load(config, args.image, args.iops)
+
+
+def handle_aws_run_mode(args: argparse.Namespace) -> None:
+    run_apply_load_on_instance(
+        args.instance_id,
+        args.region,
+        args.s3_bucket,
+        args.s3_log_key,
+        args.apply_load_mode,
+        vars(args),
+        args.image,
+        args.iops,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -674,6 +816,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Initialize the local AWS instance for running apply-load.",
     )
     local_aws_init_parser.set_defaults(handler=handle_local_aws_init)
+
+    aws_run_parser = subparsers.add_parser(
+        "aws-run",
+        help="Run apply-load on an existing AWS instance.",
+    )
+    aws_run_subparsers = aws_run_parser.add_subparsers(
+        dest="apply_load_mode", required=True
+    )
+    for mode_name, mode_config in MODE_CONFIGS.items():
+        mode_parser = aws_run_subparsers.add_parser(
+            mode_name,
+            aliases=list(mode_config["aliases"]),
+            help=mode_config["help"],
+        )
+        add_aws_run_arguments(mode_parser)
+        add_run_arguments(mode_parser)
+        add_template_arguments(mode_parser, mode_name)
+        mode_parser.set_defaults(
+            handler=handle_aws_run_mode,
+            apply_load_mode=mode_name,
+        )
 
     for mode_name, mode_config in MODE_CONFIGS.items():
         mode_parser = subparsers.add_parser(

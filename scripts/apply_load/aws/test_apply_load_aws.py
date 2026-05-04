@@ -36,7 +36,6 @@ class ApplyLoadAwsTests(unittest.TestCase):
 
     def test_benchmark_supports_all_model_tx_kinds(self) -> None:
         base_values = {
-            "log_file_path": "/tmp/apply-load.log",
             "tx_count": 100,
             "dependent_tx_clusters": 4,
             "num_ledgers": 10,
@@ -47,7 +46,14 @@ class ApplyLoadAwsTests(unittest.TestCase):
                 "benchmark", {**base_values, "model_tx": model_tx}
             )
             self.assertIn(f"APPLY_LOAD_MODEL_TX={model_tx}", config)
-            self.assertIn('LOG_FILE_PATH="/tmp/apply-load.log"', config)
+            self.assertIn(
+                (
+                    'LOG_FILE_PATH="'
+                    f'{apply_load_aws.APPLY_LOAD_LOG_FILE_PATH}'
+                    '"'
+                ),
+                config,
+            )
 
     def test_max_sac_alias_maps_to_max_sac_tps_mode(self) -> None:
         parser = apply_load_aws.build_parser()
@@ -55,8 +61,6 @@ class ApplyLoadAwsTests(unittest.TestCase):
             "max-sac",
             "--image",
             "stellar/apply-load:latest",
-            "--log-file-path",
-            "/tmp/apply-load.log",
             "--min-tps",
             "1000",
             "--max-tps",
@@ -67,6 +71,34 @@ class ApplyLoadAwsTests(unittest.TestCase):
             "4",
         ])
 
+        self.assertEqual(args.apply_load_mode, "max-sac-tps")
+
+    def test_aws_run_subcommand_parses_without_log_file_path(self) -> None:
+        parser = apply_load_aws.build_parser()
+        args = parser.parse_args([
+            "aws-run",
+            "max-sac-tps",
+            "--instance-id",
+            "i-1234567890abcdef0",
+            "--region",
+            "us-west-2",
+            "--s3-bucket",
+            "stellar-core-test",
+            "--s3-log-key",
+            "tmp/test.log",
+            "--image",
+            "stellar/apply-load:latest",
+            "--min-tps",
+            "1000",
+            "--max-tps",
+            "2000",
+            "--target-close-time-ms",
+            "5000",
+            "--dependent-tx-clusters",
+            "4",
+        ])
+
+        self.assertEqual(args.command, "aws-run")
         self.assertEqual(args.apply_load_mode, "max-sac-tps")
 
     def test_build_docker_command_uses_config_mode(self) -> None:
@@ -158,6 +190,41 @@ class ApplyLoadAwsTests(unittest.TestCase):
         self.assertIn("Command status: Success", output.getvalue())
         self.assertIn("Command output: done", output.getvalue())
         sleep.assert_called_once_with(5)
+
+    def test_run_apply_load_on_instance_copies_log_after_failure(self) -> None:
+        values = {
+            "min_tps": 1000,
+            "max_tps": 2000,
+            "target_close_time_ms": 5000,
+            "dependent_tx_clusters": 4,
+        }
+
+        with mock.patch.object(
+            apply_load_aws,
+            "run_ssm_command",
+            side_effect=[SystemExit("run failed"), None],
+        ) as run_ssm_command:
+            with self.assertRaises(SystemExit):
+                apply_load_aws.run_apply_load_on_instance(
+                    "i-1234567890abcdef0",
+                    "us-west-2",
+                    "stellar-core-test",
+                    "tmp/test.log",
+                    "max-sac-tps",
+                    values,
+                    "stellar/apply-load:latest",
+                    3000,
+                )
+
+        self.assertEqual(run_ssm_command.call_count, 2)
+        self.assertIn(
+            "python3 apply_load_aws.py max-sac-tps",
+            run_ssm_command.call_args_list[0].args[2],
+        )
+        self.assertIn(
+            "s3://stellar-core-test/tmp/test.log",
+            run_ssm_command.call_args_list[1].args[2],
+        )
 
 
 if __name__ == "__main__":
