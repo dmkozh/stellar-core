@@ -30,6 +30,9 @@ SSM_RETRIES = 10
 # Number of polls while waiting for an SSM command to complete.
 SSM_COMMAND_POLLS = 30
 
+# Preserve the legacy tag value required by the existing EC2 IAM policy.
+INSTANCE_TEST_TAG_VALUE = "max-sac-tps"
+
 
 @dataclass(frozen=True)
 class ParameterDefinition:
@@ -61,6 +64,10 @@ PARAMETER_DEFINITIONS = {
     "dependent_tx_clusters": ParameterDefinition(
         int,
         "Number of dependent transaction clusters.",
+    ),
+    "log_file_path": ParameterDefinition(
+        str,
+        "Path to the stellar-core apply-load log file.",
     ),
     "ledger_max_disk_read_bytes": ParameterDefinition(
         int,
@@ -323,7 +330,7 @@ def start_ec2_instance(ami: str, region: str, security_group: str,
         "--iam-instance-profile",
         f"Name={iam_instance_profile}",
         "--tag-specifications",
-        "ResourceType=instance,Tags=[{Key=test,Value=apply-load},"
+        f"ResourceType=instance,Tags=[{{Key=test,Value={INSTANCE_TEST_TAG_VALUE}}},"
         "{Key=ManagedBy,Value=ApplyLoadScript}]",
         "--query",
         "Instances[0].InstanceId",

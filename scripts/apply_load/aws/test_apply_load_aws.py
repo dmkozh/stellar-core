@@ -3,6 +3,7 @@ import importlib.util
 import io
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -35,6 +36,7 @@ class ApplyLoadAwsTests(unittest.TestCase):
 
     def test_benchmark_supports_all_model_tx_kinds(self) -> None:
         base_values = {
+            "log_file_path": "/tmp/apply-load.log",
             "tx_count": 100,
             "dependent_tx_clusters": 4,
             "num_ledgers": 10,
@@ -45,6 +47,7 @@ class ApplyLoadAwsTests(unittest.TestCase):
                 "benchmark", {**base_values, "model_tx": model_tx}
             )
             self.assertIn(f"APPLY_LOAD_MODEL_TX={model_tx}", config)
+            self.assertIn('LOG_FILE_PATH="/tmp/apply-load.log"', config)
 
     def test_max_sac_alias_maps_to_max_sac_tps_mode(self) -> None:
         parser = apply_load_aws.build_parser()
@@ -52,6 +55,8 @@ class ApplyLoadAwsTests(unittest.TestCase):
             "max-sac",
             "--image",
             "stellar/apply-load:latest",
+            "--log-file-path",
+            "/tmp/apply-load.log",
             "--min-tps",
             "1000",
             "--max-tps",
@@ -88,6 +93,38 @@ class ApplyLoadAwsTests(unittest.TestCase):
 
         self.assertIn("Running:", output.getvalue())
         self.assertIn("child-output", output.getvalue())
+
+    def test_start_ec2_instance_uses_legacy_policy_tag(self) -> None:
+        with mock.patch.object(
+            apply_load_aws,
+            "run_capture_output",
+            return_value="i-1234567890abcdef0",
+        ) as run_capture_output:
+            with mock.patch.object(apply_load_aws, "run") as run_command:
+                instance_id = apply_load_aws.start_ec2_instance(
+                    "ami-1234",
+                    "us-west-2",
+                    "core-test",
+                    "core-test",
+                )
+
+        self.assertEqual(instance_id, "i-1234567890abcdef0")
+        launch_command = run_capture_output.call_args.args[0]
+        self.assertIn(
+            "ResourceType=instance,Tags=[{Key=test,Value=max-sac-tps},"
+            "{Key=ManagedBy,Value=ApplyLoadScript}]",
+            launch_command,
+        )
+        run_command.assert_called_once_with([
+            "aws",
+            "ec2",
+            "wait",
+            "instance-running",
+            "--instance-ids",
+            "i-1234567890abcdef0",
+            "--region",
+            "us-west-2",
+        ])
 
 
 if __name__ == "__main__":
