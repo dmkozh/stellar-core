@@ -27,8 +27,11 @@ NVME_DRIVE = "/dev/nvme1n1"
 # Number of SSM connection retries before giving up.
 SSM_RETRIES = 10
 
-# Number of polls while waiting for an SSM command to complete.
-SSM_COMMAND_POLLS = 30
+# Maximum time to wait for an SSM command to complete.
+SSM_COMMAND_TIMEOUT_SECONDS = 10 * 60
+
+# Delay between SSM command status polls.
+SSM_COMMAND_POLL_INTERVAL_SECONDS = 5
 
 # Preserve the legacy tag value required by the existing EC2 IAM policy.
 INSTANCE_TEST_TAG_VALUE = "max-sac-tps"
@@ -411,7 +414,13 @@ def run_ssm_command(instance_id: str, region: str, command: str) -> None:
 
     print(f"Waiting for command {command_id} to complete...")
     terminal_statuses = {"Success", "Failed", "Cancelled", "TimedOut"}
-    for attempt in range(SSM_COMMAND_POLLS):
+    total_polls = max(
+        1,
+        (
+            SSM_COMMAND_TIMEOUT_SECONDS + SSM_COMMAND_POLL_INTERVAL_SECONDS - 1
+        ) // SSM_COMMAND_POLL_INTERVAL_SECONDS,
+    )
+    for attempt in range(total_polls):
         status_command = [
             "aws",
             "ssm",
@@ -429,16 +438,16 @@ def run_ssm_command(instance_id: str, region: str, command: str) -> None:
         ]
         status_result = run(status_command, capture_output=True, check=False)
         if status_result.returncode != 0 or not status_result.stdout:
-            time.sleep(5)
+            time.sleep(SSM_COMMAND_POLL_INTERVAL_SECONDS)
             continue
 
         status = status_result.stdout.strip()
         print(
             f"Command status: {status} "
-            f"({attempt + 1}/{SSM_COMMAND_POLLS})"
+            f"({attempt + 1}/{total_polls})"
         )
         if status not in terminal_statuses:
-            time.sleep(5)
+            time.sleep(SSM_COMMAND_POLL_INTERVAL_SECONDS)
             continue
 
         invocation_command = [
@@ -475,7 +484,10 @@ def run_ssm_command(instance_id: str, region: str, command: str) -> None:
             )
         return
 
-    raise SystemExit(f"ERROR: Command '{command}' timed out")
+    raise SystemExit(
+        f"ERROR: Command '{command}' timed out after "
+        f"{SSM_COMMAND_TIMEOUT_SECONDS} seconds"
+    )
 
 
 def copy_file_via_s3(instance_id: str, region: str, local_file: Path,
