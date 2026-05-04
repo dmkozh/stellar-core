@@ -379,17 +379,18 @@ def build_apply_load_command(mode_name: str, values: Mapping[str, Any],
 def build_remote_apply_load_command(mode_name: str, values: Mapping[str, Any],
                                     image: str,
                                     iops: Optional[int]) -> str:
-    inner_command = [
-        "rm",
-        "-f",
-        APPLY_LOAD_LOG_FILE_PATH,
+    apply_load_command = " ".join(
+        shlex.quote(str(part))
+        for part in build_apply_load_command(mode_name, values, image, iops)
+    )
+    shell_command = " ".join([
+        "rm -f",
+        shlex.quote(APPLY_LOAD_LOG_FILE_PATH),
+        "&& cd",
+        shlex.quote(REMOTE_APPLY_LOAD_DIR),
         "&&",
-        "cd",
-        REMOTE_APPLY_LOAD_DIR,
-        "&&",
-        *build_apply_load_command(mode_name, values, image, iops),
-    ]
-    shell_command = " ".join(shlex.quote(str(part)) for part in inner_command)
+        apply_load_command,
+    ])
     return "sudo -u ubuntu bash -lc " + shlex.quote(shell_command)
 
 

@@ -113,6 +113,24 @@ class ApplyLoadAwsTests(unittest.TestCase):
             ["apply-load", "--console", "--conf", "/config.cfg"],
         )
 
+    def test_build_remote_apply_load_command_keeps_shell_operators(self) -> None:
+        command = apply_load_aws.build_remote_apply_load_command(
+            "max-sac-tps",
+            {
+                "min_tps": 1000,
+                "max_tps": 2000,
+                "target_close_time_ms": 5000,
+                "dependent_tx_clusters": 4,
+            },
+            "stellar/apply-load:latest",
+            3000,
+        )
+
+        self.assertIn("rm -f", command)
+        self.assertIn("&& cd", command)
+        self.assertNotIn("'&&'", command)
+        self.assertIn("--image", command)
+
     def test_run_streams_child_output(self) -> None:
         output = io.StringIO()
 
