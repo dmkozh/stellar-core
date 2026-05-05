@@ -3,14 +3,13 @@
 import argparse
 import base64
 import json
-import os
 import shlex
 import string
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Optional, Sequence
 
 # Instance type to use. Matches SDF validator instance type.
@@ -24,6 +23,7 @@ USER_DIR = "/home/ubuntu"
 REMOTE_APPLY_LOAD_DIR = f"{USER_DIR}/apply_load"
 REMOTE_SCRIPT_PATH = f"{REMOTE_APPLY_LOAD_DIR}/apply_load_aws.py"
 APPLY_LOAD_LOG_FILE_PATH = "/tmp/apply-load.log"
+APPLY_LOAD_LOG_DIR = str(PurePosixPath(APPLY_LOAD_LOG_FILE_PATH).parent)
 
 # Path to the ephemeral NVMe drive on AWS instance.
 NVME_DRIVE = "/dev/nvme1n1"
@@ -343,7 +343,7 @@ def build_docker_command(config_path: str, image: str,
         "-v",
         f"{config_path}:/config.cfg",
         "-v",
-        f"{APPLY_LOAD_LOG_FILE_PATH}:{APPLY_LOAD_LOG_FILE_PATH}",
+        f"{APPLY_LOAD_LOG_DIR}:{APPLY_LOAD_LOG_DIR}",
     ]
     if iops is not None:
         command.extend([
@@ -722,8 +722,6 @@ def run_apply_load(config: str, image: str, iops: Optional[int]) -> None:
     log_path = Path(APPLY_LOAD_LOG_FILE_PATH)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.unlink(missing_ok=True)
-    log_path.touch()
-    os.chmod(log_path, 0o666)
 
     try:
         result = run(
