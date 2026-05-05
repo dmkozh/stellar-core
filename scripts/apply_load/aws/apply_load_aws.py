@@ -323,6 +323,14 @@ def add_aws_run_arguments(parser: argparse.ArgumentParser) -> None:
         required=True,
         help="Local file path to store the downloaded apply-load log.",
     )
+    parser.add_argument(
+        "--s3-bucket",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--s3-log-key",
+        help=argparse.SUPPRESS,
+    )
 
 
 def build_docker_command(config_path: str, image: str,

@@ -104,6 +104,36 @@ class ApplyLoadAwsTests(unittest.TestCase):
         self.assertEqual(args.command, "aws-run")
         self.assertEqual(args.apply_load_mode, "max-sac-tps")
 
+    def test_aws_run_subcommand_accepts_deprecated_s3_arguments(self) -> None:
+        parser = apply_load_aws.build_parser()
+        args = parser.parse_args([
+            "aws-run",
+            "max-sac-tps",
+            "--instance-id",
+            "i-1234567890abcdef0",
+            "--region",
+            "us-west-2",
+            "--local-log-path",
+            "apply-load-logs/test.log",
+            "--s3-bucket",
+            "stellar-core-test",
+            "--s3-log-key",
+            "legacy/path.log",
+            "--image",
+            "stellar/apply-load:latest",
+            "--min-tps",
+            "1000",
+            "--max-tps",
+            "2000",
+            "--target-close-time-ms",
+            "5000",
+            "--dependent-tx-clusters",
+            "4",
+        ])
+
+        self.assertEqual(args.command, "aws-run")
+        self.assertEqual(args.apply_load_mode, "max-sac-tps")
+
     def test_build_docker_command_uses_config_mode(self) -> None:
         command = apply_load_aws.build_docker_command(
             "/tmp/config.cfg", "stellar/apply-load:latest", 3000
