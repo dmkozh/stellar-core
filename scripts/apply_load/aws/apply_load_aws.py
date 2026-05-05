@@ -21,7 +21,7 @@ APPLY_LOAD_SCRIPT_DIR = Path(__file__).resolve().parent
 USER_DIR = "/home/ubuntu"
 REMOTE_APPLY_LOAD_DIR = f"{USER_DIR}/apply_load"
 REMOTE_SCRIPT_PATH = f"{REMOTE_APPLY_LOAD_DIR}/apply_load_aws.py"
-APPLY_LOAD_LOG_FILE_PATH = f"{REMOTE_APPLY_LOAD_DIR}/apply-load.log"
+APPLY_LOAD_LOG_FILE_PATH = "/tmp/apply-load.log"
 
 # Path to the ephemeral NVMe drive on AWS instance.
 NVME_DRIVE = "/dev/nvme1n1"
@@ -625,12 +625,6 @@ def copy_files_to_instance(instance_id: str, region: str,
             f"{REMOTE_APPLY_LOAD_DIR}/{template_path.name}",
             s3_bucket,
         )
-
-    run_ssm_command(
-        instance_id,
-        region,
-        f"chown -R ubuntu {REMOTE_APPLY_LOAD_DIR}",
-    )
 
 
 def install_script_on_instance(instance_id: str, region: str,

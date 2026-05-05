@@ -55,6 +55,9 @@ class ApplyLoadAwsTests(unittest.TestCase):
                 config,
             )
 
+    def test_apply_load_log_path_uses_tmp(self) -> None:
+        self.assertEqual(apply_load_aws.APPLY_LOAD_LOG_FILE_PATH, "/tmp/apply-load.log")
+
     def test_max_sac_alias_maps_to_max_sac_tps_mode(self) -> None:
         parser = apply_load_aws.build_parser()
         args = parser.parse_args([
@@ -175,34 +178,6 @@ class ApplyLoadAwsTests(unittest.TestCase):
             "--region",
             "us-west-2",
         ])
-
-    def test_copy_files_to_instance_sets_ubuntu_ownership(self) -> None:
-        with mock.patch.object(
-            apply_load_aws,
-            "copy_file_via_s3",
-        ) as copy_file_via_s3:
-            with mock.patch.object(
-                apply_load_aws,
-                "run_ssm_command",
-            ) as run_ssm_command:
-                apply_load_aws.copy_files_to_instance(
-                    "i-1234567890abcdef0",
-                    "us-west-2",
-                    "stellar-core-test",
-                )
-
-        self.assertGreaterEqual(copy_file_via_s3.call_count, 1)
-        self.assertEqual(
-            run_ssm_command.call_args_list[-1].args,
-            (
-                "i-1234567890abcdef0",
-                "us-west-2",
-                (
-                    "chown -R ubuntu "
-                    f"{apply_load_aws.REMOTE_APPLY_LOAD_DIR}"
-                ),
-            ),
-        )
 
     def test_run_ssm_command_logs_status_and_polls(self) -> None:
         with mock.patch.object(
