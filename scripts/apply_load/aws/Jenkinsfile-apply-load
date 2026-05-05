@@ -1,0 +1,310 @@
+/*
+This job spins up an EC2 instance, runs an apply-load test in the selected
+mode, then tears down the instance.
+*/
+
+pipeline {
+    agent any
+    environment {
+        AMI_ID = 'ami-03c1f788292172a4e' // Ubuntu 22.04 LTS
+        REGION = 'us-west-2'
+        SECURITY_GROUP = 'core-test' // EC2 security group
+        INSTANCE_PROFILE = 'core-test' // IAM instance profile with SSM permissions
+        S3_BUCKET = 'stellar-core-test' // S3 bucket for use during tests
+        CORE_ACCOUNT_IAM_ROLE_ARN = 'arn:aws:iam::654654437107:role/max-sac-tps-test-admin'
+    }
+    options {
+        timestamps()
+    }
+    parameters {
+        string(name: 'BRANCH', defaultValue: 'master', description: 'Branch to use apply_load_aws.py script from')
+        string(name: 'REPO_URL', defaultValue: 'https://github.com/stellar/stellar-core.git', description: 'Repository URL to clone')
+
+        choice(name: 'APPLY_LOAD_MODE', choices: ['max-sac-tps', 'benchmark', 'ledger-limits'], description: 'apply-load mode to run')
+        string(name: 'IMAGE', description: 'Docker perftests image to use for load test. Must be from Docker Hub')
+        string(name: 'MAX_IOPS', defaultValue: '10000', description: 'Optional maximum read/write IOPS. Leave blank to disable the limit')
+
+        choice(name: 'MODEL_TX', choices: ['sac', 'custom_token', 'soroswap'], description: 'Benchmark model transaction kind (benchmark mode only)')
+
+        string(name: 'DEPENDENT_TX_CLUSTERS', defaultValue: '4', description: 'Number of dependent transaction clusters (mapped to execution threads)')
+        string(name: 'TX_COUNT', defaultValue: '', description: 'Number of Soroban transactions to apply per ledger (benchmark and ledger-limits)')
+        string(name: 'NUM_LEDGERS', defaultValue: '', description: 'Number of ledgers to close (benchmark and ledger-limits)')
+
+        string(name: 'MIN_TPS', defaultValue: '1000', description: 'Lower TPS bound for max-sac-tps binary search')
+        string(name: 'MAX_TPS', defaultValue: '10000', description: 'Upper TPS bound for max-sac-tps binary search')
+        string(name: 'TARGET_CLOSE_TIME_MS', defaultValue: '300', description: 'Target close time in milliseconds')
+
+        string(name: 'LEDGER_MAX_INSTRUCTIONS', defaultValue: '', description: 'Maximum instructions allowed for the ledger (ledger-limits)')
+        string(name: 'TX_MAX_INSTRUCTIONS', defaultValue: '', description: 'Maximum instructions allowed per transaction (ledger-limits)')
+        string(name: 'TX_MAX_FOOTPRINT_SIZE', defaultValue: '', description: 'Maximum per-transaction footprint size (ledger-limits)')
+        string(name: 'LEDGER_MAX_DISK_READ_LEDGER_ENTRIES', defaultValue: '', description: 'Maximum disk read ledger entries for the ledger (ledger-limits)')
+        string(name: 'TX_MAX_DISK_READ_LEDGER_ENTRIES', defaultValue: '', description: 'Maximum per-transaction disk read ledger entries (ledger-limits)')
+        string(name: 'LEDGER_MAX_DISK_READ_BYTES', defaultValue: '', description: 'Maximum disk read bytes for the ledger (ledger-limits)')
+        string(name: 'TX_MAX_DISK_READ_BYTES', defaultValue: '', description: 'Maximum per-transaction disk read bytes (ledger-limits)')
+        string(name: 'LEDGER_MAX_WRITE_LEDGER_ENTRIES', defaultValue: '', description: 'Maximum ledger write ledger entries (ledger-limits)')
+        string(name: 'TX_MAX_WRITE_LEDGER_ENTRIES', defaultValue: '', description: 'Maximum per-transaction write ledger entries (ledger-limits)')
+        string(name: 'LEDGER_MAX_WRITE_BYTES', defaultValue: '', description: 'Maximum ledger write bytes (ledger-limits)')
+        string(name: 'TX_MAX_WRITE_BYTES', defaultValue: '', description: 'Maximum per-transaction write bytes (ledger-limits)')
+        string(name: 'MAX_LEDGER_TX_SIZE_BYTES', defaultValue: '', description: 'Maximum total transaction size per ledger in bytes (ledger-limits)')
+        string(name: 'MAX_TX_SIZE_BYTES', defaultValue: '', description: 'Maximum transaction size in bytes (ledger-limits)')
+        string(name: 'MAX_CONTRACT_EVENT_SIZE_BYTES', defaultValue: '', description: 'Maximum contract event size in bytes (ledger-limits)')
+        string(name: 'NUM_EVENTS', defaultValue: '', description: 'Number of events emitted by each transaction (ledger-limits)')
+    }
+    stages {
+        stage('Validate parameters') {
+            steps {
+                script {
+                    def requiredParamsByMode = [
+                        'benchmark': [
+                            'TX_COUNT',
+                            'DEPENDENT_TX_CLUSTERS',
+                            'NUM_LEDGERS'
+                        ],
+                        'ledger-limits': [
+                            'LEDGER_MAX_INSTRUCTIONS',
+                            'TX_MAX_INSTRUCTIONS',
+                            'DEPENDENT_TX_CLUSTERS',
+                            'TX_MAX_FOOTPRINT_SIZE',
+                            'LEDGER_MAX_DISK_READ_LEDGER_ENTRIES',
+                            'TX_MAX_DISK_READ_LEDGER_ENTRIES',
+                            'LEDGER_MAX_DISK_READ_BYTES',
+                            'TX_MAX_DISK_READ_BYTES',
+                            'LEDGER_MAX_WRITE_LEDGER_ENTRIES',
+                            'TX_MAX_WRITE_LEDGER_ENTRIES',
+                            'LEDGER_MAX_WRITE_BYTES',
+                            'TX_MAX_WRITE_BYTES',
+                            'MAX_LEDGER_TX_SIZE_BYTES',
+                            'MAX_TX_SIZE_BYTES',
+                            'MAX_CONTRACT_EVENT_SIZE_BYTES',
+                            'TX_COUNT',
+                            'NUM_LEDGERS',
+                            'NUM_EVENTS'
+                        ],
+                        'max-sac-tps': [
+                            'MIN_TPS',
+                            'MAX_TPS',
+                            'TARGET_CLOSE_TIME_MS',
+                            'DEPENDENT_TX_CLUSTERS'
+                        ]
+                    ]
+
+                    def missing = ['IMAGE'].findAll { !params[it]?.trim() }
+                    missing.addAll(requiredParamsByMode[params.APPLY_LOAD_MODE].findAll {
+                        !params[it]?.trim()
+                    })
+
+                    if (missing) {
+                        error("Missing required parameters for ${params.APPLY_LOAD_MODE}: ${missing.join(', ')}")
+                    }
+                }
+            }
+        }
+
+        stage('Spin up EC2 Instance') {
+            options {
+                timeout(time: 10, unit: 'MINUTES')
+            }
+            steps {
+                // Check out stellar-core repo
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: params.BRANCH]],
+                    userRemoteConfigs: [[url: params.REPO_URL]],
+                    extensions: [[$class: 'RelativeTargetDirectory', relativeTargetDir: 'stellar-core']]
+                ])
+                script {
+                    env.BASE_AWS_CALLER_ARN = sh(
+                        script: "aws sts get-caller-identity --query Arn --output text",
+                        returnStdout: true
+                    ).trim()
+
+                    // Assume IAM role and export credentials
+                    env.BASE_AWS_ACCESS_KEY_ID = env.AWS_ACCESS_KEY_ID ?: ''
+                    env.BASE_AWS_SECRET_ACCESS_KEY = env.AWS_SECRET_ACCESS_KEY ?: ''
+                    env.BASE_AWS_SESSION_TOKEN = env.AWS_SESSION_TOKEN ?: ''
+
+                    def credentials = sh(
+                        script: """
+                            aws sts assume-role \
+                                --role-arn ${CORE_ACCOUNT_IAM_ROLE_ARN} \
+                                --role-session-name jenkins-load-test-\${BUILD_NUMBER} \
+                                --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+                                --duration-seconds 4800 \
+                                --output text
+                        """,
+                        returnStdout: true
+                    ).trim().split()
+
+                    env.AWS_ACCESS_KEY_ID = credentials[0]
+                    env.AWS_SECRET_ACCESS_KEY = credentials[1]
+                    env.AWS_SESSION_TOKEN = credentials[2]
+                    env.ASSUMED_AWS_CALLER_ARN = sh(
+                        script: "aws sts get-caller-identity --query Arn --output text",
+                        returnStdout: true
+                    ).trim()
+                    echo "Base AWS caller identity: ${env.BASE_AWS_CALLER_ARN}"
+                    echo "Assumed AWS caller identity used to launch the instance: ${env.ASSUMED_AWS_CALLER_ARN}"
+
+                    // Run script to launch and set up EC2 instance
+                    def output = sh(
+                        script: """
+                            python3 ./stellar-core/scripts/apply_load/aws/apply_load_aws.py aws-init \
+                                --ubuntu-ami ${AMI_ID} \
+                                --region ${REGION} \
+                                --security-group ${SECURITY_GROUP} \
+                                --iam-instance-profile ${INSTANCE_PROFILE} \
+                                --s3-bucket ${S3_BUCKET}
+                        """,
+                        returnStdout: true
+                    )
+
+                    // Parse output for instance id
+                    env.INSTANCE_ID = output.readLines().last().trim()
+                    echo "Instance ID: ${env.INSTANCE_ID}"
+                }
+            }
+        }
+
+        stage('Run apply-load test') {
+            options {
+                timeout(time: 1, unit: 'HOURS')
+            }
+            steps {
+                script {
+                    def quote = { value ->
+                        return "'${value.replace("'", "'\"'\"'")}'"
+                    }
+
+                    env.APPLY_LOAD_LOG_ARTIFACT = "apply-load-logs/${params.APPLY_LOAD_MODE}-${env.BUILD_NUMBER}.log"
+
+                    def modeArgs = []
+                    switch (params.APPLY_LOAD_MODE) {
+                        case 'benchmark':
+                            modeArgs.addAll([
+                                '--model-tx', quote(params.MODEL_TX),
+                                '--tx-count', quote(params.TX_COUNT),
+                                '--dependent-tx-clusters', quote(params.DEPENDENT_TX_CLUSTERS),
+                                '--num-ledgers', quote(params.NUM_LEDGERS)
+                            ])
+                            break
+                        case 'ledger-limits':
+                            modeArgs.addAll([
+                                '--ledger-max-instructions', quote(params.LEDGER_MAX_INSTRUCTIONS),
+                                '--tx-max-instructions', quote(params.TX_MAX_INSTRUCTIONS),
+                                '--dependent-tx-clusters', quote(params.DEPENDENT_TX_CLUSTERS),
+                                '--tx-max-footprint-size', quote(params.TX_MAX_FOOTPRINT_SIZE),
+                                '--ledger-max-disk-read-ledger-entries', quote(params.LEDGER_MAX_DISK_READ_LEDGER_ENTRIES),
+                                '--tx-max-disk-read-ledger-entries', quote(params.TX_MAX_DISK_READ_LEDGER_ENTRIES),
+                                '--ledger-max-disk-read-bytes', quote(params.LEDGER_MAX_DISK_READ_BYTES),
+                                '--tx-max-disk-read-bytes', quote(params.TX_MAX_DISK_READ_BYTES),
+                                '--ledger-max-write-ledger-entries', quote(params.LEDGER_MAX_WRITE_LEDGER_ENTRIES),
+                                '--tx-max-write-ledger-entries', quote(params.TX_MAX_WRITE_LEDGER_ENTRIES),
+                                '--ledger-max-write-bytes', quote(params.LEDGER_MAX_WRITE_BYTES),
+                                '--tx-max-write-bytes', quote(params.TX_MAX_WRITE_BYTES),
+                                '--max-ledger-tx-size-bytes', quote(params.MAX_LEDGER_TX_SIZE_BYTES),
+                                '--max-tx-size-bytes', quote(params.MAX_TX_SIZE_BYTES),
+                                '--max-contract-event-size-bytes', quote(params.MAX_CONTRACT_EVENT_SIZE_BYTES),
+                                '--tx-count', quote(params.TX_COUNT),
+                                '--num-ledgers', quote(params.NUM_LEDGERS),
+                                '--num-events', quote(params.NUM_EVENTS)
+                            ])
+                            break
+                        case 'max-sac-tps':
+                            modeArgs.addAll([
+                                '--min-tps', quote(params.MIN_TPS),
+                                '--max-tps', quote(params.MAX_TPS),
+                                '--target-close-time-ms', quote(params.TARGET_CLOSE_TIME_MS),
+                                '--dependent-tx-clusters', quote(params.DEPENDENT_TX_CLUSTERS)
+                            ])
+                            break
+                        default:
+                            error("Unsupported APPLY_LOAD_MODE: ${params.APPLY_LOAD_MODE}")
+                    }
+
+                    def applyLoadCommand = [
+                        'python3',
+                        './stellar-core/scripts/apply_load/aws/apply_load_aws.py',
+                        'aws-run',
+                        params.APPLY_LOAD_MODE,
+                        '--instance-id', quote(env.INSTANCE_ID),
+                        '--region', quote(REGION),
+                        '--local-log-path', quote(env.APPLY_LOAD_LOG_ARTIFACT),
+                        '--image', quote(params.IMAGE),
+                    ]
+                    if (params.MAX_IOPS?.trim()) {
+                        applyLoadCommand.addAll(['--iops', quote(params.MAX_IOPS)])
+                    }
+                    applyLoadCommand.addAll(modeArgs)
+
+                    echo "Apply-load helper command: ${applyLoadCommand.join(' ')}"
+
+                    sh "mkdir -p apply-load-logs"
+
+                    def commandStatus = sh(
+                        script: applyLoadCommand.join(' '),
+                        returnStatus: true
+                    )
+
+                    archiveArtifacts allowEmptyArchive: true, artifacts: env.APPLY_LOAD_LOG_ARTIFACT
+
+                    def logArtifactStatus = sh(
+                        script: "test -f ${env.APPLY_LOAD_LOG_ARTIFACT}",
+                        returnStatus: true
+                    )
+                    if (logArtifactStatus != 0) {
+                        echo "WARNING: apply-load log artifact was not created at ${env.APPLY_LOAD_LOG_ARTIFACT}"
+                    }
+
+                    if (commandStatus != 0) {
+                        error("apply-load command failed; see archived log artifact at ${env.APPLY_LOAD_LOG_ARTIFACT}")
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                if (env.INSTANCE_ID) {
+                    echo "Launch identity was: ${env.ASSUMED_AWS_CALLER_ARN ?: 'unknown'}"
+                    echo "Base Jenkins identity was: ${env.BASE_AWS_CALLER_ARN ?: 'unknown'}"
+                    def baseCredentialEnv = [
+                        "AWS_ACCESS_KEY_ID=${env.BASE_AWS_ACCESS_KEY_ID ?: ''}",
+                        "AWS_SECRET_ACCESS_KEY=${env.BASE_AWS_SECRET_ACCESS_KEY ?: ''}",
+                        "AWS_SESSION_TOKEN=${env.BASE_AWS_SESSION_TOKEN ?: ''}"
+                    ]
+                    def terminateScript = """
+                        set +e
+                        aws ec2 terminate-instances --region ${REGION} --instance-ids ${env.INSTANCE_ID}
+                        terminate_status=\$?
+                        if [ \$terminate_status -ne 0 ]; then
+                            exit \$terminate_status
+                        fi
+                        aws ec2 wait instance-terminated --region ${REGION} --instance-ids ${env.INSTANCE_ID}
+                    """
+
+                    echo "Terminating EC2 instance with current AWS credentials: ${env.INSTANCE_ID}"
+                    def terminateStatus = sh(
+                        script: terminateScript,
+                        returnStatus: true
+                    )
+
+                    if (terminateStatus != 0) {
+                        echo "Termination with current AWS credentials failed; retrying with base AWS identity"
+                        terminateStatus = withEnv(baseCredentialEnv) {
+                            sh(
+                                script: terminateScript,
+                                returnStatus: true
+                            )
+                        }
+                    }
+
+                    if (terminateStatus != 0) {
+                        echo "WARNING: failed to terminate or confirm termination for instance ${env.INSTANCE_ID}"
+                    }
+                }
+            }
+        }
+    }
+}
