@@ -198,7 +198,7 @@ class ApplyLoadAwsTests(unittest.TestCase):
                 "i-1234567890abcdef0",
                 "us-west-2",
                 (
-                    "chown -R ubuntu:ubuntu "
+                    "chown -R ubuntu "
                     f"{apply_load_aws.REMOTE_APPLY_LOAD_DIR}"
                 ),
             ),
