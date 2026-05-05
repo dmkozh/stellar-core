@@ -626,6 +626,12 @@ def copy_files_to_instance(instance_id: str, region: str,
             s3_bucket,
         )
 
+    run_ssm_command(
+        instance_id,
+        region,
+        f"chown -R ubuntu:ubuntu {REMOTE_APPLY_LOAD_DIR}",
+    )
+
 
 def install_script_on_instance(instance_id: str, region: str,
                                s3_bucket: str) -> str:

@@ -176,6 +176,34 @@ class ApplyLoadAwsTests(unittest.TestCase):
             "us-west-2",
         ])
 
+    def test_copy_files_to_instance_sets_ubuntu_ownership(self) -> None:
+        with mock.patch.object(
+            apply_load_aws,
+            "copy_file_via_s3",
+        ) as copy_file_via_s3:
+            with mock.patch.object(
+                apply_load_aws,
+                "run_ssm_command",
+            ) as run_ssm_command:
+                apply_load_aws.copy_files_to_instance(
+                    "i-1234567890abcdef0",
+                    "us-west-2",
+                    "stellar-core-test",
+                )
+
+        self.assertGreaterEqual(copy_file_via_s3.call_count, 1)
+        self.assertEqual(
+            run_ssm_command.call_args_list[-1].args,
+            (
+                "i-1234567890abcdef0",
+                "us-west-2",
+                (
+                    "chown -R ubuntu:ubuntu "
+                    f"{apply_load_aws.REMOTE_APPLY_LOAD_DIR}"
+                ),
+            ),
+        )
+
     def test_run_ssm_command_logs_status_and_polls(self) -> None:
         with mock.patch.object(
             apply_load_aws,
