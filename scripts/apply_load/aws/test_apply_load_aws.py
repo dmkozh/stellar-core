@@ -182,7 +182,7 @@ class ApplyLoadAwsTests(unittest.TestCase):
         self.assertIn("Running:", output.getvalue())
         self.assertIn("child-output", output.getvalue())
 
-    def test_run_apply_load_prints_full_log(self) -> None:
+    def test_run_apply_load_does_not_print_log_file(self) -> None:
         log_path = Path(apply_load_aws.APPLY_LOAD_LOG_FILE_PATH)
 
         def fake_run(*_args, **_kwargs):
@@ -215,8 +215,8 @@ class ApplyLoadAwsTests(unittest.TestCase):
             ),
             docker_command,
         )
-        self.assertIn("line-1", output.getvalue())
-        self.assertIn("line-2", output.getvalue())
+        self.assertNotIn("line-1", output.getvalue())
+        self.assertNotIn("line-2", output.getvalue())
 
     def test_start_ec2_instance_uses_legacy_policy_tag(self) -> None:
         with mock.patch.object(
@@ -379,6 +379,34 @@ class ApplyLoadAwsTests(unittest.TestCase):
             self.assertEqual(temp_path.read_bytes(), b"hello world")
         finally:
             temp_path.unlink(missing_ok=True)
+
+    def test_download_remote_file_rejects_invalid_base64(self) -> None:
+        results = [
+            ("6\n", ""),
+            ("not-base64\n", ""),
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir) / "apply-load.log"
+
+            with mock.patch.object(
+                apply_load_aws,
+                "run_ssm_command_result",
+                side_effect=results,
+            ):
+                with mock.patch.object(
+                    apply_load_aws,
+                    "REMOTE_FILE_CHUNK_SIZE_BYTES",
+                    6,
+                ):
+                    with self.assertRaises(RuntimeError):
+                        apply_load_aws.download_remote_file(
+                            "i-1234567890abcdef0",
+                            "us-west-2",
+                            apply_load_aws.APPLY_LOAD_LOG_FILE_PATH,
+                            temp_path,
+                        )
+            self.assertFalse(temp_path.exists())
 
 
 if __name__ == "__main__":

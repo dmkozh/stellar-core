@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import binascii
 import json
 import shlex
 import string
@@ -38,10 +39,7 @@ SSM_COMMAND_TIMEOUT_SECONDS = 30 * 60
 SSM_COMMAND_POLL_INTERVAL_SECONDS = 5
 
 # Chunk size used when downloading a remote file over SSM stdout.
-REMOTE_FILE_CHUNK_SIZE_BYTES = 20 * 1024
-
-# Chunk size used when printing command output to avoid Jenkins truncation.
-PRINT_CHUNK_SIZE_BYTES = 10 * 1024
+REMOTE_FILE_CHUNK_SIZE_BYTES = 12 * 1024
 
 # Preserve the legacy tag value required by the existing EC2 IAM policy.
 INSTANCE_TEST_TAG_VALUE = "max-sac-tps"
@@ -180,7 +178,6 @@ def run(command: Sequence[Any], capture_output: bool = False,
     command_args = [str(part) for part in command]
     printable_command = format_command(command_args)
     print(f"Running: {printable_command}")
-    output_logged = False
     if capture_output:
         result = subprocess.run(
             command_args,
@@ -191,19 +188,14 @@ def run(command: Sequence[Any], capture_output: bool = False,
     else:
         result = subprocess.run(
             command_args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
             check=False,
             text=True,
         )
-        if result.stdout:
-            print_text_in_chunks(result.stdout.rstrip())
-            output_logged = True
     if check and result.returncode != 0:
-        if not output_logged and result.stdout:
-            print_text_in_chunks(result.stdout.rstrip())
+        if result.stdout:
+            print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
         if result.stderr:
-            print_text_in_chunks(result.stderr.rstrip())
+            print(result.stderr, end="" if result.stderr.endswith("\n") else "\n")
         raise SystemExit(
             f"Command '{printable_command}' failed with exit code "
             f"{result.returncode}"
@@ -367,21 +359,6 @@ def read_file_text(path: Path) -> Optional[str]:
         return None
 
     return path.read_text(encoding="utf-8", errors="replace")
-
-
-def print_text_in_chunks(text: Optional[str]) -> None:
-    if text is None:
-        return
-
-    chunk_count = max(
-        1,
-        (len(text) + PRINT_CHUNK_SIZE_BYTES - 1) // PRINT_CHUNK_SIZE_BYTES,
-    )
-    for chunk_index in range(chunk_count):
-        start = chunk_index * PRINT_CHUNK_SIZE_BYTES
-        end = start + PRINT_CHUNK_SIZE_BYTES
-        chunk = text[start:end]
-        print(chunk, end="" if chunk.endswith("\n") else "\n")
 
 
 def build_apply_load_command(mode_name: str, values: Mapping[str, Any],
@@ -581,9 +558,9 @@ def run_ssm_command_result(instance_id: str, region: str, command: str,
         stdout = result.get("StandardOutputContent", "").strip()
         stderr = result.get("StandardErrorContent", "").strip()
         if log_output and stdout:
-            print_text_in_chunks(stdout)
+            print(stdout, end="" if stdout.endswith("\n") else "\n")
         if log_output and stderr:
-            print_text_in_chunks(stderr)
+            print(stderr, end="" if stderr.endswith("\n") else "\n")
 
         if check and status != "Success":
             raise SystemExit(
@@ -729,17 +706,12 @@ def run_apply_load(config: str, image: str, iops: Optional[int]) -> None:
             capture_output=True,
             check=False,
         )
-        log_text = read_file_text(log_path)
-        if log_text is None:
+        if read_file_text(log_path) is None:
             print(f"WARNING: apply-load core log not found at {log_path}")
-        else:
-            print_text_in_chunks(log_text)
         if result.returncode != 0:
-            print_text_in_chunks(result.stdout)
-            if result.stderr:
-                print_text_in_chunks(result.stderr)
             raise SystemExit(
-                f"apply-load failed with exit code {result.returncode}"
+                f"apply-load failed with exit code {result.returncode}; "
+                f"see {log_path}"
             )
     finally:
         Path(config_path).unlink(missing_ok=True)
@@ -763,38 +735,62 @@ def download_remote_file(instance_id: str, region: str, remote_path: str,
 
     file_size = int(size_text)
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    with local_path.open("wb") as output_file:
-        chunk_count = (file_size + REMOTE_FILE_CHUNK_SIZE_BYTES - 1) // REMOTE_FILE_CHUNK_SIZE_BYTES
-        for chunk_index in range(chunk_count):
-            chunk_command = "sudo -u ubuntu bash -lc " + shlex.quote(
-                " ".join([
-                    "dd",
-                    f"if={shlex.quote(remote_path)}",
-                    f"bs={REMOTE_FILE_CHUNK_SIZE_BYTES}",
-                    f"skip={chunk_index}",
-                    "count=1",
-                    "status=none",
-                    "|",
-                    "base64",
-                    "-w",
-                    "0",
-                ])
-            )
-            chunk_stdout, _ = run_ssm_command_result(
-                instance_id,
-                region,
-                chunk_command,
-                log_output=False,
-            )
-            output_file.write(base64.b64decode(chunk_stdout.strip() or ""))
+    file_descriptor, temp_name = tempfile.mkstemp(dir=local_path.parent)
+    temp_path = Path(temp_name)
+    try:
+        with open(file_descriptor, "wb", closefd=True) as output_file:
+            chunk_count = (
+                file_size + REMOTE_FILE_CHUNK_SIZE_BYTES - 1
+            ) // REMOTE_FILE_CHUNK_SIZE_BYTES
+            for chunk_index in range(chunk_count):
+                chunk_command = "sudo -u ubuntu bash -lc " + shlex.quote(
+                    " ".join([
+                        "dd",
+                        f"if={shlex.quote(remote_path)}",
+                        f"bs={REMOTE_FILE_CHUNK_SIZE_BYTES}",
+                        f"skip={chunk_index}",
+                        "count=1",
+                        "status=none",
+                        "|",
+                        "base64",
+                        "-w",
+                        "0",
+                    ])
+                )
+                chunk_stdout, _ = run_ssm_command_result(
+                    instance_id,
+                    region,
+                    chunk_command,
+                    log_output=False,
+                )
+                encoded_chunk = "".join(chunk_stdout.split())
+                try:
+                    decoded_chunk = base64.b64decode(
+                        encoded_chunk,
+                        validate=True,
+                    )
+                except binascii.Error as exc:
+                    raise RuntimeError(
+                        f"Failed to decode base64 chunk {chunk_index} from "
+                        f"{remote_path}"
+                    ) from exc
+                output_file.write(decoded_chunk)
+        temp_path.replace(local_path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
     return True
 
 
 def download_apply_load_log(instance_id: str, region: str,
                             local_log_path: Path) -> None:
-    if not download_remote_file(
-        instance_id, region, APPLY_LOAD_LOG_FILE_PATH, local_log_path
-    ):
+    downloaded = download_remote_file(
+        instance_id,
+        region,
+        APPLY_LOAD_LOG_FILE_PATH,
+        local_log_path,
+    )
+    if not downloaded:
         print(
             f"WARNING: failed to download apply-load log to {local_log_path}"
         )
