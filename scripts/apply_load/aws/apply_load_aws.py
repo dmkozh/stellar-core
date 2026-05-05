@@ -3,6 +3,7 @@
 import argparse
 import base64
 import json
+import os
 import shlex
 import string
 import subprocess
@@ -722,6 +723,7 @@ def run_apply_load(config: str, image: str, iops: Optional[int]) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.unlink(missing_ok=True)
     log_path.touch()
+    os.chmod(log_path, 0o666)
 
     try:
         result = run(

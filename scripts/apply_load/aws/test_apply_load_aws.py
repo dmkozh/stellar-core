@@ -199,15 +199,17 @@ class ApplyLoadAwsTests(unittest.TestCase):
             "run",
             side_effect=fake_run,
         ) as run_command:
-            output = io.StringIO()
-            with contextlib.redirect_stdout(output):
-                apply_load_aws.run_apply_load(
-                    'LOG_FILE_PATH="/tmp/apply-load.log"\n',
-                    "stellar/apply-load:latest",
-                    None,
-                )
+            with mock.patch.object(apply_load_aws.os, "chmod") as chmod:
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    apply_load_aws.run_apply_load(
+                        'LOG_FILE_PATH="/tmp/apply-load.log"\n',
+                        "stellar/apply-load:latest",
+                        None,
+                    )
 
         docker_command = run_command.call_args.args[0]
+        chmod.assert_called_once_with(log_path, 0o666)
         self.assertIn(
             (
                 f"{apply_load_aws.APPLY_LOAD_LOG_FILE_PATH}:"
