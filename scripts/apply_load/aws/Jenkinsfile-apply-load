@@ -17,38 +17,42 @@ pipeline {
         timestamps()
     }
     parameters {
+        separator(name: 'Common Parameters')
         string(name: 'BRANCH', defaultValue: 'master', description: 'Branch to use apply_load_aws.py script from')
         string(name: 'REPO_URL', defaultValue: 'https://github.com/stellar/stellar-core.git', description: 'Repository URL to clone')
-
         choice(name: 'APPLY_LOAD_MODE', choices: ['max-sac-tps', 'benchmark', 'ledger-limits'], description: 'apply-load mode to run')
         string(name: 'IMAGE', description: 'Docker perftests image to use for load test. Must be from Docker Hub')
         string(name: 'MAX_IOPS', defaultValue: '10000', description: 'Optional maximum read/write IOPS. Leave blank to disable the limit')
+        string(name: 'DEPENDENT_TX_CLUSTERS', defaultValue: '2', description: 'Number of dependent transaction clusters (mapped to execution threads)')
 
-        choice(name: 'MODEL_TX', choices: ['sac', 'custom_token', 'soroswap'], description: 'Benchmark model transaction kind (benchmark mode only)')
+        separator(name: '`benchmark` mode')
+        choice(name: 'MODEL_TX_BENCHMARK', choices: ['sac', 'custom_token', 'soroswap'], description: 'Benchmark model transaction kind')
+        string(name: 'TX_COUNT_FOR_BENCHMARK_MODE', defaultValue: '1000', description: 'Number of Soroban transactions to apply per ledger in benchmark mode')
+        string(name: 'NUM_LEDGERS_FOR_BENCHMARK_MODE', defaultValue: '200', description: 'Number of ledgers to close in benchmark mode')
 
-        string(name: 'DEPENDENT_TX_CLUSTERS', defaultValue: '4', description: 'Number of dependent transaction clusters (mapped to execution threads)')
-        string(name: 'TX_COUNT', defaultValue: '', description: 'Number of Soroban transactions to apply per ledger (benchmark and ledger-limits)')
-        string(name: 'NUM_LEDGERS', defaultValue: '', description: 'Number of ledgers to close (benchmark and ledger-limits)')
-
-        string(name: 'MIN_TPS', defaultValue: '1000', description: 'Lower TPS bound for max-sac-tps binary search')
+        separator(name: '`max-sac-tps` mode')
+        string(name: 'MIN_TPS', defaultValue: '2000', description: 'Lower TPS bound for max-sac-tps binary search')
         string(name: 'MAX_TPS', defaultValue: '10000', description: 'Upper TPS bound for max-sac-tps binary search')
-        string(name: 'TARGET_CLOSE_TIME_MS', defaultValue: '300', description: 'Target close time in milliseconds')
+        string(name: 'TARGET_CLOSE_TIME_MS', defaultValue: '300', description: 'Target ledger close time in milliseconds')
 
-        string(name: 'LEDGER_MAX_INSTRUCTIONS', defaultValue: '', description: 'Maximum instructions allowed for the ledger (ledger-limits)')
-        string(name: 'TX_MAX_INSTRUCTIONS', defaultValue: '', description: 'Maximum instructions allowed per transaction (ledger-limits)')
-        string(name: 'TX_MAX_FOOTPRINT_SIZE', defaultValue: '', description: 'Maximum per-transaction footprint size (ledger-limits)')
-        string(name: 'LEDGER_MAX_DISK_READ_LEDGER_ENTRIES', defaultValue: '', description: 'Maximum disk read ledger entries for the ledger (ledger-limits)')
-        string(name: 'TX_MAX_DISK_READ_LEDGER_ENTRIES', defaultValue: '', description: 'Maximum per-transaction disk read ledger entries (ledger-limits)')
-        string(name: 'LEDGER_MAX_DISK_READ_BYTES', defaultValue: '', description: 'Maximum disk read bytes for the ledger (ledger-limits)')
-        string(name: 'TX_MAX_DISK_READ_BYTES', defaultValue: '', description: 'Maximum per-transaction disk read bytes (ledger-limits)')
-        string(name: 'LEDGER_MAX_WRITE_LEDGER_ENTRIES', defaultValue: '', description: 'Maximum ledger write ledger entries (ledger-limits)')
-        string(name: 'TX_MAX_WRITE_LEDGER_ENTRIES', defaultValue: '', description: 'Maximum per-transaction write ledger entries (ledger-limits)')
-        string(name: 'LEDGER_MAX_WRITE_BYTES', defaultValue: '', description: 'Maximum ledger write bytes (ledger-limits)')
-        string(name: 'TX_MAX_WRITE_BYTES', defaultValue: '', description: 'Maximum per-transaction write bytes (ledger-limits)')
-        string(name: 'MAX_LEDGER_TX_SIZE_BYTES', defaultValue: '', description: 'Maximum total transaction size per ledger in bytes (ledger-limits)')
-        string(name: 'MAX_TX_SIZE_BYTES', defaultValue: '', description: 'Maximum transaction size in bytes (ledger-limits)')
-        string(name: 'MAX_CONTRACT_EVENT_SIZE_BYTES', defaultValue: '', description: 'Maximum contract event size in bytes (ledger-limits)')
-        string(name: 'NUM_EVENTS', defaultValue: '', description: 'Number of events emitted by each transaction (ledger-limits)')
+        separator(name: '`ledger-limits` mode')
+        string(name: 'TX_COUNT_LIMITS', defaultValue: '482', description: 'Number of Soroban transactions to apply per ledger')        
+        string(name: 'LEDGER_MAX_INSTRUCTIONS', defaultValue: '580000000', description: 'Maximum instructions allowed for the ledger')
+        string(name: 'TX_MAX_INSTRUCTIONS', defaultValue: '400000000', description: 'Maximum instructions allowed per transaction')
+        string(name: 'TX_MAX_FOOTPRINT_SIZE', defaultValue: '400', description: 'Maximum per-transaction footprint size')
+        string(name: 'LEDGER_MAX_DISK_READ_LEDGER_ENTRIES', defaultValue: '1000', description: 'Maximum disk read ledger entries for the ledger')
+        string(name: 'TX_MAX_DISK_READ_LEDGER_ENTRIES', defaultValue: '200', description: 'Maximum per-transaction disk read ledger entries')
+        string(name: 'LEDGER_MAX_DISK_READ_BYTES', defaultValue: '400000', description: 'Maximum disk read bytes for the ledger')
+        string(name: 'TX_MAX_DISK_READ_BYTES', defaultValue: '200000', description: 'Maximum per-transaction disk read bytes')
+        string(name: 'LEDGER_MAX_WRITE_LEDGER_ENTRIES', defaultValue: '1000', description: 'Maximum ledger write ledger entries')
+        string(name: 'TX_MAX_WRITE_LEDGER_ENTRIES', defaultValue: '200', description: 'Maximum per-transaction write ledger entries')
+        string(name: 'LEDGER_MAX_WRITE_BYTES', defaultValue: '286720', description: 'Maximum ledger write bytes')
+        string(name: 'TX_MAX_WRITE_BYTES', defaultValue: '132096', description: 'Maximum per-transaction write bytes')
+        string(name: 'MAX_LEDGER_TX_SIZE_BYTES', defaultValue: '266240', description: 'Maximum total transaction size per ledger in bytes')
+        string(name: 'MAX_TX_SIZE_BYTES', defaultValue: '132096', description: 'Maximum transaction size in bytes')
+        string(name: 'MAX_CONTRACT_EVENT_SIZE_BYTES', defaultValue: '16384', description: 'Maximum contract event size in bytes')
+        string(name: 'NUM_LEDGERS_FOR_LIMITS_MODE', defaultValue: '200', description: 'Number of ledgers to close')
+        string(name: 'NUM_EVENTS', defaultValue: '5', description: 'Number of events emitted by each transaction')
     }
     stages {
         stage('Validate parameters') {
@@ -56,14 +60,13 @@ pipeline {
                 script {
                     def requiredParamsByMode = [
                         'benchmark': [
-                            'TX_COUNT',
-                            'DEPENDENT_TX_CLUSTERS',
-                            'NUM_LEDGERS'
+                            'MODEL_TX_BENCHMARK',
+                            'TX_COUNT_FOR_BENCHMARK_MODE',
+                            'NUM_LEDGERS_FOR_BENCHMARK_MODE'
                         ],
                         'ledger-limits': [
                             'LEDGER_MAX_INSTRUCTIONS',
                             'TX_MAX_INSTRUCTIONS',
-                            'DEPENDENT_TX_CLUSTERS',
                             'TX_MAX_FOOTPRINT_SIZE',
                             'LEDGER_MAX_DISK_READ_LEDGER_ENTRIES',
                             'TX_MAX_DISK_READ_LEDGER_ENTRIES',
@@ -76,19 +79,20 @@ pipeline {
                             'MAX_LEDGER_TX_SIZE_BYTES',
                             'MAX_TX_SIZE_BYTES',
                             'MAX_CONTRACT_EVENT_SIZE_BYTES',
-                            'TX_COUNT',
-                            'NUM_LEDGERS',
+                            'TX_COUNT_LIMITS',
+                            'NUM_LEDGERS_FOR_LIMITS_MODE',
                             'NUM_EVENTS'
                         ],
                         'max-sac-tps': [
                             'MIN_TPS',
                             'MAX_TPS',
-                            'TARGET_CLOSE_TIME_MS',
-                            'DEPENDENT_TX_CLUSTERS'
+                            'TARGET_CLOSE_TIME_MS'
                         ]
                     ]
 
-                    def missing = ['IMAGE'].findAll { !params[it]?.trim() }
+                    def missing = ['IMAGE', 'DEPENDENT_TX_CLUSTERS'].findAll {
+                        !params[it]?.trim()
+                    }
                     missing.addAll(requiredParamsByMode[params.APPLY_LOAD_MODE].findAll {
                         !params[it]?.trim()
                     })
@@ -181,10 +185,10 @@ pipeline {
                     switch (params.APPLY_LOAD_MODE) {
                         case 'benchmark':
                             modeArgs.addAll([
-                                '--model-tx', quote(params.MODEL_TX),
-                                '--tx-count', quote(params.TX_COUNT),
+                                '--model-tx', quote(params.MODEL_TX_BENCHMARK),
+                                '--tx-count', quote(params.TX_COUNT_FOR_BENCHMARK_MODE),
                                 '--dependent-tx-clusters', quote(params.DEPENDENT_TX_CLUSTERS),
-                                '--num-ledgers', quote(params.NUM_LEDGERS)
+                                '--num-ledgers', quote(params.NUM_LEDGERS_FOR_BENCHMARK_MODE)
                             ])
                             break
                         case 'ledger-limits':
@@ -204,8 +208,8 @@ pipeline {
                                 '--max-ledger-tx-size-bytes', quote(params.MAX_LEDGER_TX_SIZE_BYTES),
                                 '--max-tx-size-bytes', quote(params.MAX_TX_SIZE_BYTES),
                                 '--max-contract-event-size-bytes', quote(params.MAX_CONTRACT_EVENT_SIZE_BYTES),
-                                '--tx-count', quote(params.TX_COUNT),
-                                '--num-ledgers', quote(params.NUM_LEDGERS),
+                                '--tx-count', quote(params.TX_COUNT_LIMITS),
+                                '--num-ledgers', quote(params.NUM_LEDGERS_FOR_LIMITS_MODE),
                                 '--num-events', quote(params.NUM_EVENTS)
                             ])
                             break
