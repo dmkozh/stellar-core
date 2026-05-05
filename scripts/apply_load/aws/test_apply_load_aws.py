@@ -110,6 +110,10 @@ class ApplyLoadAwsTests(unittest.TestCase):
         )
 
         self.assertNotIn("--mode", command)
+        self.assertIn(
+            f"{apply_load_aws.APPLY_LOAD_LOG_FILE_PATH}:{apply_load_aws.APPLY_LOAD_LOG_FILE_PATH}",
+            command,
+        )
         self.assertIn("--device-write-iops", command)
         self.assertEqual(
             command[-4:],
@@ -146,6 +150,42 @@ class ApplyLoadAwsTests(unittest.TestCase):
 
         self.assertIn("Running:", output.getvalue())
         self.assertIn("child-output", output.getvalue())
+
+    def test_run_apply_load_prints_log_tail(self) -> None:
+        log_path = Path(apply_load_aws.APPLY_LOAD_LOG_FILE_PATH)
+
+        def fake_run(*_args, **_kwargs):
+            log_path.write_text("line-1\nline-2\n", encoding="utf-8")
+            return apply_load_aws.subprocess.CompletedProcess(
+                ["docker"],
+                0,
+                "ignored stdout\n",
+                "",
+            )
+
+        with mock.patch.object(
+            apply_load_aws,
+            "run",
+            side_effect=fake_run,
+        ) as run_command:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                apply_load_aws.run_apply_load(
+                    'LOG_FILE_PATH="/tmp/apply-load.log"\n',
+                    "stellar/apply-load:latest",
+                    None,
+                )
+
+        docker_command = run_command.call_args.args[0]
+        self.assertIn(
+            (
+                f"{apply_load_aws.APPLY_LOAD_LOG_FILE_PATH}:"
+                f"{apply_load_aws.APPLY_LOAD_LOG_FILE_PATH}"
+            ),
+            docker_command,
+        )
+        self.assertIn("=== apply-load core log tail", output.getvalue())
+        self.assertIn("line-2", output.getvalue())
 
     def test_start_ec2_instance_uses_legacy_policy_tag(self) -> None:
         with mock.patch.object(

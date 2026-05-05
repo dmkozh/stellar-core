@@ -339,6 +339,8 @@ def build_docker_command(config_path: str, image: str,
         "--rm",
         "-v",
         f"{config_path}:/config.cfg",
+        "-v",
+        f"{APPLY_LOAD_LOG_FILE_PATH}:{APPLY_LOAD_LOG_FILE_PATH}",
     ]
     if iops is not None:
         command.extend([
@@ -355,6 +357,29 @@ def build_docker_command(config_path: str, image: str,
         "/config.cfg",
     ])
     return command
+
+
+def print_file_tail(path: Path, label: str, line_count: int = 200) -> None:
+    if not path.exists():
+        print(f"WARNING: {label} not found at {path}")
+        return
+
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    tail_lines = lines[-line_count:]
+    print(f"=== {label} tail (last {len(tail_lines)} lines) ===")
+    if tail_lines:
+        print("\n".join(tail_lines))
+    print(f"=== End {label} tail ===")
+
+
+def print_output_tail(text: str, label: str, line_count: int = 50) -> None:
+    lines = text.splitlines()
+    if not lines:
+        return
+    tail_lines = lines[-line_count:]
+    print(f"=== {label} tail (last {len(tail_lines)} lines) ===")
+    print("\n".join(tail_lines))
+    print(f"=== End {label} tail ===")
 
 
 def build_apply_load_command(mode_name: str, values: Mapping[str, Any],
@@ -685,8 +710,25 @@ def run_apply_load(config: str, image: str, iops: Optional[int]) -> None:
         config_file.write(config)
         config_path = config_file.name
 
+    log_path = Path(APPLY_LOAD_LOG_FILE_PATH)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.unlink(missing_ok=True)
+    log_path.touch()
+
     try:
-        run(build_docker_command(config_path, image, iops))
+        result = run(
+            build_docker_command(config_path, image, iops),
+            capture_output=True,
+            check=False,
+        )
+        print_file_tail(log_path, "apply-load core log")
+        if result.returncode != 0:
+            print_output_tail(result.stdout, "docker stdout")
+            if result.stderr:
+                print_output_tail(result.stderr, "docker stderr")
+            raise SystemExit(
+                f"apply-load failed with exit code {result.returncode}"
+            )
     finally:
         Path(config_path).unlink(missing_ok=True)
 
