@@ -17,7 +17,7 @@ pipeline {
         timestamps()
     }
     parameters {
-        separator(name: 'Common Parameters')
+        separator(name: "COMMON_PARAMS", sectionHeader: 'Common Parameters')
         string(name: 'BRANCH', defaultValue: 'master', description: 'Branch to use apply_load_aws.py script from')
         string(name: 'REPO_URL', defaultValue: 'https://github.com/stellar/stellar-core.git', description: 'Repository URL to clone')
         choice(name: 'APPLY_LOAD_MODE', choices: ['max-sac-tps', 'benchmark', 'ledger-limits'], description: 'apply-load mode to run')
@@ -25,18 +25,18 @@ pipeline {
         string(name: 'MAX_IOPS', defaultValue: '10000', description: 'Optional maximum read/write IOPS. Leave blank to disable the limit')
         string(name: 'DEPENDENT_TX_CLUSTERS', defaultValue: '2', description: 'Number of dependent transaction clusters (mapped to execution threads)')
 
-        separator(name: '`benchmark` mode')
+        separator(name: "BENCHMARK_MODE", sectionHeader: '`benchmark` Mode')
         choice(name: 'MODEL_TX_BENCHMARK', choices: ['sac', 'custom_token', 'soroswap'], description: 'Benchmark model transaction kind')
         string(name: 'TX_COUNT_FOR_BENCHMARK_MODE', defaultValue: '1000', description: 'Number of Soroban transactions to apply per ledger in benchmark mode')
         string(name: 'NUM_LEDGERS_FOR_BENCHMARK_MODE', defaultValue: '200', description: 'Number of ledgers to close in benchmark mode')
 
-        separator(name: '`max-sac-tps` mode')
+        separator(name: "MAX_SAC_TPS_MODE", sectionHeader: '`max-sac-tps` Mode')
         string(name: 'MIN_TPS', defaultValue: '2000', description: 'Lower TPS bound for max-sac-tps binary search')
         string(name: 'MAX_TPS', defaultValue: '10000', description: 'Upper TPS bound for max-sac-tps binary search')
         string(name: 'TARGET_CLOSE_TIME_MS', defaultValue: '300', description: 'Target ledger close time in milliseconds')
 
-        separator(name: '`ledger-limits` mode')
-        string(name: 'TX_COUNT_LIMITS', defaultValue: '482', description: 'Number of Soroban transactions to apply per ledger')        
+        separator(name: "LEDGER_LIMITS_MODE", sectionHeader: '`ledger-limits` Mode')
+        string(name: 'TX_COUNT', defaultValue: '482', description: 'Number of Soroban transactions to apply per ledger')        
         string(name: 'LEDGER_MAX_INSTRUCTIONS', defaultValue: '580000000', description: 'Maximum instructions allowed for the ledger')
         string(name: 'TX_MAX_INSTRUCTIONS', defaultValue: '400000000', description: 'Maximum instructions allowed per transaction')
         string(name: 'TX_MAX_FOOTPRINT_SIZE', defaultValue: '400', description: 'Maximum per-transaction footprint size')
@@ -79,7 +79,7 @@ pipeline {
                             'MAX_LEDGER_TX_SIZE_BYTES',
                             'MAX_TX_SIZE_BYTES',
                             'MAX_CONTRACT_EVENT_SIZE_BYTES',
-                            'TX_COUNT_LIMITS',
+                            'TX_COUNT',
                             'NUM_LEDGERS_FOR_LIMITS_MODE',
                             'NUM_EVENTS'
                         ],
@@ -208,7 +208,7 @@ pipeline {
                                 '--max-ledger-tx-size-bytes', quote(params.MAX_LEDGER_TX_SIZE_BYTES),
                                 '--max-tx-size-bytes', quote(params.MAX_TX_SIZE_BYTES),
                                 '--max-contract-event-size-bytes', quote(params.MAX_CONTRACT_EVENT_SIZE_BYTES),
-                                '--tx-count', quote(params.TX_COUNT_LIMITS),
+                                '--tx-count', quote(params.TX_COUNT),
                                 '--num-ledgers', quote(params.NUM_LEDGERS_FOR_LIMITS_MODE),
                                 '--num-events', quote(params.NUM_EVENTS)
                             ])
