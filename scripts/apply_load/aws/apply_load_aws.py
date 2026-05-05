@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import base64
 import json
 import shlex
 import string
@@ -34,6 +35,12 @@ SSM_COMMAND_TIMEOUT_SECONDS = 30 * 60
 
 # Delay between SSM command status polls.
 SSM_COMMAND_POLL_INTERVAL_SECONDS = 5
+
+# Chunk size used when downloading a remote file over SSM stdout.
+REMOTE_FILE_CHUNK_SIZE_BYTES = 20 * 1024
+
+# Chunk size used when printing command output to avoid Jenkins truncation.
+PRINT_CHUNK_SIZE_BYTES = 10 * 1024
 
 # Preserve the legacy tag value required by the existing EC2 IAM policy.
 INSTANCE_TEST_TAG_VALUE = "max-sac-tps"
@@ -172,6 +179,7 @@ def run(command: Sequence[Any], capture_output: bool = False,
     command_args = [str(part) for part in command]
     printable_command = format_command(command_args)
     print(f"Running: {printable_command}")
+    output_logged = False
     if capture_output:
         result = subprocess.run(
             command_args,
@@ -180,30 +188,21 @@ def run(command: Sequence[Any], capture_output: bool = False,
             text=True,
         )
     else:
-        process = subprocess.Popen(
+        result = subprocess.run(
             command_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            check=False,
             text=True,
-            bufsize=1,
         )
-        output_lines = []
-        assert process.stdout is not None
-        with process.stdout:
-            for line in process.stdout:
-                print(line, end="")
-                output_lines.append(line)
-        result = subprocess.CompletedProcess(
-            command_args,
-            process.wait(),
-            "".join(output_lines),
-            None,
-        )
-    if check and result.returncode != 0:
         if result.stdout:
-            print(result.stdout.rstrip())
+            print_text_in_chunks(result.stdout.rstrip())
+            output_logged = True
+    if check and result.returncode != 0:
+        if not output_logged and result.stdout:
+            print_text_in_chunks(result.stdout.rstrip())
         if result.stderr:
-            print(result.stderr.rstrip())
+            print_text_in_chunks(result.stderr.rstrip())
         raise SystemExit(
             f"Command '{printable_command}' failed with exit code "
             f"{result.returncode}"
@@ -320,14 +319,9 @@ def add_aws_run_arguments(parser: argparse.ArgumentParser) -> None:
         help="AWS region of the instance.",
     )
     parser.add_argument(
-        "--s3-bucket",
+        "--local-log-path",
         required=True,
-        help="S3 bucket to upload the apply-load log to.",
-    )
-    parser.add_argument(
-        "--s3-log-key",
-        required=True,
-        help="S3 key to upload the apply-load log to.",
+        help="Local file path to store the downloaded apply-load log.",
     )
 
 
@@ -359,27 +353,26 @@ def build_docker_command(config_path: str, image: str,
     return command
 
 
-def print_file_tail(path: Path, label: str, line_count: int = 200) -> None:
+def read_file_text(path: Path) -> Optional[str]:
     if not path.exists():
-        print(f"WARNING: {label} not found at {path}")
+        return None
+
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def print_text_in_chunks(text: Optional[str]) -> None:
+    if text is None:
         return
 
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    tail_lines = lines[-line_count:]
-    print(f"=== {label} tail (last {len(tail_lines)} lines) ===")
-    if tail_lines:
-        print("\n".join(tail_lines))
-    print(f"=== End {label} tail ===")
-
-
-def print_output_tail(text: str, label: str, line_count: int = 50) -> None:
-    lines = text.splitlines()
-    if not lines:
-        return
-    tail_lines = lines[-line_count:]
-    print(f"=== {label} tail (last {len(tail_lines)} lines) ===")
-    print("\n".join(tail_lines))
-    print(f"=== End {label} tail ===")
+    chunk_count = max(
+        1,
+        (len(text) + PRINT_CHUNK_SIZE_BYTES - 1) // PRINT_CHUNK_SIZE_BYTES,
+    )
+    for chunk_index in range(chunk_count):
+        start = chunk_index * PRINT_CHUNK_SIZE_BYTES
+        end = start + PRINT_CHUNK_SIZE_BYTES
+        chunk = text[start:end]
+        print(chunk, end="" if chunk.endswith("\n") else "\n")
 
 
 def build_apply_load_command(mode_name: str, values: Mapping[str, Any],
@@ -492,8 +485,10 @@ def wait_for_ssm_agent(instance_id: str, region: str) -> None:
     raise SystemExit("ERROR: SSM agent failed to become ready")
 
 
-def run_ssm_command(instance_id: str, region: str, command: str) -> None:
-    """Run a command on an EC2 instance via SSM."""
+def run_ssm_command_result(instance_id: str, region: str, command: str,
+                           log_output: bool = True,
+                           check: bool = True) -> tuple[str, str]:
+    """Run a command on an EC2 instance via SSM and return stdout/stderr."""
     print(f"Running SSM command on {instance_id}: {command}")
 
     send_command = [
@@ -576,21 +571,26 @@ def run_ssm_command(instance_id: str, region: str, command: str) -> None:
 
         stdout = result.get("StandardOutputContent", "").strip()
         stderr = result.get("StandardErrorContent", "").strip()
-        if stdout:
-            print("Command output:", stdout)
-        if stderr:
-            print("Command error:", stderr)
+        if log_output and stdout:
+            print_text_in_chunks(stdout)
+        if log_output and stderr:
+            print_text_in_chunks(stderr)
 
-        if status != "Success":
+        if check and status != "Success":
             raise SystemExit(
                 f"SSM command '{command}' failed with status {status}"
             )
-        return
+        return stdout, stderr
 
     raise SystemExit(
         f"ERROR: Command '{command}' timed out after "
         f"{SSM_COMMAND_TIMEOUT_SECONDS} seconds"
     )
+
+
+def run_ssm_command(instance_id: str, region: str, command: str) -> None:
+    """Run a command on an EC2 instance via SSM."""
+    run_ssm_command_result(instance_id, region, command)
 
 
 def copy_file_via_s3(instance_id: str, region: str, local_file: Path,
@@ -721,11 +721,15 @@ def run_apply_load(config: str, image: str, iops: Optional[int]) -> None:
             capture_output=True,
             check=False,
         )
-        print_file_tail(log_path, "apply-load core log")
+        log_text = read_file_text(log_path)
+        if log_text is None:
+            print(f"WARNING: apply-load core log not found at {log_path}")
+        else:
+            print_text_in_chunks(log_text)
         if result.returncode != 0:
-            print_output_tail(result.stdout, "docker stdout")
+            print_text_in_chunks(result.stdout)
             if result.stderr:
-                print_output_tail(result.stderr, "docker stderr")
+                print_text_in_chunks(result.stderr)
             raise SystemExit(
                 f"apply-load failed with exit code {result.returncode}"
             )
@@ -733,41 +737,63 @@ def run_apply_load(config: str, image: str, iops: Optional[int]) -> None:
         Path(config_path).unlink(missing_ok=True)
 
 
-def copy_apply_load_log_to_s3(instance_id: str, region: str, s3_bucket: str,
-                              s3_key: str) -> None:
-    s3_uri = f"s3://{s3_bucket}/{s3_key}"
-    remote_copy_command = "sudo -u ubuntu bash -lc " + shlex.quote(
-        " ".join([
-            "if",
-            "[",
-            "-f",
-            shlex.quote(APPLY_LOAD_LOG_FILE_PATH),
-            "];",
-            "then",
-            "aws",
-            "s3",
-            "cp",
-            shlex.quote(APPLY_LOAD_LOG_FILE_PATH),
-            shlex.quote(s3_uri),
-            ";",
-            "else",
-            "echo",
-            shlex.quote(
-                f"WARNING: apply-load log not found at "
-                f"{APPLY_LOAD_LOG_FILE_PATH}"
-            ),
-            ";",
-            "fi",
-        ])
+def download_remote_file(instance_id: str, region: str, remote_path: str,
+                         local_path: Path) -> bool:
+    size_command = "sudo -u ubuntu bash -lc " + shlex.quote(
+        f"if [ -f {shlex.quote(remote_path)} ]; then wc -c < {shlex.quote(remote_path)}; else echo MISSING; fi"
     )
-    try:
-        run_ssm_command(instance_id, region, remote_copy_command)
-    except SystemExit as exc:
-        print(f"WARNING: failed to copy apply-load log to {s3_uri}: {exc}")
+    stdout, _ = run_ssm_command_result(
+        instance_id,
+        region,
+        size_command,
+        log_output=False,
+    )
+    size_text = stdout.strip()
+    if not size_text or size_text == "MISSING":
+        print(f"WARNING: apply-load log not found at {remote_path}")
+        return False
+
+    file_size = int(size_text)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    with local_path.open("wb") as output_file:
+        chunk_count = (file_size + REMOTE_FILE_CHUNK_SIZE_BYTES - 1) // REMOTE_FILE_CHUNK_SIZE_BYTES
+        for chunk_index in range(chunk_count):
+            chunk_command = "sudo -u ubuntu bash -lc " + shlex.quote(
+                " ".join([
+                    "dd",
+                    f"if={shlex.quote(remote_path)}",
+                    f"bs={REMOTE_FILE_CHUNK_SIZE_BYTES}",
+                    f"skip={chunk_index}",
+                    "count=1",
+                    "status=none",
+                    "|",
+                    "base64",
+                    "-w",
+                    "0",
+                ])
+            )
+            chunk_stdout, _ = run_ssm_command_result(
+                instance_id,
+                region,
+                chunk_command,
+                log_output=False,
+            )
+            output_file.write(base64.b64decode(chunk_stdout.strip() or ""))
+    return True
 
 
-def run_apply_load_on_instance(instance_id: str, region: str, s3_bucket: str,
-                               s3_log_key: str, mode_name: str,
+def download_apply_load_log(instance_id: str, region: str,
+                            local_log_path: Path) -> None:
+    if not download_remote_file(
+        instance_id, region, APPLY_LOAD_LOG_FILE_PATH, local_log_path
+    ):
+        print(
+            f"WARNING: failed to download apply-load log to {local_log_path}"
+        )
+
+
+def run_apply_load_on_instance(instance_id: str, region: str,
+                               local_log_path: Path, mode_name: str,
                                values: Mapping[str, Any], image: str,
                                iops: Optional[int]) -> None:
     run_error = None
@@ -779,7 +805,7 @@ def run_apply_load_on_instance(instance_id: str, region: str, s3_bucket: str,
     except SystemExit as exc:
         run_error = exc
 
-    copy_apply_load_log_to_s3(instance_id, region, s3_bucket, s3_log_key)
+    download_apply_load_log(instance_id, region, local_log_path)
 
     if run_error is not None:
         raise run_error
@@ -808,8 +834,7 @@ def handle_aws_run_mode(args: argparse.Namespace) -> None:
     run_apply_load_on_instance(
         args.instance_id,
         args.region,
-        args.s3_bucket,
-        args.s3_log_key,
+        Path(args.local_log_path),
         args.apply_load_mode,
         vars(args),
         args.image,

@@ -2,6 +2,8 @@ import contextlib
 import importlib.util
 import io
 import sys
+import base64
+import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -85,10 +87,8 @@ class ApplyLoadAwsTests(unittest.TestCase):
             "i-1234567890abcdef0",
             "--region",
             "us-west-2",
-            "--s3-bucket",
-            "stellar-core-test",
-            "--s3-log-key",
-            "tmp/test.log",
+            "--local-log-path",
+            "apply-load-logs/test.log",
             "--image",
             "stellar/apply-load:latest",
             "--min-tps",
@@ -137,6 +137,7 @@ class ApplyLoadAwsTests(unittest.TestCase):
         self.assertIn("&& cd", command)
         self.assertNotIn("'&&'", command)
         self.assertIn("--image", command)
+        self.assertNotIn("APPLY_LOAD_AWS_SUPPRESS_LOG_TAIL=1", command)
 
     def test_run_streams_child_output(self) -> None:
         output = io.StringIO()
@@ -151,7 +152,7 @@ class ApplyLoadAwsTests(unittest.TestCase):
         self.assertIn("Running:", output.getvalue())
         self.assertIn("child-output", output.getvalue())
 
-    def test_run_apply_load_prints_log_tail(self) -> None:
+    def test_run_apply_load_prints_full_log(self) -> None:
         log_path = Path(apply_load_aws.APPLY_LOAD_LOG_FILE_PATH)
 
         def fake_run(*_args, **_kwargs):
@@ -184,7 +185,7 @@ class ApplyLoadAwsTests(unittest.TestCase):
             ),
             docker_command,
         )
-        self.assertIn("=== apply-load core log tail", output.getvalue())
+        self.assertIn("line-1", output.getvalue())
         self.assertIn("line-2", output.getvalue())
 
     def test_start_ec2_instance_uses_legacy_policy_tag(self) -> None:
@@ -249,10 +250,10 @@ class ApplyLoadAwsTests(unittest.TestCase):
 
         self.assertIn("Command status: InProgress", output.getvalue())
         self.assertIn("Command status: Success", output.getvalue())
-        self.assertIn("Command output: done", output.getvalue())
+        self.assertIn("done", output.getvalue())
         sleep.assert_called_once_with(5)
 
-    def test_run_apply_load_on_instance_copies_log_after_failure(self) -> None:
+    def test_run_apply_load_on_instance_downloads_log_after_failure(self) -> None:
         values = {
             "min_tps": 1000,
             "max_tps": 2000,
@@ -263,29 +264,91 @@ class ApplyLoadAwsTests(unittest.TestCase):
         with mock.patch.object(
             apply_load_aws,
             "run_ssm_command",
-            side_effect=[SystemExit("run failed"), None],
+            side_effect=SystemExit("run failed"),
         ) as run_ssm_command:
-            with self.assertRaises(SystemExit):
-                apply_load_aws.run_apply_load_on_instance(
-                    "i-1234567890abcdef0",
-                    "us-west-2",
-                    "stellar-core-test",
-                    "tmp/test.log",
-                    "max-sac-tps",
-                    values,
-                    "stellar/apply-load:latest",
-                    3000,
-                )
+            with mock.patch.object(
+                apply_load_aws,
+                "download_apply_load_log",
+            ) as download_apply_load_log:
+                with self.assertRaises(SystemExit):
+                    apply_load_aws.run_apply_load_on_instance(
+                        "i-1234567890abcdef0",
+                        "us-west-2",
+                        Path("apply-load-logs/test.log"),
+                        "max-sac-tps",
+                        values,
+                        "stellar/apply-load:latest",
+                        3000,
+                    )
 
-        self.assertEqual(run_ssm_command.call_count, 2)
+        self.assertEqual(run_ssm_command.call_count, 1)
         self.assertIn(
             "python3 apply_load_aws.py max-sac-tps",
-            run_ssm_command.call_args_list[0].args[2],
+            run_ssm_command.call_args.args[2],
         )
-        self.assertIn(
-            "s3://stellar-core-test/tmp/test.log",
-            run_ssm_command.call_args_list[1].args[2],
+        download_apply_load_log.assert_called_once_with(
+            "i-1234567890abcdef0",
+            "us-west-2",
+            Path("apply-load-logs/test.log"),
         )
+
+    def test_download_apply_load_log_uses_requested_local_path(self) -> None:
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_path = Path(temp_file.name)
+
+        try:
+            with mock.patch.object(
+                apply_load_aws,
+                "download_remote_file",
+                return_value=True,
+            ) as download_remote_file:
+                apply_load_aws.download_apply_load_log(
+                    "i-1234567890abcdef0",
+                    "us-west-2",
+                    temp_path,
+                )
+
+            download_remote_file.assert_called_once_with(
+                "i-1234567890abcdef0",
+                "us-west-2",
+                apply_load_aws.APPLY_LOAD_LOG_FILE_PATH,
+                temp_path,
+            )
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    def test_download_remote_file_reassembles_chunks(self) -> None:
+        results = [
+            ("11\n", ""),
+            (base64.b64encode(b"hello ").decode() + "\n", ""),
+            (base64.b64encode(b"world").decode() + "\n", ""),
+        ]
+
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_path = Path(temp_file.name)
+
+        try:
+            with mock.patch.object(
+                apply_load_aws,
+                "run_ssm_command_result",
+                side_effect=results,
+            ):
+                with mock.patch.object(
+                    apply_load_aws,
+                    "REMOTE_FILE_CHUNK_SIZE_BYTES",
+                    6,
+                ):
+                    downloaded = apply_load_aws.download_remote_file(
+                        "i-1234567890abcdef0",
+                        "us-west-2",
+                        apply_load_aws.APPLY_LOAD_LOG_FILE_PATH,
+                        temp_path,
+                    )
+
+            self.assertTrue(downloaded)
+            self.assertEqual(temp_path.read_bytes(), b"hello world")
+        finally:
+            temp_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
