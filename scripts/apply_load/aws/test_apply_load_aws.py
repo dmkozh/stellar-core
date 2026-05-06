@@ -298,8 +298,9 @@ class ApplyLoadAwsTests(unittest.TestCase):
         ) as run_ssm_command:
             with mock.patch.object(
                 apply_load_aws,
-                "download_apply_load_log",
-            ) as download_apply_load_log:
+                "download_remote_file",
+                return_value=True,
+            ) as download_remote_file:
                 with self.assertRaises(SystemExit):
                     apply_load_aws.run_apply_load_on_instance(
                         "i-1234567890abcdef0",
@@ -316,34 +317,35 @@ class ApplyLoadAwsTests(unittest.TestCase):
             "python3 apply_load_aws.py max-sac-tps",
             run_ssm_command.call_args.args[2],
         )
-        download_apply_load_log.assert_called_once_with(
+        download_remote_file.assert_called_once_with(
             "i-1234567890abcdef0",
             "us-west-2",
             Path("apply-load-logs/test.log"),
         )
 
-    def test_download_apply_load_log_uses_requested_local_path(self) -> None:
+    def test_download_remote_file_uses_requested_local_path(self) -> None:
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
             temp_path = Path(temp_file.name)
 
         try:
             with mock.patch.object(
                 apply_load_aws,
-                "download_remote_file",
-                return_value=True,
-            ) as download_remote_file:
-                apply_load_aws.download_apply_load_log(
-                    "i-1234567890abcdef0",
-                    "us-west-2",
-                    temp_path,
-                )
+                "run_ssm_command_result",
+                side_effect=[("5\n", ""), (base64.b64encode(b"hello").decode() + "\n", "")],
+            ):
+                with mock.patch.object(
+                    apply_load_aws,
+                    "REMOTE_FILE_CHUNK_SIZE_BYTES",
+                    5,
+                ):
+                    downloaded = apply_load_aws.download_remote_file(
+                        "i-1234567890abcdef0",
+                        "us-west-2",
+                        temp_path,
+                    )
 
-            download_remote_file.assert_called_once_with(
-                "i-1234567890abcdef0",
-                "us-west-2",
-                apply_load_aws.APPLY_LOAD_LOG_FILE_PATH,
-                temp_path,
-            )
+            self.assertTrue(downloaded)
+            self.assertEqual(temp_path.read_bytes(), b"hello")
         finally:
             temp_path.unlink(missing_ok=True)
 
@@ -371,7 +373,6 @@ class ApplyLoadAwsTests(unittest.TestCase):
                     downloaded = apply_load_aws.download_remote_file(
                         "i-1234567890abcdef0",
                         "us-west-2",
-                        apply_load_aws.APPLY_LOAD_LOG_FILE_PATH,
                         temp_path,
                     )
 
@@ -403,7 +404,6 @@ class ApplyLoadAwsTests(unittest.TestCase):
                         apply_load_aws.download_remote_file(
                             "i-1234567890abcdef0",
                             "us-west-2",
-                            apply_load_aws.APPLY_LOAD_LOG_FILE_PATH,
                             temp_path,
                         )
             self.assertFalse(temp_path.exists())

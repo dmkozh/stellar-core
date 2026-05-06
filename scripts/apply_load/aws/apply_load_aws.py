@@ -1,5 +1,23 @@
 #!/usr/bin/env python3
 
+"""Orchestrates apply-load runs on a fixed-spec AWS instance from an arbitrary 
+   caller.
+
+This runs on both the control machine (e.g. Jenkins agent) and the remote 
+AWS instance.
+
+The usage modes are as follows:
+
+* (control machine) launches and prepares a fixed-spec AWS instance with ``aws-init``
+* (remote AWS instance) bootstraps itself with ``local-aws-init``
+* (control machine) invokes one of the apply-load modes remotely with ``aws-run <apply-load-mode>``
+* (remote AWS instance) runs apply-load with ``<apply-load-mode>``
+
+All the available apply-load modes are supported. They are customized with 
+apply-load-aws-*.cfg templates in this directory, where every template argument
+is populated from the CLI parameters of ``<apply-load-mode>`` command.
+"""
+
 import argparse
 import base64
 import binascii
@@ -47,6 +65,8 @@ INSTANCE_TEST_TAG_VALUE = "max-sac-tps"
 
 @dataclass(frozen=True)
 class ParameterDefinition:
+    """CLI metadata for one template-backed parameter."""
+
     arg_type: type
     help: str
     choices: Optional[Sequence[str]] = None
@@ -221,6 +241,8 @@ def get_template_parameters(template_path: Path) -> list[str]:
 
 
 def get_mode_parameters(mode_name: str) -> list[str]:
+    """Return all template parameters referenced by a mode's config file."""
+
     template_path = MODE_CONFIGS[mode_name]["template"]
     parameters = get_template_parameters(template_path)
     undefined_parameters = [
@@ -245,6 +267,8 @@ def get_mode_cli_parameters(mode_name: str) -> list[str]:
 
 
 def render_config(mode_name: str, values: Mapping[str, Any]) -> str:
+    """Render the selected apply-load config template from CLI values."""
+
     template_path = MODE_CONFIGS[mode_name]["template"]
     parameter_names = get_mode_parameters(mode_name)
     template_values = {
@@ -364,6 +388,8 @@ def read_file_text(path: Path) -> Optional[str]:
 
 def build_apply_load_command(mode_name: str, values: Mapping[str, Any],
                              image: str, iops: Optional[int]) -> list[str]:
+    """Build the helper command line for a specific local apply-load mode."""
+
     command = [
         "python3",
         "apply_load_aws.py",
@@ -384,11 +410,14 @@ def build_apply_load_command(mode_name: str, values: Mapping[str, Any],
 def build_remote_apply_load_command(mode_name: str, values: Mapping[str, Any],
                                     image: str,
                                     iops: Optional[int]) -> str:
+    """Wrap a local mode invocation so it can run under ``sudo -u ubuntu``."""
+
     apply_load_command = " ".join(
         shlex.quote(str(part))
         for part in build_apply_load_command(mode_name, values, image, iops)
     )
     shell_command = " ".join([
+        # Clear the previous run's log before starting a new remote invocation.
         "rm -f",
         shlex.quote(APPLY_LOAD_LOG_FILE_PATH),
         "&& cd",
@@ -535,6 +564,7 @@ def run_ssm_command_result(instance_id: str, region: str, command: str,
             time.sleep(SSM_COMMAND_POLL_INTERVAL_SECONDS)
             continue
 
+        # Once the command is terminal, fetch the final stdout/stderr payload.
         invocation_command = [
             "aws",
             "ssm",
@@ -718,8 +748,17 @@ def run_apply_load(config: str, image: str, iops: Optional[int]) -> None:
         Path(config_path).unlink(missing_ok=True)
 
 
-def download_remote_file(instance_id: str, region: str, remote_path: str,
-                         local_path: Path) -> bool:
+def download_apply_load_log(instance_id: str, region: str,
+                            local_path: Path) -> None:
+    """Download the remote apply-load log over SSM in base64-encoded chunks.
+
+    We don't use s3 here because the role on the other instance doesn't 
+    necessarily have s3 write permissions. Since logs are rather small, this
+    simplifies the pipeline setup.
+    """
+
+    remote_path = APPLY_LOAD_LOG_FILE_PATH
+
     size_command = "sudo -u ubuntu bash -lc " + shlex.quote(
         f"if [ -f {shlex.quote(remote_path)} ]; then wc -c < {shlex.quote(remote_path)}; else echo MISSING; fi"
     )
@@ -732,13 +771,14 @@ def download_remote_file(instance_id: str, region: str, remote_path: str,
     size_text = stdout.strip()
     if not size_text or size_text == "MISSING":
         print(f"WARNING: apply-load log not found at {remote_path}")
-        return False
+        return
 
     file_size = int(size_text)
     local_path.parent.mkdir(parents=True, exist_ok=True)
     file_descriptor, temp_name = tempfile.mkstemp(dir=local_path.parent)
     temp_path = Path(temp_name)
     try:
+        # Write into a temp file so Jenkins never archives a partial log.
         with open(file_descriptor, "wb", closefd=True) as output_file:
             chunk_count = (
                 file_size + REMOTE_FILE_CHUNK_SIZE_BYTES - 1
@@ -780,27 +820,14 @@ def download_remote_file(instance_id: str, region: str, remote_path: str,
     except Exception:
         temp_path.unlink(missing_ok=True)
         raise
-    return True
-
-
-def download_apply_load_log(instance_id: str, region: str,
-                            local_log_path: Path) -> None:
-    downloaded = download_remote_file(
-        instance_id,
-        region,
-        APPLY_LOAD_LOG_FILE_PATH,
-        local_log_path,
-    )
-    if not downloaded:
-        print(
-            f"WARNING: failed to download apply-load log to {local_log_path}"
-        )
 
 
 def run_apply_load_on_instance(instance_id: str, region: str,
                                local_log_path: Path, mode_name: str,
                                values: Mapping[str, Any], image: str,
                                iops: Optional[int]) -> None:
+    """Run one apply-load mode remotely and always fetch its log afterward."""
+
     run_error = None
     remote_command = build_remote_apply_load_command(
         mode_name, values, image, iops
@@ -848,6 +875,8 @@ def handle_aws_run_mode(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI with matching local and remote entrypoints."""
+
     parser = argparse.ArgumentParser(
         description="Helper script to run apply-load tests on AWS"
     )
@@ -897,6 +926,7 @@ def build_parser() -> argparse.ArgumentParser:
     aws_run_subparsers = aws_run_parser.add_subparsers(
         dest="apply_load_mode", required=True
     )
+    # Expose each mode under aws-run so Jenkins can reuse the local schema.
     for mode_name, mode_config in MODE_CONFIGS.items():
         mode_parser = aws_run_subparsers.add_parser(
             mode_name,
@@ -911,6 +941,7 @@ def build_parser() -> argparse.ArgumentParser:
             apply_load_mode=mode_name,
         )
 
+    # Expose the same modes locally for development and ad-hoc debugging.
     for mode_name, mode_config in MODE_CONFIGS.items():
         mode_parser = subparsers.add_parser(
             mode_name,
