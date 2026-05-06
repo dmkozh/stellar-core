@@ -191,15 +191,16 @@ def run(command: Sequence[Any], capture_output: bool = False,
             check=False,
             text=True,
         )
-    if check and result.returncode != 0:
+    if result.returncode != 0:
         if result.stdout:
             print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
         if result.stderr:
             print(result.stderr, end="" if result.stderr.endswith("\n") else "\n")
-        raise SystemExit(
-            f"Command '{printable_command}' failed with exit code "
-            f"{result.returncode}"
-        )
+        if check:
+            raise SystemExit(
+                f"Command '{printable_command}' failed with exit code "
+                f"{result.returncode}"
+            )
     return result
 
 
