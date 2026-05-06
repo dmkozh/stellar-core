@@ -52,6 +52,18 @@ class ParameterDefinition:
     choices: Optional[Sequence[str]] = None
 
 
+class SSMCommandFailure(SystemExit):
+    def __init__(self, command: str, status: str,
+                 stdout: str = "", stderr: str = "") -> None:
+        self.command = command
+        self.status = status
+        self.stdout = stdout
+        self.stderr = stderr
+        super().__init__(
+            f"SSM command '{command}' failed with status {status}"
+        )
+
+
 MODE_CONFIGS = {
     "benchmark": {
         "template": APPLY_LOAD_SCRIPT_DIR / "apply-load-aws-benchmark.cfg",
@@ -361,6 +373,40 @@ def read_file_text(path: Path) -> Optional[str]:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def write_diagnostic_log(local_log_path: Path, remote_command: str,
+                         run_error: Optional[BaseException],
+                         download_error: Optional[BaseException]) -> None:
+    lines = [
+        "apply-load log retrieval did not complete cleanly.",
+        f"remote command: {remote_command}",
+    ]
+
+    if isinstance(run_error, SSMCommandFailure):
+        lines.extend([
+            f"ssm status: {run_error.status}",
+            "",
+            "ssm stdout:",
+            run_error.stdout or "<empty>",
+            "",
+            "ssm stderr:",
+            run_error.stderr or "<empty>",
+        ])
+    elif run_error is not None:
+        lines.extend([
+            "",
+            f"run error: {run_error}",
+        ])
+
+    if download_error is not None:
+        lines.extend([
+            "",
+            f"log download error: {download_error}",
+        ])
+
+    local_log_path.parent.mkdir(parents=True, exist_ok=True)
+    local_log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def build_apply_load_command(mode_name: str, values: Mapping[str, Any],
                              image: str, iops: Optional[int]) -> list[str]:
     command = [
@@ -563,8 +609,11 @@ def run_ssm_command_result(instance_id: str, region: str, command: str,
             print(stderr, end="" if stderr.endswith("\n") else "\n")
 
         if check and status != "Success":
-            raise SystemExit(
-                f"SSM command '{command}' failed with status {status}"
+            raise SSMCommandFailure(
+                command,
+                status,
+                stdout,
+                stderr,
             )
         return stdout, stderr
 
@@ -783,7 +832,7 @@ def download_remote_file(instance_id: str, region: str, remote_path: str,
 
 
 def download_apply_load_log(instance_id: str, region: str,
-                            local_log_path: Path) -> None:
+                            local_log_path: Path) -> bool:
     downloaded = download_remote_file(
         instance_id,
         region,
@@ -794,13 +843,14 @@ def download_apply_load_log(instance_id: str, region: str,
         print(
             f"WARNING: failed to download apply-load log to {local_log_path}"
         )
+    return downloaded
 
 
 def run_apply_load_on_instance(instance_id: str, region: str,
                                local_log_path: Path, mode_name: str,
                                values: Mapping[str, Any], image: str,
                                iops: Optional[int]) -> None:
-    run_error = None
+    run_error: Optional[BaseException] = None
     remote_command = build_remote_apply_load_command(
         mode_name, values, image, iops
     )
@@ -809,7 +859,44 @@ def run_apply_load_on_instance(instance_id: str, region: str,
     except SystemExit as exc:
         run_error = exc
 
-    download_apply_load_log(instance_id, region, local_log_path)
+    download_error: Optional[BaseException] = None
+    downloaded_log = False
+    try:
+        downloaded_log = download_apply_load_log(
+            instance_id, region, local_log_path
+        )
+    except Exception as exc:
+        download_error = exc
+        print(
+            f"WARNING: failed to download apply-load log to {local_log_path}: "
+            f"{exc}"
+        )
+
+    if (download_error is not None or not downloaded_log) and not local_log_path.exists():
+        write_diagnostic_log(
+            local_log_path,
+            remote_command,
+            run_error,
+            download_error,
+        )
+
+    if download_error is not None:
+        if run_error is not None:
+            raise SystemExit(
+                f"{run_error}; additionally failed to download apply-load "
+                f"log to {local_log_path}: {download_error}"
+            )
+        raise SystemExit(
+            f"Failed to download apply-load log to {local_log_path}: "
+            f"{download_error}"
+        )
+
+    if not downloaded_log:
+        if run_error is not None:
+            raise run_error
+        raise SystemExit(
+            f"Failed to download apply-load log to {local_log_path}"
+        )
 
     if run_error is not None:
         raise run_error
