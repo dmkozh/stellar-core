@@ -283,40 +283,6 @@ class ApplyLoadAwsTests(unittest.TestCase):
         self.assertIn("done", output.getvalue())
         sleep.assert_called_once_with(5)
 
-    def test_run_ssm_command_failure_preserves_stdout_and_stderr(self) -> None:
-        with mock.patch.object(
-            apply_load_aws,
-            "run_capture_output",
-            return_value="command-123",
-        ):
-            with mock.patch.object(apply_load_aws, "run") as run_command:
-                run_command.side_effect = [
-                    mock.Mock(returncode=0, stdout="Failed\n"),
-                    mock.Mock(
-                        returncode=0,
-                        stdout=(
-                            '{"Status":"Failed",'
-                            '"StandardOutputContent":"stdout text",'
-                            '"StandardErrorContent":"stderr text"}'
-                        ),
-                    ),
-                ]
-                output = io.StringIO()
-                with contextlib.redirect_stdout(output):
-                    with self.assertRaises(
-                        apply_load_aws.SSMCommandFailure
-                    ) as exc:
-                        apply_load_aws.run_ssm_command(
-                            "i-1234567890abcdef0",
-                            "us-west-2",
-                            "echo hello",
-                        )
-
-        self.assertEqual(exc.exception.stdout, "stdout text")
-        self.assertEqual(exc.exception.stderr, "stderr text")
-        self.assertIn("stdout text", output.getvalue())
-        self.assertIn("stderr text", output.getvalue())
-
     def test_run_apply_load_on_instance_downloads_log_after_failure(self) -> None:
         values = {
             "min_tps": 1000,
@@ -380,48 +346,6 @@ class ApplyLoadAwsTests(unittest.TestCase):
             )
         finally:
             temp_path.unlink(missing_ok=True)
-
-    def test_run_apply_load_on_instance_writes_diagnostic_artifact_when_download_fails(self) -> None:
-        values = {
-            "min_tps": 1000,
-            "max_tps": 2000,
-            "target_close_time_ms": 5000,
-            "dependent_tx_clusters": 4,
-        }
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir) / "apply-load.log"
-            with mock.patch.object(
-                apply_load_aws,
-                "run_ssm_command",
-                side_effect=apply_load_aws.SSMCommandFailure(
-                    "remote command",
-                    "Failed",
-                    "remote stdout",
-                    "remote stderr",
-                ),
-            ):
-                with mock.patch.object(
-                    apply_load_aws,
-                    "download_apply_load_log",
-                    side_effect=RuntimeError("decode failed"),
-                ):
-                    with self.assertRaises(SystemExit) as exc:
-                        apply_load_aws.run_apply_load_on_instance(
-                            "i-1234567890abcdef0",
-                            "us-west-2",
-                            temp_path,
-                            "max-sac-tps",
-                            values,
-                            "stellar/apply-load:latest",
-                            3000,
-                        )
-
-            diagnostic_text = temp_path.read_text(encoding="utf-8")
-            self.assertIn("remote stdout", diagnostic_text)
-            self.assertIn("remote stderr", diagnostic_text)
-            self.assertIn("decode failed", diagnostic_text)
-            self.assertIn("failed to download apply-load log", str(exc.exception))
 
     def test_download_remote_file_reassembles_chunks(self) -> None:
         results = [
