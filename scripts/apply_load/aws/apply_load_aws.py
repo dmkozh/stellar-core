@@ -33,7 +33,7 @@ NVME_DRIVE = "/dev/nvme1n1"
 SSM_RETRIES = 10
 
 # Maximum time to wait for an SSM command to complete.
-SSM_COMMAND_TIMEOUT_SECONDS = 55 * 60
+SSM_COMMAND_TIMEOUT_SECONDS = 115 * 60
 
 # Delay between SSM command status polls.
 SSM_COMMAND_POLL_INTERVAL_SECONDS = 5

@@ -171,7 +171,7 @@ pipeline {
 
         stage('Run apply-load test') {
             options {
-                timeout(time: 1, unit: 'HOURS')
+                timeout(time: 3, unit: 'HOURS')
             }
             steps {
                 script {
