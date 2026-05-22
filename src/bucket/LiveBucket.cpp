@@ -384,39 +384,46 @@ LiveBucket::convertToBucketEntry(bool useInit,
                                  std::vector<LedgerKey> const& deadEntries)
 {
     ZoneScoped;
-    // Sort unique_ptr<BucketEntry> instead of BucketEntry directly so the
-    // sort swaps pointer-sized values rather than the full XDR payload.
-    std::vector<std::unique_ptr<BucketEntry>> ptrs;
-    ptrs.reserve(initEntries.size() + liveEntries.size() + deadEntries.size());
+    size_t totalSize =
+        initEntries.size() + liveEntries.size() + deadEntries.size();
+
+    std::vector<BucketEntry> entries;
+    entries.reserve(totalSize);
+
+    std::vector<BucketEntry*> sortedEntries;
+    sortedEntries.reserve(totalSize);
 
     for (auto const& e : initEntries)
     {
-        auto& ce = ptrs.emplace_back(std::make_unique<BucketEntry>());
-        ce->type(useInit ? INITENTRY : LIVEENTRY);
-        ce->liveEntry() = e;
+        auto& ce = entries.emplace_back();
+        ce.type(useInit ? INITENTRY : LIVEENTRY);
+        ce.liveEntry() = e;
+        sortedEntries.push_back(&ce);
     }
     for (auto const& e : liveEntries)
     {
-        auto& ce = ptrs.emplace_back(std::make_unique<BucketEntry>());
-        ce->type(LIVEENTRY);
-        ce->liveEntry() = e;
+        auto& ce = entries.emplace_back();
+        ce.type(LIVEENTRY);
+        ce.liveEntry() = e;
+        sortedEntries.push_back(&ce);
     }
     for (auto const& e : deadEntries)
     {
-        auto& ce = ptrs.emplace_back(std::make_unique<BucketEntry>());
-        ce->type(DEADENTRY);
-        ce->deadEntry() = e;
+        auto& ce = entries.emplace_back();
+        ce.type(DEADENTRY);
+        ce.deadEntry() = e;
+        sortedEntries.push_back(&ce);
     }
 
     BucketEntryIdCmp<LiveBucket> cmp;
-    std::sort(ptrs.begin(), ptrs.end(),
+    std::sort(sortedEntries.begin(), sortedEntries.end(),
               [&cmp](auto const& a, auto const& b) { return cmp(*a, *b); });
 
     std::vector<BucketEntry> bucket;
-    bucket.reserve(ptrs.size());
-    for (auto& p : ptrs)
+    bucket.reserve(sortedEntries.size());
+    for (auto* entry : sortedEntries)
     {
-        bucket.push_back(std::move(*p));
+        bucket.push_back(std::move(*entry));
     }
     return bucket;
 }
