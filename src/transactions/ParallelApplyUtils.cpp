@@ -96,11 +96,11 @@ using namespace stellar;
 // total order, B could save this fee, but we would lose the ability to run A
 // and B in parallel in the future. CAP 0063 explicitly chose this tradeoff.
 
-std::unordered_set<LedgerKey>
+ParallelApplyLedgerKeySet
 getReadWriteKeysForStage(ApplyStage const& stage)
 {
     ZoneScoped;
-    std::unordered_set<LedgerKey> res;
+    ParallelApplyLedgerKeySet res;
 
     for (auto const& txBundle : stage)
     {
@@ -145,10 +145,10 @@ ttl(std::optional<LedgerEntry> const& le)
 // (code-or-data) keys named in the footprint of the `txBundle`. Note
 // that since RO and RW footprints are disjoint, we only have to look
 // at the RO set.
-UnorderedSet<LedgerKey>
+ParallelApplyLedgerKeySet
 buildRoTTLSet(TxBundle const& txBundle)
 {
-    UnorderedSet<LedgerKey> isReadOnlyTTLSet;
+    ParallelApplyLedgerKeySet isReadOnlyTTLSet;
     for (auto const& ro :
          txBundle.getTx()->sorobanResources().footprint.readOnly)
     {
@@ -164,10 +164,11 @@ buildRoTTLSet(TxBundle const& txBundle)
 // Accumulate into the buffer of `roTTLBumps` the max of any existing entry and
 // the provided `updatedLE`, which must be a non-nullopt TTL LE.
 void
-updateMaxOfRoTTLBump(UnorderedMap<LedgerKey, uint32_t>& roTTLBumps,
+updateMaxOfRoTTLBump(ParallelApplyLedgerKeyMap<uint32_t>& roTTLBumps,
                      LedgerKey const& lk, LedgerEntry const& updatedLe)
 {
-    auto [it, emplaced] = roTTLBumps.emplace(lk, ttl(updatedLe));
+    ParallelApplyLedgerKey parallelKey(lk);
+    auto [it, emplaced] = roTTLBumps.emplace(parallelKey, ttl(updatedLe));
     if (!emplaced)
     {
         it->second = std::max(it->second, ttl(updatedLe));
@@ -403,7 +404,7 @@ GlobalParallelApplyLedgerState::commitChangesToLedgerTxn(
             entry.mLedgerEntry.readInScope(*this);
         if (updatedLe)
         {
-            auto ltxe = ltxInner.load(key);
+            auto ltxe = ltxInner.load(key.ledgerKey());
             if (ltxe)
             {
                 ltxe.current() = *updatedLe;
@@ -415,10 +416,10 @@ GlobalParallelApplyLedgerState::commitChangesToLedgerTxn(
         }
         else
         {
-            auto ltxe = ltxInner.load(key);
+            auto ltxe = ltxInner.load(key.ledgerKey());
             if (ltxe)
             {
-                ltxInner.erase(key);
+                ltxInner.erase(key.ledgerKey());
             }
         }
     }
@@ -478,9 +479,9 @@ GlobalParallelApplyLedgerState::getRestoredEntries() const
 
 bool
 GlobalParallelApplyLedgerState::maybeMergeRoTTLBumps(
-    LedgerKey const& key, GlobalParallelApplyEntry const& newEntry,
+    ParallelApplyLedgerKey const& key, GlobalParallelApplyEntry const& newEntry,
     GlobalParallelApplyEntry& oldEntry,
-    std::unordered_set<LedgerKey> const& readWriteSet)
+    ParallelApplyLedgerKeySet const& readWriteSet)
 {
     // Read Only bumps will always be updating a pre-existing value. TTL
     // creation (!oldEntry) or deletion (!newEntry) are write conflicts that
@@ -490,7 +491,7 @@ GlobalParallelApplyLedgerState::maybeMergeRoTTLBumps(
     auto merged = false;
     oldEntry.mLedgerEntry.modifyInScope(
         *this, [&](std::optional<LedgerEntry>& oldLe) {
-            if (newLe && oldLe && key.type() == TTL)
+            if (newLe && oldLe && key.ledgerKey().type() == TTL)
             {
                 releaseAssertOrThrow(newLe.value().data.type() == TTL);
                 releaseAssertOrThrow(oldLe.value().data.type() == TTL);
@@ -508,9 +509,9 @@ GlobalParallelApplyLedgerState::maybeMergeRoTTLBumps(
 
 void
 GlobalParallelApplyLedgerState::commitChangeFromThread(
-    ThreadParallelApplyLedgerState const& thread, LedgerKey const& key,
-    ThreadParallelApplyEntry const& parEntry,
-    std::unordered_set<LedgerKey> const& readWriteSet)
+    ThreadParallelApplyLedgerState const& thread,
+    ParallelApplyLedgerKey const& key, ThreadParallelApplyEntry const& parEntry,
+    ParallelApplyLedgerKeySet const& readWriteSet)
 {
     if (!parEntry.mIsDirty)
     {
@@ -531,7 +532,7 @@ GlobalParallelApplyLedgerState::commitChangeFromThread(
 void
 GlobalParallelApplyLedgerState::commitChangesFromThread(
     AppConnector& app, ThreadParallelApplyLedgerState const& thread,
-    std::unordered_set<LedgerKey> const& readWriteSet)
+    ParallelApplyLedgerKeySet const& readWriteSet)
 {
     ZoneScoped;
     thread.scopeDeactivate();
@@ -575,17 +576,19 @@ ThreadParallelApplyLedgerState::collectClusterFootprintEntriesFromGlobal(
         global.getGlobalEntryMap();
 
     auto fetchFromGlobal = [&](LedgerKey const& key) {
-        if (mThreadEntryMap.find(key) != mThreadEntryMap.end())
+        ParallelApplyLedgerKey parallelKey(key);
+        if (mThreadEntryMap.find(parallelKey) != mThreadEntryMap.end())
         {
             return;
         }
 
-        auto entryIt = globalEntryMap.find(key);
+        auto entryIt = globalEntryMap.find(parallelKey);
         if (entryIt != globalEntryMap.end())
         {
             mThreadEntryMap.emplace(
-                key, ThreadParallelApplyEntry::clean(scopeAdoptEntryOptFrom(
-                         entryIt->second.mLedgerEntry, global)));
+                std::move(parallelKey),
+                ThreadParallelApplyEntry::clean(scopeAdoptEntryOptFrom(
+                    entryIt->second.mLedgerEntry, global)));
         }
     };
 
@@ -636,8 +639,9 @@ ThreadParallelApplyLedgerState::flushRoTTLBumpsInTxWriteFootprint(
             continue;
         }
 
-        auto const& ttlKey = getTTLKey(lk);
-        auto b = mRoTTLBumps.find(ttlKey);
+        auto ttlKey = getTTLKey(lk);
+        ParallelApplyLedgerKey ttlParallelKey(ttlKey);
+        auto b = mRoTTLBumps.find(ttlParallelKey);
         if (b != mRoTTLBumps.end())
         {
             // If we have residual RO TTL bumps for this key,
@@ -699,7 +703,8 @@ ThreadParallelApplyLedgerState::getRestoredEntries() const
 ThreadParallelApplyLedgerState::OptionalEntryT
 ThreadParallelApplyLedgerState::getLiveEntryOpt(LedgerKey const& key) const
 {
-    auto it0 = mThreadEntryMap.find(key);
+    ParallelApplyLedgerKey parallelKey(key);
+    auto it0 = mThreadEntryMap.find(parallelKey);
     if (it0 != mThreadEntryMap.end())
     {
         return it0->second.mLedgerEntry;
@@ -746,7 +751,7 @@ ThreadParallelApplyLedgerState::upsertEntry(
             releaseAssertOrThrow(le);
             le.value().lastModifiedLedgerSeq = ledgerSeq;
         });
-    mThreadEntryMap.insert_or_assign(key, parAppEntry);
+    mThreadEntryMap.insert_or_assign(ParallelApplyLedgerKey(key), parAppEntry);
 }
 void
 ThreadParallelApplyLedgerState::eraseEntry(LedgerKey const& key)
@@ -754,13 +759,14 @@ ThreadParallelApplyLedgerState::eraseEntry(LedgerKey const& key)
 
     auto parAppEntry =
         ThreadParallelApplyEntry::dirty(scopeAdoptEntryOpt(std::nullopt));
-    mThreadEntryMap.insert_or_assign(key, parAppEntry);
+    mThreadEntryMap.insert_or_assign(ParallelApplyLedgerKey(key), parAppEntry);
 }
 
 void
 ThreadParallelApplyLedgerState::commitChangeFromSuccessfulTx(
-    LedgerKey const& key, ThreadParApplyLedgerEntryOpt const& newScopedEntryOpt,
-    UnorderedSet<LedgerKey> const& roTTLSet)
+    ParallelApplyLedgerKey const& key,
+    ThreadParApplyLedgerEntryOpt const& newScopedEntryOpt,
+    ParallelApplyLedgerKeySet const& roTTLSet)
 {
     ThreadParApplyLedgerEntryOpt oldScopedEntryOpt = getLiveEntryOpt(key);
     std::optional<LedgerEntry> const& oldEntryOpt =
@@ -891,7 +897,8 @@ TxParallelApplyLedgerState::getLiveEntryOpt(LedgerKey const& key) const
     // less risky if we don't have to rely on that fact or ensure it in callers:
     // if callers will get a consistent view of data even if the code changes
     // and we wind up with some new path calling with a non-empty mTxEntryMap.
-    auto entryIter = mTxEntryMap.find(key);
+    ParallelApplyLedgerKey parallelKey(key);
+    auto entryIter = mTxEntryMap.find(parallelKey);
     if (entryIter != mTxEntryMap.end())
     {
         return entryIter->second;
@@ -941,8 +948,9 @@ TxParallelApplyLedgerState::upsertEntry(LedgerKey const& key,
                liveEntryExistedAlready ? "already-live" : "new",
                xdr::xdr_to_string(key, "key"));
 
+    ParallelApplyLedgerKey parallelKey(key);
     auto [mapEntry, _] =
-        mTxEntryMap.insert_or_assign(key, scopeAdoptEntryOpt(entry));
+        mTxEntryMap.insert_or_assign(parallelKey, scopeAdoptEntryOpt(entry));
     mapEntry->second.modifyInScope(*this, [&](std::optional<LedgerEntry>& le) {
         releaseAssertOrThrow(le);
         le.value().lastModifiedLedgerSeq = ledgerSeq;
@@ -963,7 +971,9 @@ TxParallelApplyLedgerState::eraseEntryIfExists(LedgerKey const& key)
         // any pre-state key when calculating the ledger delta.
         CLOG_TRACE(Tx, "parallel apply thread {} erasing {}",
                    std::this_thread::get_id(), xdr::xdr_to_string(key, "key"));
-        mTxEntryMap.insert_or_assign(key, scopeAdoptEntryOpt(std::nullopt));
+        ParallelApplyLedgerKey parallelKey(key);
+        mTxEntryMap.insert_or_assign(parallelKey,
+                                     scopeAdoptEntryOpt(std::nullopt));
     }
     else
     {
