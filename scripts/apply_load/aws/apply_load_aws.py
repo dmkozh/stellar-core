@@ -293,7 +293,12 @@ def render_config(mode_name: str, values: Mapping[str, Any]) -> str:
         if parameter not in FIXED_TEMPLATE_VALUES
     })
     template = template_path.read_text(encoding="utf-8")
-    return template.format(**template_values)
+    res = template.format(**template_values)
+    res += '''\n[HISTORY.local]
+            get="cp -r history/{0} {1}"
+            put="cp -r {0} history/{1}"
+            mkdir="mkdir -p history/{0}"'''
+    return res
 
 
 def add_template_arguments(parser: argparse.ArgumentParser,
