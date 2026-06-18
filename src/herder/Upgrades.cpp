@@ -1249,6 +1249,7 @@ Upgrades::applyVersionUpgrade(Application& app, AbstractLedgerTxn& ltx,
     }
     if (needUpgradeToVersion(ProtocolVersion::V_25, prevVersion, newVersion))
     {
+        PubKeyUtils::enableRustDalekVerify();
         SorobanNetworkConfig::createCostTypesForV25(ltx, app);
     }
     if (needUpgradeToVersion(ProtocolVersion::V_26, prevVersion, newVersion))
