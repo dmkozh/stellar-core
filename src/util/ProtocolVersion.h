@@ -65,6 +65,13 @@ constexpr ProtocolVersion AUTO_RESTORE_PROTOCOL_VERSION = ProtocolVersion::V_23;
 
 constexpr ProtocolVersion FIRST_PROTOCOL_CAP71 = ProtocolVersion::V_27;
 
+// First protocol whose Soroban host decodes footprint ledger entries lazily.
+// From this version onward the host is invoked via the `invoke_host_function_v2`
+// bridge entry point, which receives one entry-and-TTL item per footprint key
+// (in footprint order) with the TTL as a plain integer.
+constexpr ProtocolVersion LAZY_LEDGER_ENTRY_DECODING_PROTOCOL_VERSION =
+    ProtocolVersion::V_27;
+
 #ifdef CAP_0083
 constexpr ProtocolVersion EMPTY_TX_SET_PROTOCOL_VERSION = ProtocolVersion::V_28;
 #else

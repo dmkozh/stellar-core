@@ -301,7 +301,10 @@ soroban-env-host v27.0.0 (src/rust/soroban/p27/soroban-env-host)
 │       │   └── hashbrown v0.14.1
 │       └── semver v1.0.17
 │   [build-dependencies]
-│   └── crate-git-revision v0.0.6 (*)
+│   └── crate-git-revision v0.0.9
+│       ├── serde v1.0.192 (*)
+│       ├── serde_derive v1.0.192 (proc-macro) (*)
+│       └── serde_json v1.0.108 (*)
 ├── soroban-wasmi v0.31.1-soroban.20.0.1 (https://github.com/stellar/wasmi?rev=0ed3f3dee30dc41ebe21972399e0a73a41944aa0#0ed3f3de) (*)
 ├── static_assertions v1.1.0
 ├── stellar-strkey v0.0.13 (*)

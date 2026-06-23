@@ -5,12 +5,12 @@
 use crate::{
     log::partition::TX,
     rust_bridge::{
-        CxxBuf, CxxFeeConfiguration, CxxLedgerEntryRentChange, CxxLedgerInfo,
+        CxxBuf, CxxFeeConfiguration, CxxLedgerEntryAndTtl, CxxLedgerEntryRentChange, CxxLedgerInfo,
         CxxRentFeeConfiguration, CxxRentWriteFeeConfiguration, CxxTransactionResources, FeePair,
         InvokeHostFunctionOutput, RustBuf, SorobanVersionInfo, XDRFileHash,
     },
 };
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 use std::{fmt::Display, io::Cursor, panic, rc::Rc, time::Instant};
 
 // This module (soroban_proto_any) is bound to _multiple locations_ in the
@@ -43,7 +43,7 @@ use std::{fmt::Display, io::Cursor, panic, rc::Rc, time::Instant};
 // outer adaptor modules.
 pub(crate) use super::soroban_env_host::{
     budget::{AsBudget, Budget},
-    e2e_invoke::{extract_rent_changes, LedgerEntryChange},
+    e2e_invoke::{extract_rent_changes, InvokeHostFunctionResult, LedgerEntryChange},
     fees::{
         compute_rent_fee as host_compute_rent_fee,
         compute_transaction_resource_fee as host_compute_transaction_resource_fee,
@@ -283,6 +283,27 @@ fn extract_ledger_effects(
 /// and returns the [`InvokeHostFunctionOutput`] that contains the host function
 /// result, events and modified ledger entries. Ledger entries not returned have
 /// been deleted.
+// Runs `invoke` while catching any panic from the host and turning it into a
+// `CoreHostError`, so that a misbehaving contract can never unwind across the
+// FFI boundary.
+fn catch_invoke_panic<F>(invoke: F) -> Result<InvokeHostFunctionOutput, Box<dyn Error>>
+where
+    F: FnOnce() -> Result<InvokeHostFunctionOutput, Box<dyn Error>>,
+{
+    match panic::catch_unwind(panic::AssertUnwindSafe(invoke)) {
+        Err(r) => {
+            if let Some(s) = r.downcast_ref::<String>() {
+                Err(CoreHostError::General(format!("contract host panicked: {s}")).into())
+            } else if let Some(s) = r.downcast_ref::<&'static str>() {
+                Err(CoreHostError::General(format!("contract host panicked: {s}")).into())
+            } else {
+                Err(CoreHostError::General("contract host panicked".into()).into())
+            }
+        }
+        Ok(r) => r,
+    }
+}
+
 pub(crate) fn invoke_host_function(
     enable_diagnostics: bool,
     instruction_limit: u32,
@@ -298,7 +319,7 @@ pub(crate) fn invoke_host_function(
     rent_fee_configuration: &CxxRentFeeConfiguration,
     module_cache: &crate::SorobanModuleCache,
 ) -> Result<InvokeHostFunctionOutput, Box<dyn Error>> {
-    let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+    catch_invoke_panic(|| {
         invoke_host_function_or_maybe_panic(
             enable_diagnostics,
             instruction_limit,
@@ -314,19 +335,42 @@ pub(crate) fn invoke_host_function(
             rent_fee_configuration,
             module_cache,
         )
-    }));
-    match res {
-        Err(r) => {
-            if let Some(s) = r.downcast_ref::<String>() {
-                Err(CoreHostError::General(format!("contract host panicked: {s}")).into())
-            } else if let Some(s) = r.downcast_ref::<&'static str>() {
-                Err(CoreHostError::General(format!("contract host panicked: {s}")).into())
-            } else {
-                Err(CoreHostError::General("contract host panicked".into()).into())
-            }
-        }
-        Ok(r) => r,
-    }
+    })
+}
+
+// Lazy-decoding invoke entry point (protocol 27+). See `invoke_host_function`
+// for the legacy interface; the two differ only in how the footprint ledger
+// entries and their TTLs are passed in.
+pub(crate) fn invoke_host_function_v2(
+    enable_diagnostics: bool,
+    instruction_limit: u32,
+    hf_buf: &CxxBuf,
+    resources_buf: &CxxBuf,
+    restored_rw_entry_indices: &Vec<u32>,
+    source_account_buf: &CxxBuf,
+    auth_entries: &Vec<CxxBuf>,
+    ledger_info: &CxxLedgerInfo,
+    ledger_entries_and_ttls: &Vec<CxxLedgerEntryAndTtl>,
+    base_prng_seed: &CxxBuf,
+    rent_fee_configuration: &CxxRentFeeConfiguration,
+    module_cache: &crate::SorobanModuleCache,
+) -> Result<InvokeHostFunctionOutput, Box<dyn Error>> {
+    catch_invoke_panic(|| {
+        invoke_host_function_v2_or_maybe_panic(
+            enable_diagnostics,
+            instruction_limit,
+            hf_buf,
+            resources_buf,
+            restored_rw_entry_indices.as_slice(),
+            source_account_buf,
+            auth_entries,
+            ledger_info,
+            ledger_entries_and_ttls,
+            base_prng_seed,
+            rent_fee_configuration,
+            module_cache,
+        )
+    })
 }
 
 fn make_trace_hook_fn<'a>() -> super::soroban_env_host::TraceHook {
@@ -364,21 +408,26 @@ fn encode_contract_cost_params(params: &ContractCostParams) -> Result<RustBuf, B
     Ok(non_metered_xdr_to_rust_buf(params)?)
 }
 
-fn invoke_host_function_or_maybe_panic(
+// Shared driver for both invoke interfaces. Sets up the budget and trace hook,
+// runs the supplied `invoke` closure (which performs the actual host call via
+// the appropriate per-protocol wrapper), and then turns its result into the
+// `InvokeHostFunctionOutput` returned to C++. The two interfaces differ only in
+// how they pass the footprint entries, which is fully encapsulated by `invoke`.
+fn run_invoke_and_build_output<F>(
     enable_diagnostics: bool,
     instruction_limit: u32,
-    hf_buf: &CxxBuf,
-    resources_buf: &CxxBuf,
-    restored_rw_entry_indices: &[u32],
-    source_account_buf: &CxxBuf,
-    auth_entries: &Vec<CxxBuf>,
     ledger_info: &CxxLedgerInfo,
-    ledger_entries: &Vec<CxxBuf>,
-    ttl_entries: &Vec<CxxBuf>,
-    base_prng_seed: &CxxBuf,
     rent_fee_configuration: &CxxRentFeeConfiguration,
-    module_cache: &crate::SorobanModuleCache,
-) -> Result<InvokeHostFunctionOutput, Box<dyn Error>> {
+    invoke: F,
+) -> Result<InvokeHostFunctionOutput, Box<dyn Error>>
+where
+    F: FnOnce(
+        &Budget,
+        LedgerInfo,
+        &mut Vec<DiagnosticEvent>,
+        Option<super::soroban_env_host::TraceHook>,
+    ) -> Result<InvokeHostFunctionResult, HostError>,
+{
     #[cfg(feature = "tracy")]
     let client = tracy_client::Client::start();
     let _span0 = tracy_span!("invoke_host_function_or_maybe_panic");
@@ -402,26 +451,12 @@ fn invoke_host_function_or_maybe_panic(
         } else {
             None
         };
+    let host_ledger_info: LedgerInfo = ledger_info.try_into()?;
     let (res, time_nsecs) = {
         let _span1 = tracy_span!("e2e_invoke::invoke_function");
         let start_time = Instant::now();
 
-        let res = super::invoke_host_function_with_trace_hook_and_module_cache(
-            &budget,
-            enable_diagnostics,
-            hf_buf,
-            resources_buf,
-            restored_rw_entry_indices,
-            source_account_buf,
-            auth_entries.iter(),
-            ledger_info.try_into()?,
-            ledger_entries.iter(),
-            ttl_entries.iter(),
-            base_prng_seed,
-            &mut diagnostic_events,
-            trace_hook,
-            module_cache,
-        );
+        let res = invoke(&budget, host_ledger_info, &mut diagnostic_events, trace_hook);
         let stop_time = Instant::now();
         let time_nsecs = stop_time.duration_since(start_time).as_nanos() as u64;
         (res, time_nsecs)
@@ -440,6 +475,7 @@ fn invoke_host_function_or_maybe_panic(
     );
     let time_nsecs_excluding_vm_instantiation =
         time_nsecs.saturating_sub(budget.get_time(xdr::ContractCostType::VmInstantiation)?);
+    info!("budget: {:?}", budget);
     #[cfg(feature = "tracy")]
     {
         client.plot(
@@ -530,6 +566,94 @@ fn invoke_host_function_or_maybe_panic(
         contract_events: vec![],
         rent_fee: 0,
     });
+}
+
+fn invoke_host_function_or_maybe_panic(
+    enable_diagnostics: bool,
+    instruction_limit: u32,
+    hf_buf: &CxxBuf,
+    resources_buf: &CxxBuf,
+    restored_rw_entry_indices: &[u32],
+    source_account_buf: &CxxBuf,
+    auth_entries: &Vec<CxxBuf>,
+    ledger_info: &CxxLedgerInfo,
+    ledger_entries: &Vec<CxxBuf>,
+    ttl_entries: &Vec<CxxBuf>,
+    base_prng_seed: &CxxBuf,
+    rent_fee_configuration: &CxxRentFeeConfiguration,
+    module_cache: &crate::SorobanModuleCache,
+) -> Result<InvokeHostFunctionOutput, Box<dyn Error>> {
+    run_invoke_and_build_output(
+        enable_diagnostics,
+        instruction_limit,
+        ledger_info,
+        rent_fee_configuration,
+        |budget, host_ledger_info, diagnostic_events, trace_hook| {
+            super::invoke_host_function_with_trace_hook_and_module_cache(
+                budget,
+                enable_diagnostics,
+                hf_buf,
+                resources_buf,
+                restored_rw_entry_indices,
+                source_account_buf,
+                auth_entries.iter(),
+                host_ledger_info,
+                ledger_entries.iter(),
+                ttl_entries.iter(),
+                base_prng_seed,
+                diagnostic_events,
+                trace_hook,
+                module_cache,
+            )
+        },
+    )
+}
+
+fn invoke_host_function_v2_or_maybe_panic(
+    enable_diagnostics: bool,
+    instruction_limit: u32,
+    hf_buf: &CxxBuf,
+    resources_buf: &CxxBuf,
+    restored_rw_entry_indices: &[u32],
+    source_account_buf: &CxxBuf,
+    auth_entries: &Vec<CxxBuf>,
+    ledger_info: &CxxLedgerInfo,
+    ledger_entries_and_ttls: &Vec<CxxLedgerEntryAndTtl>,
+    base_prng_seed: &CxxBuf,
+    rent_fee_configuration: &CxxRentFeeConfiguration,
+    module_cache: &crate::SorobanModuleCache,
+) -> Result<InvokeHostFunctionOutput, Box<dyn Error>> {
+    run_invoke_and_build_output(
+        enable_diagnostics,
+        instruction_limit,
+        ledger_info,
+        rent_fee_configuration,
+        |budget, host_ledger_info, diagnostic_events, trace_hook| {
+            // One (Option<entry>, Option<live_until>) per footprint key, in
+            // footprint order, matching what the host's lazy build expects.
+            let ledger_entries = ledger_entries_and_ttls.iter().map(|e| {
+                let entry: Option<&CxxBuf> = if e.entry_present { Some(&e.entry) } else { None };
+                let live_until: Option<u32> =
+                    if e.ttl_present { Some(e.live_until_ledger) } else { None };
+                (entry, live_until)
+            });
+            super::invoke_host_function_v2_with_trace_hook_and_module_cache(
+                budget,
+                enable_diagnostics,
+                hf_buf,
+                resources_buf,
+                restored_rw_entry_indices,
+                source_account_buf,
+                auth_entries.iter(),
+                host_ledger_info,
+                ledger_entries,
+                base_prng_seed,
+                diagnostic_events,
+                trace_hook,
+                module_cache,
+            )
+        },
+    )
 }
 
 #[allow(dead_code)]

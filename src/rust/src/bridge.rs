@@ -99,6 +99,26 @@ pub(crate) mod rust_bridge {
         pub mem_cost_params: CxxBuf,
     }
 
+    // A single footprint entry passed to the lazy-decoding invoke path
+    // (`invoke_host_function_v2`, protocol 27+). Unlike the legacy interface,
+    // there is exactly one of these per footprint key, provided in footprint
+    // order (`read_only` keys followed by `read_write` keys), and the TTL is
+    // carried as a plain integer rather than an encoded `TtlEntry`.
+    struct CxxLedgerEntryAndTtl {
+        // Whether the footprint key has a live ledger entry. When `false`,
+        // `entry` is an empty buffer and the host treats the key as absent.
+        entry_present: bool,
+        // The encoded `LedgerEntry`, decoded lazily by the host. Only
+        // meaningful when `entry_present` is `true`.
+        entry: CxxBuf,
+        // Whether `live_until_ledger` is populated. Only `ContractData` and
+        // `ContractCode` entries carry a TTL.
+        ttl_present: bool,
+        // The entry's live-until ledger sequence. Only meaningful when
+        // `ttl_present` is `true`.
+        live_until_ledger: u32,
+    }
+
     #[derive(Debug)]
     enum BridgeError {
         VersionNotYetSupported,
@@ -226,6 +246,26 @@ pub(crate) mod rust_bridge {
             ledger_info: CxxLedgerInfo,
             ledger_entries: &Vec<CxxBuf>,
             ttl_entries: &Vec<CxxBuf>,
+            base_prng_seed: &CxxBuf,
+            rent_fee_configuration: CxxRentFeeConfiguration,
+            module_cache: &SorobanModuleCache,
+        ) -> Result<InvokeHostFunctionOutput>;
+
+        // Lazy-decoding invoke path used from protocol 27 onwards. The ledger
+        // entries (and their TTLs) are provided as one `CxxLedgerEntryAndTtl`
+        // per footprint key, in footprint order, instead of as separate sparse
+        // `ledger_entries`/`ttl_entries` vectors.
+        fn invoke_host_function_v2(
+            config_max_protocol: u32,
+            enable_diagnostics: bool,
+            instruction_limit: u32,
+            hf_buf: &CxxBuf,
+            resources: CxxBuf,
+            restored_rw_entry_indices: &Vec<u32>,
+            source_account: &CxxBuf,
+            auth_entries: &Vec<CxxBuf>,
+            ledger_info: CxxLedgerInfo,
+            ledger_entries_and_ttls: &Vec<CxxLedgerEntryAndTtl>,
             base_prng_seed: &CxxBuf,
             rent_fee_configuration: CxxRentFeeConfiguration,
             module_cache: &SorobanModuleCache,

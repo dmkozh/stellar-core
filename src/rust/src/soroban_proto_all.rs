@@ -1,7 +1,7 @@
 use crate::{
-    CxxBuf, CxxFeeConfiguration, CxxLedgerEntryRentChange, CxxLedgerInfo, CxxRentFeeConfiguration,
-    CxxRentWriteFeeConfiguration, CxxTransactionResources, FeePair, InvokeHostFunctionOutput,
-    SorobanModuleCache, SorobanVersionInfo,
+    CxxBuf, CxxFeeConfiguration, CxxLedgerEntryAndTtl, CxxLedgerEntryRentChange, CxxLedgerInfo,
+    CxxRentFeeConfiguration, CxxRentWriteFeeConfiguration, CxxTransactionResources, FeePair,
+    InvokeHostFunctionOutput, SorobanModuleCache, SorobanVersionInfo,
 };
 
 #[cfg(feature = "testutils")]
@@ -50,6 +50,88 @@ pub(crate) mod protocol_agnostic {
     // ever plausibly change. If they ever _do_ change we can switch this (and
     // the callers) to pass a protocol number but it seems unlikely.
     pub(crate) use super::p24::soroban_env_host::xdr::int128_helpers;
+}
+
+// There are two invoke entry points, selected by the C++ caller based on the
+// ledger protocol version:
+//
+//   * the legacy `invoke_host_function_with_trace_hook_and_module_cache`, taking
+//     separate sparse `encoded_ledger_entries`/`encoded_ttl_entries` iterators,
+//     and
+//   * the lazy-decoding `invoke_host_function_v2_with_trace_hook_and_module_cache`
+//     (protocol 27+), taking one `(Option<entry>, Option<live_until>)` per
+//     footprint key.
+//
+// Each protocol module supports exactly one of them: hosts whose `e2e_invoke`
+// has the lazy interface (p27+) only implement the v2 wrapper, older hosts only
+// implement the legacy one. The unsupported wrapper for each module is generated
+// as a stub by the macros below. The stub is referenced via the dispatch vtable
+// (so it must exist and compile) but is never reached at runtime, because the
+// caller only routes a protocol to the entry point its host actually supports.
+macro_rules! invoke_v1_unsupported_stub {
+    () => {
+        #[allow(unused_variables)]
+        pub fn invoke_host_function_with_trace_hook_and_module_cache<
+            T: AsRef<[u8]>,
+            I: ExactSizeIterator<Item = T>,
+        >(
+            budget: &Budget,
+            enable_diagnostics: bool,
+            encoded_host_fn: T,
+            encoded_resources: T,
+            restored_rw_entry_indices: &[u32],
+            encoded_source_account: T,
+            encoded_auth_entries: I,
+            ledger_info: LedgerInfo,
+            encoded_ledger_entries: I,
+            encoded_ttl_entries: I,
+            base_prng_seed: T,
+            diagnostic_events: &mut Vec<DiagnosticEvent>,
+            trace_hook: Option<TraceHook>,
+            module_cache: &SorobanModuleCache,
+        ) -> Result<InvokeHostFunctionResult, HostError> {
+            // This host only supports the lazy-decoding (v2) invoke interface;
+            // the caller must never route here.
+            Err(soroban_env_host::Error::from_type_and_code(
+                soroban_env_host::xdr::ScErrorType::Context,
+                soroban_env_host::xdr::ScErrorCode::InternalError,
+            )
+            .into())
+        }
+    };
+}
+
+macro_rules! invoke_v2_unsupported_stub {
+    () => {
+        #[allow(unused_variables)]
+        pub fn invoke_host_function_v2_with_trace_hook_and_module_cache<
+            T: AsRef<[u8]>,
+            I: ExactSizeIterator<Item = T>,
+            LI: ExactSizeIterator<Item = (Option<T>, Option<u32>)>,
+        >(
+            budget: &Budget,
+            enable_diagnostics: bool,
+            encoded_host_fn: T,
+            encoded_resources: T,
+            restored_rw_entry_indices: &[u32],
+            encoded_source_account: T,
+            encoded_auth_entries: I,
+            ledger_info: LedgerInfo,
+            encoded_ledger_entries: LI,
+            base_prng_seed: T,
+            diagnostic_events: &mut Vec<DiagnosticEvent>,
+            trace_hook: Option<TraceHook>,
+            module_cache: &SorobanModuleCache,
+        ) -> Result<InvokeHostFunctionResult, HostError> {
+            // This host only supports the legacy invoke interface; the caller
+            // must never route here.
+            Err(soroban_env_host::Error::from_type_and_code(
+                soroban_env_host::xdr::ScErrorType::Context,
+                soroban_env_host::xdr::ScErrorCode::InternalError,
+            )
+            .into())
+        }
+    };
 }
 
 #[path = "."]
@@ -105,9 +187,14 @@ pub(crate) mod p27 {
             .collect()
     }
 
-    pub fn invoke_host_function_with_trace_hook_and_module_cache<
+    // p27's host uses the lazy-decoding (v2) invoke interface, so the legacy
+    // entry point is an unreachable stub here.
+    invoke_v1_unsupported_stub!();
+
+    pub fn invoke_host_function_v2_with_trace_hook_and_module_cache<
         T: AsRef<[u8]>,
         I: ExactSizeIterator<Item = T>,
+        LI: ExactSizeIterator<Item = (Option<T>, Option<u32>)>,
     >(
         budget: &Budget,
         enable_diagnostics: bool,
@@ -117,8 +204,7 @@ pub(crate) mod p27 {
         encoded_source_account: T,
         encoded_auth_entries: I,
         ledger_info: LedgerInfo,
-        encoded_ledger_entries: I,
-        encoded_ttl_entries: I,
+        encoded_ledger_entries: LI,
         base_prng_seed: T,
         diagnostic_events: &mut Vec<DiagnosticEvent>,
         trace_hook: Option<TraceHook>,
@@ -134,7 +220,6 @@ pub(crate) mod p27 {
             encoded_auth_entries,
             ledger_info,
             encoded_ledger_entries,
-            encoded_ttl_entries,
             base_prng_seed,
             diagnostic_events,
             trace_hook,
@@ -314,6 +399,9 @@ pub(crate) mod p26 {
         )
     }
 
+    // p26's host only supports the legacy invoke interface.
+    invoke_v2_unsupported_stub!();
+
     pub(crate) fn wasm_module_memory_cost_wrapper(
         budget: &Budget,
         contract_code_entry: &ContractCodeEntry,
@@ -468,6 +556,9 @@ pub(crate) mod p25 {
             Some(module_cache.p25_cache.module_cache.clone()),
         )
     }
+
+    // p25's host only supports the legacy invoke interface.
+    invoke_v2_unsupported_stub!();
 
     pub(crate) fn get_xdr_features() -> Vec<String> {
         vec![]
@@ -642,6 +733,9 @@ pub(crate) mod p24 {
         )
     }
 
+    // p24's host only supports the legacy invoke interface.
+    invoke_v2_unsupported_stub!();
+
     pub(crate) fn get_xdr_features() -> Vec<String> {
         vec![]
     }
@@ -815,6 +909,9 @@ pub(crate) mod p23 {
         )
     }
 
+    // p23's host only supports the legacy invoke interface.
+    invoke_v2_unsupported_stub!();
+
     pub(crate) fn get_xdr_features() -> Vec<String> {
         vec![]
     }
@@ -915,6 +1012,9 @@ pub(crate) mod p23 {
 pub(crate) mod p22 {
     pub(crate) extern crate soroban_env_host_p22;
     pub(crate) use soroban_env_host_p22 as soroban_env_host;
+
+    // p22's host only supports the legacy invoke interface.
+    invoke_v2_unsupported_stub!();
 
     pub(crate) fn get_xdr_base_git_rev() -> String {
         use soroban_env_host::VERSION;
@@ -1122,6 +1222,9 @@ pub(crate) mod p22 {
 pub(crate) mod p21 {
     pub(crate) extern crate soroban_env_host_p21;
     pub(crate) use soroban_env_host_p21 as soroban_env_host;
+
+    // p21's host only supports the legacy invoke interface.
+    invoke_v2_unsupported_stub!();
 
     pub(crate) fn get_xdr_base_git_rev() -> String {
         use soroban_env_host::VERSION;
@@ -1413,6 +1516,21 @@ pub(crate) struct HostModule {
             rent_fee_configuration: &CxxRentFeeConfiguration,
             module_cache: &SorobanModuleCache,
         ) -> Result<InvokeHostFunctionOutput, Box<dyn std::error::Error>>,
+    pub(crate) invoke_host_function_v2:
+        fn(
+            enable_diagnostics: bool,
+            instruction_limit: u32,
+            hf_buf: &CxxBuf,
+            resources_buf: &CxxBuf,
+            restored_rw_entry_indices: &Vec<u32>,
+            source_account_buf: &CxxBuf,
+            auth_entries: &Vec<CxxBuf>,
+            ledger_info: &CxxLedgerInfo,
+            ledger_entries_and_ttls: &Vec<CxxLedgerEntryAndTtl>,
+            base_prng_seed: &CxxBuf,
+            rent_fee_configuration: &CxxRentFeeConfiguration,
+            module_cache: &SorobanModuleCache,
+        ) -> Result<InvokeHostFunctionOutput, Box<dyn std::error::Error>>,
     pub(crate) compute_transaction_resource_fee:
         fn(tx_resources: CxxTransactionResources, fee_config: CxxFeeConfiguration) -> FeePair,
     pub(crate) compute_rent_fee: fn(
@@ -1441,6 +1559,7 @@ macro_rules! proto_versioned_functions_for_module {
             max_proto: $module::soroban_proto_any::get_max_proto(),
             get_soroban_version_info: $module::soroban_proto_any::get_soroban_version_info,
             invoke_host_function: $module::soroban_proto_any::invoke_host_function,
+            invoke_host_function_v2: $module::soroban_proto_any::invoke_host_function_v2,
             compute_transaction_resource_fee:
                 $module::soroban_proto_any::compute_transaction_resource_fee,
             compute_rent_fee: $module::soroban_proto_any::compute_rent_fee,

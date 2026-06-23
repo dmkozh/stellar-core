@@ -267,8 +267,18 @@ class InvokeHostFunctionApplyHelper : virtual LedgerAccessHelper
     SorobanNetworkConfig const& mSorobanConfig;
     Config const& mAppConfig;
 
+    // Legacy invoke interface (protocols before 27): sparse encoded ledger
+    // entries and their encoded TTL entries, one per *present* footprint key.
     rust::Vec<CxxBuf> mLedgerEntryCxxBufs;
     rust::Vec<CxxBuf> mTtlEntryCxxBufs;
+    // Lazy-decoding invoke interface (protocol 27+): one item per footprint key
+    // in footprint order, each carrying an optional encoded entry and an
+    // optional TTL (as a plain integer). Populated instead of the two vectors
+    // above when `mUseLazyLedgerEntries` is set.
+    rust::Vec<CxxLedgerEntryAndTtl> mLedgerEntriesAndTtls;
+    // Whether the host for this ledger's protocol uses the lazy interface.
+    // Computed from the ledger protocol version in `addReads`.
+    bool mUseLazyLedgerEntries{false};
     rust::Vec<uint32_t> mAutoRestoredRwEntryIndices;
     HostFunctionMetrics mMetrics;
     // Used for hot archive access only
@@ -310,6 +320,7 @@ class InvokeHostFunctionApplyHelper : virtual LedgerAccessHelper
         // Get the entries for the footprint
         mLedgerEntryCxxBufs.reserve(footprintLength);
         mTtlEntryCxxBufs.reserve(footprintLength);
+        mLedgerEntriesAndTtls.reserve(footprintLength);
     }
 
     virtual CxxLedgerInfo getLedgerInfo() = 0;
@@ -351,6 +362,62 @@ class InvokeHostFunctionApplyHelper : virtual LedgerAccessHelper
         return true;
     }
 
+    // Appends a footprint key's loaded state to the host inputs, dispatching to
+    // whichever invoke interface this ledger's protocol uses.
+    //
+    // `entryBuf` holds the encoded `LedgerEntry` if the key has a live entry, or
+    // is `nullopt` if the key has no live entry. `ttlEntry` holds the entry's
+    // TTL if it has one (`ContractData`/`ContractCode` entries).
+    //
+    // For the lazy (v2) interface, this must be called exactly once per
+    // footprint key, in footprint order, so that the host sees one item per key
+    // (with absent keys mapped to a `nullopt` entry). For the legacy interface,
+    // absent keys contribute nothing -- matching the historical behavior where
+    // only present entries were passed and missing footprint keys were filled in
+    // as absent by the host.
+    void
+    addEntryToHostInputs(std::optional<CxxBuf>&& entryBuf,
+                         std::optional<TTLEntry> const& ttlEntry)
+    {
+        if (mUseLazyLedgerEntries)
+        {
+            CxxLedgerEntryAndTtl item{};
+            if (entryBuf)
+            {
+                item.entry_present = true;
+                item.entry = std::move(*entryBuf);
+            }
+            else
+            {
+                item.entry_present = false;
+                // The host expects a non-null (but empty) buffer pointer.
+                item.entry = CxxBuf{std::make_unique<std::vector<uint8_t>>()};
+            }
+            if (ttlEntry)
+            {
+                item.ttl_present = true;
+                item.live_until_ledger = ttlEntry->liveUntilLedgerSeq;
+            }
+            else
+            {
+                item.ttl_present = false;
+                item.live_until_ledger = 0;
+            }
+            mLedgerEntriesAndTtls.emplace_back(std::move(item));
+        }
+        else if (entryBuf)
+        {
+            // For entry types without a TTL entry (e.g. Accounts), the host
+            // expects an "empty" CxxBuf with a non-null pointer to an empty
+            // byte vector.
+            auto ttlBuf =
+                ttlEntry ? toCxxBuf(*ttlEntry)
+                         : CxxBuf{std::make_unique<std::vector<uint8_t>>()};
+            mLedgerEntryCxxBufs.emplace_back(std::move(*entryBuf));
+            mTtlEntryCxxBufs.emplace_back(std::move(ttlBuf));
+        }
+    }
+
     // Checks and meters the given keys. Returns false
     // if the operation should fail and populates
     // result code and diagnostic events. Returns true
@@ -361,6 +428,8 @@ class InvokeHostFunctionApplyHelper : virtual LedgerAccessHelper
         ZoneScoped;
         auto ledgerSeq = getLedgerSeq();
         auto ledgerVersion = getLedgerVersion();
+        mUseLazyLedgerEntries = protocolVersionStartsFrom(
+            ledgerVersion, LAZY_LEDGER_ENTRY_DECODING_PROTOCOL_VERSION);
         auto restoredLiveUntilLedger =
             ledgerSeq +
             mSorobanConfig.stateArchivalSettings().minPersistentTTL - 1;
@@ -422,6 +491,10 @@ class InvokeHostFunctionApplyHelper : virtual LedgerAccessHelper
                     // from the hot archive by an earlier TX.
                     if (previouslyRestoredFromHotArchive(lk))
                     {
+                        // The host is not given this entry (it was already
+                        // restored by an earlier TX); record it as absent so the
+                        // lazy interface keeps one item per footprint key.
+                        addEntryToHostInputs(std::nullopt, std::nullopt);
                         continue;
                     }
 
@@ -451,23 +524,23 @@ class InvokeHostFunctionApplyHelper : virtual LedgerAccessHelper
                 {
                     auto leBuf = toCxxBuf(*entryOpt);
                     entrySize = static_cast<uint32_t>(leBuf.data->size());
-
-                    // For entry types that don't have an ttlEntry (i.e.
-                    // Accounts), the rust host expects an "empty" CxxBuf such
-                    // that the buffer has a non-null pointer that points to an
-                    // empty byte vector
-                    auto ttlBuf =
-                        ttlEntry
-                            ? toCxxBuf(*ttlEntry)
-                            : CxxBuf{std::make_unique<std::vector<uint8_t>>()};
-
-                    mLedgerEntryCxxBufs.emplace_back(std::move(leBuf));
-                    mTtlEntryCxxBufs.emplace_back(std::move(ttlBuf));
+                    addEntryToHostInputs(std::move(leBuf), ttlEntry);
                 }
-                else if (isSorobanEntry(lk))
+                else
                 {
-                    releaseAssertOrThrow(!ttlEntry);
+                    if (isSorobanEntry(lk))
+                    {
+                        releaseAssertOrThrow(!ttlEntry);
+                    }
+                    // The footprint key has no live entry.
+                    addEntryToHostInputs(std::nullopt, std::nullopt);
                 }
+            }
+            else
+            {
+                // Soroban entry that is not live (expired or nonexistent);
+                // treated as absent.
+                addEntryToHostInputs(std::nullopt, std::nullopt);
             }
 
             if (!validateContractLedgerEntry(lk, entrySize, mSorobanConfig,
@@ -540,16 +613,33 @@ class InvokeHostFunctionApplyHelper : virtual LedgerAccessHelper
             basePrngSeedBuf.data->assign(mSorobanBasePrngSeed.begin(),
                                          mSorobanBasePrngSeed.end());
 
-            out = rust_bridge::invoke_host_function(
-                mAppConfig.CURRENT_LEDGER_PROTOCOL_VERSION,
-                mAppConfig.ENABLE_SOROBAN_DIAGNOSTIC_EVENTS,
-                mResources.instructions,
-                toCxxBuf(mOpFrame.mInvokeHostFunction.hostFunction),
-                toCxxBuf(mResources), mAutoRestoredRwEntryIndices,
-                toCxxBuf(mOpFrame.getSourceID()), authEntryCxxBufs,
-                getLedgerInfo(), mLedgerEntryCxxBufs, mTtlEntryCxxBufs,
-                basePrngSeedBuf,
-                mSorobanConfig.rustBridgeRentFeeConfiguration(), *mModuleCache);
+            if (mUseLazyLedgerEntries)
+            {
+                out = rust_bridge::invoke_host_function_v2(
+                    mAppConfig.CURRENT_LEDGER_PROTOCOL_VERSION,
+                    mAppConfig.ENABLE_SOROBAN_DIAGNOSTIC_EVENTS,
+                    mResources.instructions,
+                    toCxxBuf(mOpFrame.mInvokeHostFunction.hostFunction),
+                    toCxxBuf(mResources), mAutoRestoredRwEntryIndices,
+                    toCxxBuf(mOpFrame.getSourceID()), authEntryCxxBufs,
+                    getLedgerInfo(), mLedgerEntriesAndTtls, basePrngSeedBuf,
+                    mSorobanConfig.rustBridgeRentFeeConfiguration(),
+                    *mModuleCache);
+            }
+            else
+            {
+                out = rust_bridge::invoke_host_function(
+                    mAppConfig.CURRENT_LEDGER_PROTOCOL_VERSION,
+                    mAppConfig.ENABLE_SOROBAN_DIAGNOSTIC_EVENTS,
+                    mResources.instructions,
+                    toCxxBuf(mOpFrame.mInvokeHostFunction.hostFunction),
+                    toCxxBuf(mResources), mAutoRestoredRwEntryIndices,
+                    toCxxBuf(mOpFrame.getSourceID()), authEntryCxxBufs,
+                    getLedgerInfo(), mLedgerEntryCxxBufs, mTtlEntryCxxBufs,
+                    basePrngSeedBuf,
+                    mSorobanConfig.rustBridgeRentFeeConfiguration(),
+                    *mModuleCache);
+            }
             mMetrics.mCpuInsn = out.cpu_insns;
             mMetrics.mMemByte = out.mem_bytes;
             mMetrics.mInvokeTimeNsecs = out.time_nsecs;
@@ -1082,10 +1172,9 @@ class InvokeHostFunctionParallelApplyHelper
                 mTxState.addLiveBucketlistRestore(lk, le, ttlKey, ttlEntry);
             }
 
-            // Finally, add the entries to the Cxx buffer as if they were live.
-            mLedgerEntryCxxBufs.emplace_back(std::move(leBuf));
-            auto ttlBuf = toCxxBuf(ttlEntry.data.ttl());
-            mTtlEntryCxxBufs.emplace_back(std::move(ttlBuf));
+            // Finally, add the entries to the host inputs as if they were live.
+            addEntryToHostInputs(std::move(leBuf),
+                                 std::make_optional(ttlEntry.data.ttl()));
             mAutoRestoredRwEntryIndices.push_back(index);
 
             // Validate restored entry against Protocol 23 corruption data if

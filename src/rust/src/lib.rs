@@ -50,6 +50,7 @@ use bridge::rust_bridge;
 use rust_bridge::BridgeError;
 use rust_bridge::CxxBuf;
 use rust_bridge::CxxFeeConfiguration;
+use rust_bridge::CxxLedgerEntryAndTtl;
 use rust_bridge::CxxLedgerEntryRentChange;
 use rust_bridge::CxxLedgerInfo;
 use rust_bridge::CxxRentFeeConfiguration;

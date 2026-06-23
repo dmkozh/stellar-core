@@ -1,7 +1,8 @@
 use crate::{
     soroban_proto_all::get_host_module_for_protocol, CxxBuf, CxxFeeConfiguration,
-    CxxLedgerEntryRentChange, CxxLedgerInfo, CxxRentFeeConfiguration, CxxRentWriteFeeConfiguration,
-    CxxTransactionResources, FeePair, InvokeHostFunctionOutput, SorobanModuleCache,
+    CxxLedgerEntryAndTtl, CxxLedgerEntryRentChange, CxxLedgerInfo, CxxRentFeeConfiguration,
+    CxxRentWriteFeeConfiguration, CxxTransactionResources, FeePair, InvokeHostFunctionOutput,
+    SorobanModuleCache,
 };
 
 pub(crate) fn invoke_host_function(
@@ -58,6 +59,42 @@ pub(crate) fn invoke_host_function(
     );
 
     res
+}
+
+// Lazy-decoding invoke path for protocol 27+. The caller (C++) gates on the
+// ledger protocol version and only routes here for protocols whose host
+// supports the lazy ledger-entry interface; older protocols continue to use
+// `invoke_host_function` above.
+pub(crate) fn invoke_host_function_v2(
+    config_max_protocol: u32,
+    enable_diagnostics: bool,
+    instruction_limit: u32,
+    hf_buf: &CxxBuf,
+    resources_buf: CxxBuf,
+    restored_rw_entry_indices: &Vec<u32>,
+    source_account_buf: &CxxBuf,
+    auth_entries: &Vec<CxxBuf>,
+    ledger_info: CxxLedgerInfo,
+    ledger_entries_and_ttls: &Vec<CxxLedgerEntryAndTtl>,
+    base_prng_seed: &CxxBuf,
+    rent_fee_configuration: CxxRentFeeConfiguration,
+    module_cache: &SorobanModuleCache,
+) -> Result<InvokeHostFunctionOutput, Box<dyn std::error::Error>> {
+    let hm = get_host_module_for_protocol(config_max_protocol, ledger_info.protocol_version)?;
+    (hm.invoke_host_function_v2)(
+        enable_diagnostics,
+        instruction_limit,
+        hf_buf,
+        &resources_buf,
+        restored_rw_entry_indices,
+        source_account_buf,
+        auth_entries,
+        &ledger_info,
+        ledger_entries_and_ttls,
+        base_prng_seed,
+        &rent_fee_configuration,
+        module_cache,
+    )
 }
 
 pub(crate) fn compute_transaction_resource_fee(
