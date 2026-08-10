@@ -2702,7 +2702,8 @@ void
 LedgerManagerImpl::applySorobanStage(
     AppConnector& app, LedgerHeader const& header,
     GlobalParallelApplyLedgerState& globalParState, ApplyStage const& stage,
-    Hash const& sorobanBasePrngSeed)
+    Hash const& sorobanBasePrngSeed,
+    ParallelApplyLedgerKeySet const& readWriteSet)
 {
     ZoneScoped;
     auto const& config = app.getConfig();
@@ -2724,7 +2725,7 @@ LedgerManagerImpl::applySorobanStage(
             txBundle.getResPayload().getRefundableFeeTracker());
     }
 
-    globalParState.commitChangesFromThreads(app, threadStates, stage);
+    globalParState.commitChangesFromThreads(app, threadStates, readWriteSet);
 }
 
 void
@@ -2734,16 +2735,43 @@ LedgerManagerImpl::applySorobanStages(AppConnector& app, AbstractLedgerTxn& ltx,
                                       Hash const& sorobanBasePrngSeed)
 {
     ZoneScoped;
+    // Compute every stage's read-write key set up front, in parallel. These
+    // depend only on the (static) tx set footprints, and computing them here
+    // keeps them off the critical path of each stage's thread-change merge.
+    std::vector<ParallelApplyLedgerKeySet> readWriteSets(stages.size());
+    {
+        std::vector<std::function<int()>> tasks;
+        tasks.reserve(stages.size());
+        for (size_t i = 0; i < stages.size(); ++i)
+        {
+            tasks.emplace_back([i, &stages, &readWriteSets]() {
+                readWriteSets[i] = getReadWriteKeysForStage(stages[i]);
+                return 0;
+            });
+        }
+        if (tasks.size() > 1)
+        {
+            app.getBatchExecutor().executeBatch(std::move(tasks));
+        }
+        else
+        {
+            for (auto& task : tasks)
+            {
+                task();
+            }
+        }
+    }
+
     GlobalParallelApplyLedgerState globalParState(
         app, mApplyState.copyApplyLedgerView(), ltx, stages,
         mApplyState.getInMemorySorobanState(), sorobanConfig);
     // LedgerTxn is not passed into applySorobanStage, so there's no risk
     // of the header being updated while we apply the stages.
     auto const& header = ltx.loadHeader().current();
-    for (auto const& stage : stages)
+    for (size_t i = 0; i < stages.size(); ++i)
     {
-        applySorobanStage(app, header, globalParState, stage,
-                          sorobanBasePrngSeed);
+        applySorobanStage(app, header, globalParState, stages[i],
+                          sorobanBasePrngSeed, readWriteSets[i]);
     }
     globalParState.commitChangesToLedgerTxn(ltx);
 }

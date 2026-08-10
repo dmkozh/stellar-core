@@ -12,6 +12,7 @@
 #include "transactions/ParallelApplyStage.h"
 #include "transactions/TransactionFrameBase.h"
 #include "xdr/Stellar-ledger-entries.h"
+#include <array>
 #include <unordered_set>
 
 namespace stellar
@@ -67,6 +68,13 @@ class ParallelLedgerInfo
     TimePoint closeTime;
     Hash networkID;
 };
+
+// The set of read-write footprint keys (plus their TTL keys) of all the
+// transactions in a stage. Consulted by the thread-change merge to tell
+// read-only TTL bumps (which are max-merged) apart from write conflicts.
+// Depends only on the stage's (static) tx set, so it can be computed ahead of
+// the stage's execution.
+ParallelApplyLedgerKeySet getReadWriteKeysForStage(ApplyStage const& stage);
 
 class ThreadParallelApplyLedgerState
     : public LedgerEntryScope<StaticLedgerEntryScope::ThreadParApply>
@@ -217,7 +225,28 @@ class GlobalParallelApplyLedgerState
     //    These are propagated from stage to stage of the parallel soroban phase
     //    -- split into disjoint per-thread maps during execution and merged
     //    after -- as well as written back to the ltx at the phase's end.
-    ParallelApplyEntryMap<staticScope> mGlobalEntryMap;
+    //
+    // The map is split into shards by (cached) key hash so that merging the
+    // per-thread maps back in can run on parallel workers: each worker owns
+    // one or more whole shards and scans every thread map for keys routing to
+    // them, so workers touch disjoint entries and need no synchronization.
+    static constexpr size_t kGlobalEntryMapShards = 16;
+    std::array<ParallelApplyEntryMap<staticScope>, kGlobalEntryMapShards>
+        mGlobalEntryMapShards;
+
+    static size_t
+    globalMapShardOf(ParallelApplyLedgerKey const& key)
+    {
+        // Mix the (cached) key hash and take the top bits, so that the shard
+        // index stays uncorrelated with the in-shard bucket index.
+        return (key.hash() * 0x9E3779B97F4A7C15ull) >> 60;
+    }
+
+    ParallelApplyEntryMap<staticScope>&
+    globalMapShardFor(ParallelApplyLedgerKey const& key)
+    {
+        return mGlobalEntryMapShards[globalMapShardOf(key)];
+    }
 
     void preApplyAndCollectModifiedClassicEntries(
         AppConnector& app, AbstractLedgerTxn& ltx,
@@ -239,9 +268,21 @@ class GlobalParallelApplyLedgerState
                                 ThreadParallelApplyEntry const& parEntry,
                                 ParallelApplyLedgerKeySet const& readWriteSet);
 
-    void commitChangesFromThread(AppConnector& app,
-                                 ThreadParallelApplyLedgerState const& thread,
-                                 ParallelApplyLedgerKeySet const& readWriteSet);
+    // Merges the entries of every thread that route to one of the shards
+    // owned by worker `taskIdx` of `numTasks` (i.e. shards taskIdx,
+    // taskIdx + numTasks, ...). Used as the per-worker body of the
+    // parallelized commitChangesFromThreads: distinct workers own disjoint
+    // shards and every entry belongs to exactly one shard, so concurrent
+    // calls for different workers need no synchronization.
+    //
+    // Note that this deliberately does *not* merge the per-thread restored
+    // entries, which are shared state; commitChangesFromThreads merges those
+    // serially once the workers have joined.
+    void commitShardChangesFromThreads(
+        size_t taskIdx, size_t numTasks,
+        std::vector<std::unique_ptr<ThreadParallelApplyLedgerState>> const&
+            threads,
+        ParallelApplyLedgerKeySet const& readWriteSet);
 
   public:
     GlobalParallelApplyLedgerState(AppConnector& app, ApplyLedgerView applyView,
@@ -250,14 +291,20 @@ class GlobalParallelApplyLedgerState
                                    InMemorySorobanState const& inMemoryState,
                                    SorobanNetworkConfig const& sorobanConfig);
 
-    ParallelApplyEntryMap<staticScope> const& getGlobalEntryMap() const;
+    // Looks an entry up in the (sharded) global entry map; returns nullptr if
+    // it is absent.
+    GlobalParallelApplyEntry const*
+    findInGlobalEntryMap(ParallelApplyLedgerKey const& key) const;
     RestoredEntries const& getRestoredEntries() const;
 
+    // readWriteSet is the stage's read-write key set (see
+    // getReadWriteKeysForStage); it is passed in rather than computed here so
+    // that it can be precomputed off the critical path.
     void commitChangesFromThreads(
         AppConnector& app,
         std::vector<std::unique_ptr<ThreadParallelApplyLedgerState>> const&
             threads,
-        ApplyStage const& stage);
+        ParallelApplyLedgerKeySet const& readWriteSet);
 
     void commitChangesToLedgerTxn(AbstractLedgerTxn& ltx) const;
 

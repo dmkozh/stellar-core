@@ -100,27 +100,6 @@ using namespace stellar;
 // total order, B could save this fee, but we would lose the ability to run A
 // and B in parallel in the future. CAP 0063 explicitly chose this tradeoff.
 
-ParallelApplyLedgerKeySet
-getReadWriteKeysForStage(ApplyStage const& stage)
-{
-    ZoneScoped;
-    ParallelApplyLedgerKeySet res;
-
-    for (auto const& txBundle : stage)
-    {
-        for (auto const& lk :
-             txBundle.getTx()->sorobanResources().footprint.readWrite)
-        {
-            res.emplace(lk);
-            if (isSorobanEntry(lk))
-            {
-                res.emplace(getTTLKey(lk));
-            }
-        }
-    }
-    return res;
-}
-
 inline uint32_t&
 ttl(LedgerEntry& le)
 {
@@ -196,6 +175,27 @@ commitPreParallelApplyWrites(AppConnector& app, AbstractLedgerTxn& ltx,
 
 namespace stellar
 {
+
+ParallelApplyLedgerKeySet
+getReadWriteKeysForStage(ApplyStage const& stage)
+{
+    ZoneScoped;
+    ParallelApplyLedgerKeySet res;
+
+    for (auto const& txBundle : stage)
+    {
+        for (auto const& lk :
+             txBundle.getTx()->sorobanResources().footprint.readWrite)
+        {
+            res.emplace(lk);
+            if (isSorobanEntry(lk))
+            {
+                res.emplace(getTTLKey(lk));
+            }
+        }
+    }
+    return res;
+}
 
 PreV23LedgerAccessHelper::PreV23LedgerAccessHelper(AbstractLedgerTxn& ltx)
     : mLtx(ltx)
@@ -365,8 +365,9 @@ GlobalParallelApplyLedgerState::preApplyAndCollectModifiedClassicEntries(
                         ? std::make_optional(entryPair.second->ledgerEntry())
                         : std::nullopt);
 
-                mGlobalEntryMap.emplace(lk,
-                                        GlobalParallelApplyEntry{entry, false});
+                ParallelApplyLedgerKey pk(lk);
+                globalMapShardFor(pk).emplace(
+                    std::move(pk), GlobalParallelApplyEntry{entry, false});
             }
         };
 
@@ -471,34 +472,37 @@ GlobalParallelApplyLedgerState::commitChangesToLedgerTxn(
 {
     ZoneScoped;
     LedgerTxn ltxInner(ltx);
-    for (auto const& [key, entry] : mGlobalEntryMap)
+    for (auto const& shard : mGlobalEntryMapShards)
     {
-        // Only update if dirty bit is set
-        if (!entry.mIsDirty)
+        for (auto const& [key, entry] : shard)
         {
-            continue;
-        }
-
-        std::optional<LedgerEntry> const& updatedLe =
-            entry.mLedgerEntry.readInScope(*this);
-        if (updatedLe)
-        {
-            auto ltxe = ltxInner.load(key.ledgerKey());
-            if (ltxe)
+            // Only update if dirty bit is set
+            if (!entry.mIsDirty)
             {
-                ltxe.current() = *updatedLe;
+                continue;
+            }
+
+            std::optional<LedgerEntry> const& updatedLe =
+                entry.mLedgerEntry.readInScope(*this);
+            if (updatedLe)
+            {
+                auto ltxe = ltxInner.load(key.ledgerKey());
+                if (ltxe)
+                {
+                    ltxe.current() = *updatedLe;
+                }
+                else
+                {
+                    ltxInner.create(*updatedLe);
+                }
             }
             else
             {
-                ltxInner.create(*updatedLe);
-            }
-        }
-        else
-        {
-            auto ltxe = ltxInner.load(key.ledgerKey());
-            if (ltxe)
-            {
-                ltxInner.erase(key.ledgerKey());
+                auto ltxe = ltxInner.load(key.ledgerKey());
+                if (ltxe)
+                {
+                    ltxInner.erase(key.ledgerKey());
+                }
             }
         }
     }
@@ -544,10 +548,13 @@ GlobalParallelApplyLedgerState::getSnapshotLedgerSeq() const
     return mInMemorySorobanState.getLedgerSeq();
 }
 
-GlobalParallelApplyEntryMap const&
-GlobalParallelApplyLedgerState::getGlobalEntryMap() const
+GlobalParallelApplyEntry const*
+GlobalParallelApplyLedgerState::findInGlobalEntryMap(
+    ParallelApplyLedgerKey const& key) const
 {
-    return mGlobalEntryMap;
+    auto const& shard = mGlobalEntryMapShards[globalMapShardOf(key)];
+    auto it = shard.find(key);
+    return it == shard.end() ? nullptr : &it->second;
 }
 
 RestoredEntries const&
@@ -597,7 +604,7 @@ GlobalParallelApplyLedgerState::commitChangeFromThread(
         return;
     }
     auto rescopedParEntry = parEntry.rescope(thread, *this);
-    auto [it, inserted] = mGlobalEntryMap.emplace(key, rescopedParEntry);
+    auto [it, inserted] = globalMapShardFor(key).emplace(key, rescopedParEntry);
     if (!inserted)
     {
         if (!maybeMergeRoTTLBumps(key, rescopedParEntry, it->second,
@@ -609,33 +616,75 @@ GlobalParallelApplyLedgerState::commitChangeFromThread(
 }
 
 void
-GlobalParallelApplyLedgerState::commitChangesFromThread(
-    AppConnector& app, ThreadParallelApplyLedgerState const& thread,
+GlobalParallelApplyLedgerState::commitShardChangesFromThreads(
+    size_t taskIdx, size_t numTasks,
+    std::vector<std::unique_ptr<ThreadParallelApplyLedgerState>> const& threads,
     ParallelApplyLedgerKeySet const& readWriteSet)
 {
     ZoneScoped;
-    thread.scopeDeactivate();
-    for (auto const& [key, entry] : thread.getEntryMap())
+    for (auto const& thread : threads)
     {
-        commitChangeFromThread(thread, key, entry, readWriteSet);
+        for (auto const& [key, entry] : thread->getEntryMap())
+        {
+            if (globalMapShardOf(key) % numTasks != taskIdx)
+            {
+                continue;
+            }
+            commitChangeFromThread(*thread, key, entry, readWriteSet);
+        }
     }
-    mGlobalRestoredEntries.addRestoresFrom(thread.getRestoredEntries());
 }
 
 void
 GlobalParallelApplyLedgerState::commitChangesFromThreads(
     AppConnector& app,
     std::vector<std::unique_ptr<ThreadParallelApplyLedgerState>> const& threads,
-    ApplyStage const& stage)
+    ParallelApplyLedgerKeySet const& readWriteSet)
 {
     ZoneScoped;
     releaseAssert(threadIsMain() ||
                   app.threadIsType(Application::ThreadType::APPLY));
 
-    auto readWriteSet = getReadWriteKeysForStage(stage);
     for (auto const& thread : threads)
     {
-        commitChangesFromThread(app, *thread, readWriteSet);
+        thread->scopeDeactivate();
+    }
+
+    // Merge the per-thread maps on parallel workers. Every worker scans every
+    // thread map but only merges the entries routing to the global-map shards
+    // it owns, so the workers write to disjoint shards and disjoint entries
+    // and need no synchronization. The apply workers are idle at this point
+    // (all of this stage's clusters have joined), so the executor is free.
+    //
+    // Assigning shard s to worker (s % numTasks) sends every shard to exactly
+    // one worker for any numTasks, so shards are never split across workers.
+    size_t numTasks = std::min(
+        kGlobalEntryMapShards,
+        std::max<size_t>(1, app.getBatchExecutor().preferredTaskCount()));
+    if (numTasks <= 1)
+    {
+        commitShardChangesFromThreads(0, 1, threads, readWriteSet);
+    }
+    else
+    {
+        std::vector<std::function<int()>> tasks;
+        tasks.reserve(numTasks);
+        for (size_t i = 0; i < numTasks; ++i)
+        {
+            tasks.emplace_back([this, i, numTasks, &threads, &readWriteSet]() {
+                commitShardChangesFromThreads(i, numTasks, threads,
+                                              readWriteSet);
+                return 0;
+            });
+        }
+        app.getBatchExecutor().executeBatch(std::move(tasks));
+    }
+
+    // The restored-entry sets are shared state, so they are merged here
+    // rather than inside the parallel workers above.
+    for (auto const& thread : threads)
+    {
+        mGlobalRestoredEntries.addRestoresFrom(thread->getRestoredEntries());
     }
 }
 
@@ -648,21 +697,18 @@ ThreadParallelApplyLedgerState::collectClusterFootprintEntriesFromGlobal(
     // collect all the keys that are in the global state map. For any keys
     // we need not in the global state, we will fetch them from the live
     // applyView, in memory soroban state, or the hot archive later.
-    GlobalParallelApplyEntryMap const& globalEntryMap =
-        global.getGlobalEntryMap();
-
-    auto fetchFromGlobal = [&](LedgerKey const& key) {
+    auto fetchFromGlobal = [&](ParallelApplyLedgerKey const& key) {
         if (mThreadEntryMap.find(key) != mThreadEntryMap.end())
         {
             return;
         }
 
-        auto entryIt = globalEntryMap.find(key);
-        if (entryIt != globalEntryMap.end())
+        auto const* globalEntry = global.findInGlobalEntryMap(key);
+        if (globalEntry != nullptr)
         {
             mThreadEntryMap.emplace(
                 key, ThreadParallelApplyEntry::clean(scopeAdoptEntryOptFrom(
-                         entryIt->second.mLedgerEntry, global)));
+                         globalEntry->mLedgerEntry, global)));
         }
     };
 
