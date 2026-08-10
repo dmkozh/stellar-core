@@ -44,12 +44,71 @@ using TransactionFrameBasePtr = std::shared_ptr<TransactionFrameBase const>;
 using TransactionFrameBaseConstPtr =
     std::shared_ptr<TransactionFrameBase const>;
 
+// A LedgerKey that caches its own hash.
+//
+// The parallel apply maps are keyed by LedgerKey and the same key is looked
+// up many times as it flows tx map -> thread map -> global map, so hashing it
+// once and carrying the result along is a measurable win (hashing a LedgerKey
+// means serializing it, and for soroban keys that is not cheap).
+//
+// Implicitly converts to LedgerKey const& so it can be passed to the many
+// APIs that take a plain key.
+class ParallelApplyLedgerKey
+{
+  public:
+    ParallelApplyLedgerKey() = default;
+    ParallelApplyLedgerKey(LedgerKey const& ledgerKey) : mLedgerKey(ledgerKey)
+    {
+    }
+    ParallelApplyLedgerKey(LedgerKey&& ledgerKey)
+        : mLedgerKey(std::move(ledgerKey))
+    {
+    }
+
+    LedgerKey const&
+    ledgerKey() const
+    {
+        return mLedgerKey;
+    }
+
+    operator LedgerKey const&() const
+    {
+        return mLedgerKey;
+    }
+
+    size_t
+    hash() const
+    {
+        // 0 doubles as "not yet computed"; a key that genuinely hashes to 0
+        // just gets rehashed every time, which is correct if slightly slower.
+        if (mHash == 0)
+        {
+            mHash = std::hash<LedgerKey>{}(mLedgerKey);
+        }
+        return mHash;
+    }
+
+  private:
+    mutable size_t mHash{0};
+    LedgerKey mLedgerKey;
+};
+
+inline bool
+operator==(ParallelApplyLedgerKey const& lhs, ParallelApplyLedgerKey const& rhs)
+{
+    return lhs.ledgerKey() == rhs.ledgerKey();
+}
+
+using ParallelApplyLedgerKeySet = UnorderedSet<ParallelApplyLedgerKey>;
+template <typename T>
+using ParallelApplyLedgerKeyMap = UnorderedMap<ParallelApplyLedgerKey, T>;
+
 // Tracks entry updates within a transaction during parallel apply phases. If
 // the transaction succeeds, the thread's ParallelApplyEntryMap should be
 // updated with the entries from the TxModifiedEntryMap.
 using TxParApplyLedgerEntry =
     ScopedLedgerEntry<StaticLedgerEntryScope::TxParApply>;
-using TxModifiedEntryMap = UnorderedMap<LedgerKey, TxParApplyLedgerEntryOpt>;
+using TxModifiedEntryMap = ParallelApplyLedgerKeyMap<TxParApplyLedgerEntryOpt>;
 
 // Used to track the current state of an entry during parallel apply phases. Can
 // be updated by successful transactions.
@@ -90,7 +149,7 @@ using TxParallelApplyEntry =
 // threads return, the updates from each threads entry map should be committed
 // to LedgerTxn.
 template <StaticLedgerEntryScope S>
-using ParallelApplyEntryMap = UnorderedMap<LedgerKey, ParallelApplyEntry<S>>;
+using ParallelApplyEntryMap = ParallelApplyLedgerKeyMap<ParallelApplyEntry<S>>;
 using GlobalParallelApplyEntryMap =
     ParallelApplyEntryMap<StaticLedgerEntryScope::GlobalParApply>;
 using ThreadParallelApplyEntryMap =
@@ -309,5 +368,18 @@ class TransactionFrameBase
     virtual bool isRestoreFootprintTx() const = 0;
 
     virtual ~TransactionFrameBase() = default;
+};
+}
+
+namespace std
+{
+template <> class hash<stellar::ParallelApplyLedgerKey>
+{
+  public:
+    size_t
+    operator()(stellar::ParallelApplyLedgerKey const& key) const
+    {
+        return key.hash();
+    }
 };
 }

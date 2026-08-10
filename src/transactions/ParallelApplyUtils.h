@@ -109,20 +109,20 @@ class ThreadParallelApplyLedgerState
     // Contains a buffered set of RO TTL bumps that should only be observed
     // when/if the corresponding entry is modified, otherwise they are merged
     // (by taking maximums) into the global map at the end of the thread's life.
-    UnorderedMap<LedgerKey, uint32_t> mRoTTLBumps;
+    ParallelApplyLedgerKeyMap<uint32_t> mRoTTLBumps;
 
     void collectClusterFootprintEntriesFromGlobal(
         AppConnector& app, GlobalParallelApplyLedgerState const& global,
         Cluster const& cluster);
 
-    void upsertEntry(LedgerKey const& key,
+    void upsertEntry(ParallelApplyLedgerKey const& key,
                      ThreadParApplyLedgerEntry const& entry,
                      uint32_t ledgerSeq);
-    void eraseEntry(LedgerKey const& key);
+    void eraseEntry(ParallelApplyLedgerKey const& key);
     void
-    commitChangeFromSuccessfulTx(LedgerKey const& key,
+    commitChangeFromSuccessfulTx(ParallelApplyLedgerKey const& key,
                                  ThreadParApplyLedgerEntryOpt const& entryOpt,
-                                 UnorderedSet<LedgerKey> const& roTTLSet);
+                                 ParallelApplyLedgerKeySet const& roTTLSet);
 
   public:
     ThreadParallelApplyLedgerState(AppConnector& app,
@@ -229,22 +229,19 @@ class GlobalParallelApplyLedgerState
                                   std::shared_ptr<LedgerHeader const> header,
                                   AbstractLedgerTxn& ltx);
 
-    bool
-    maybeMergeRoTTLBumps(LedgerKey const& key,
-                         GlobalParallelApplyEntry const& newEntry,
-                         GlobalParallelApplyEntry& oldEntry,
-                         std::unordered_set<LedgerKey> const& readWriteSet);
+    bool maybeMergeRoTTLBumps(ParallelApplyLedgerKey const& key,
+                              GlobalParallelApplyEntry const& newEntry,
+                              GlobalParallelApplyEntry& oldEntry,
+                              ParallelApplyLedgerKeySet const& readWriteSet);
 
-    void
-    commitChangeFromThread(ThreadParallelApplyLedgerState const& thread,
-                           LedgerKey const& key,
-                           ThreadParallelApplyEntry const& parEntry,
-                           std::unordered_set<LedgerKey> const& readWriteSet);
+    void commitChangeFromThread(ThreadParallelApplyLedgerState const& thread,
+                                ParallelApplyLedgerKey const& key,
+                                ThreadParallelApplyEntry const& parEntry,
+                                ParallelApplyLedgerKeySet const& readWriteSet);
 
-    void
-    commitChangesFromThread(AppConnector& app,
-                            ThreadParallelApplyLedgerState const& thread,
-                            std::unordered_set<LedgerKey> const& readWriteSet);
+    void commitChangesFromThread(AppConnector& app,
+                                 ThreadParallelApplyLedgerState const& thread,
+                                 ParallelApplyLedgerKeySet const& readWriteSet);
 
   public:
     GlobalParallelApplyLedgerState(AppConnector& app, ApplyLedgerView applyView,
