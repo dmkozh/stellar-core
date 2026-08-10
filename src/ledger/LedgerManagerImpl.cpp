@@ -2726,6 +2726,18 @@ LedgerManagerImpl::applySorobanStage(
     }
 
     globalParState.commitChangesFromThreads(app, threadStates, readWriteSet);
+
+    // Destroying the thread states (which own this stage's per-cluster entry
+    // maps) is pure overhead on the apply path, so hand them to a background
+    // worker to free. This is safe because their entries have already been
+    // merged into the global state above, and their destructors only release
+    // memory -- they don't touch the global state they hold references to.
+    auto deferredThreadStates = std::make_shared<
+        std::vector<std::unique_ptr<ThreadParallelApplyLedgerState>>>(
+        std::move(threadStates));
+    app.postOnBackgroundThread(
+        [deferredThreadStates]() { deferredThreadStates->clear(); },
+        "destroy parallel apply thread states");
 }
 
 void
@@ -2762,9 +2774,10 @@ LedgerManagerImpl::applySorobanStages(AppConnector& app, AbstractLedgerTxn& ltx,
         }
     }
 
-    GlobalParallelApplyLedgerState globalParState(
+    auto globalParStatePtr = std::make_unique<GlobalParallelApplyLedgerState>(
         app, mApplyState.copyApplyLedgerView(), ltx, stages,
         mApplyState.getInMemorySorobanState(), sorobanConfig);
+    auto& globalParState = *globalParStatePtr;
     // LedgerTxn is not passed into applySorobanStage, so there's no risk
     // of the header being updated while we apply the stages.
     auto const& header = ltx.loadHeader().current();
@@ -2774,6 +2787,19 @@ LedgerManagerImpl::applySorobanStages(AppConnector& app, AbstractLedgerTxn& ltx,
                           sorobanBasePrngSeed, readWriteSets[i]);
     }
     globalParState.commitChangesToLedgerTxn(ltx);
+
+    // As with the thread states above, free the (large) global entry map off
+    // the apply path. Everything it owns has been committed to the ltx by this
+    // point, and its destructor only releases memory: the in-memory soroban
+    // state and soroban config it names are held by reference rather than
+    // owned, and the apply view it holds keeps its own snapshot alive via
+    // shared_ptr.
+    auto deferredGlobalState =
+        std::make_shared<std::unique_ptr<GlobalParallelApplyLedgerState>>(
+            std::move(globalParStatePtr));
+    app.postOnBackgroundThread(
+        [deferredGlobalState]() { deferredGlobalState->reset(); },
+        "destroy parallel apply global state");
 }
 
 void
