@@ -312,6 +312,17 @@ class GlobalParallelApplyLedgerState
     // applying ledger sequence number.
     uint32_t getSnapshotLedgerSeq() const;
 
+#ifdef BUILD_TESTS
+    // Sub-timings (ms) of the global setup phase, accumulated during
+    // construction and read out by LedgerManagerImpl into its phase-timing
+    // record: the read-only pre-apply (itself parallelized across workers),
+    // the sequential commit of the buffered pre-apply writes, and the
+    // collection of classic entries modified earlier in this ledger.
+    double mSetupReadOnlyMs = 0;
+    double mSetupCommitWritesMs = 0;
+    double mSetupCollectClassicMs = 0;
+#endif
+
     // Constructor requires access to mInMemorySorobanState
     friend ThreadParallelApplyLedgerState::ThreadParallelApplyLedgerState(
         AppConnector& app, GlobalParallelApplyLedgerState const& global,

@@ -636,6 +636,93 @@ class LedgerManagerImpl : public LedgerManager
     }
 
 #ifdef BUILD_TESTS
+    // Wall-clock breakdown (in ms) of a single ledger close, recorded by
+    // applyLedger and its callees and read out by the apply-load benchmark.
+    // Nesting is indicated by the comments: a phase's sub-timings should sum
+    // to roughly its own total, and the benchmark reports the difference as an
+    // explicit "gap" row so unaccounted time is visible rather than silently
+    // absorbed.
+    struct LedgerClosePhaseTimings
+    {
+        double prepareTxSetMs = 0;
+        double prefetchSourceAccountsMs = 0;
+        double processFeesSeqNumsMs = 0;
+
+        double applyTransactionsMs = 0;
+        // Sub-timings of applyTransactionsMs.
+        double applyTxSetupMs = 0;
+        double prefetchTxDataMs = 0;
+        double applyTxMidSetupMs = 0;
+        double loadSorobanConfigMs = 0;
+        double applyParallelPhaseTotalMs = 0;
+        double applySeqClassicMs = 0;
+        double postTxSetApplyMs = 0;
+        double applyTxTailMs = 0;
+        double destroyApplyStagesMs = 0;
+
+        // Sub-timings of postTxSetApplyMs: the per-tx fee refunds (written
+        // through the ltx) and the result/meta collection.
+        double postTxRefundsMs = 0;
+        double postTxResultsMs = 0;
+
+        // Sub-timings of applyParallelPhaseTotalMs.
+        double buildTxBundlesMs = 0;
+        double sorobanBuildRwSetsMs = 0;
+        double sorobanSetupGlobalMs = 0;
+        double sorobanParallelApplyMs = 0;
+        double sorobanCheckInvariantsMs = 0;
+        double sorobanRefundMetaMs = 0;
+        double sorobanCommitFromThreadsMs = 0;
+        double sorobanDestroyThreadStatesMs = 0;
+        double sorobanCommitToLtxMs = 0;
+        double sorobanDestroyGlobalStateMs = 0;
+
+        // Sub-timings of sorobanSetupGlobalMs (the
+        // GlobalParallelApplyLedgerState construction): the read-only parallel
+        // pre-apply, the sequential commit of the buffered pre-apply writes,
+        // and the collection of classic entries modified earlier in the
+        // ledger.
+        double sorobanSetupReadOnlyMs = 0;
+        double sorobanSetupCommitWritesMs = 0;
+        double sorobanSetupCollectClassicMs = 0;
+
+        // Per-cluster wall times of the parallel apply workers, accumulated
+        // across stages: fastest cluster, mean, slowest cluster. A large
+        // max-vs-mean spread means a stage is imbalance-bound rather than
+        // work-bound.
+        double sorobanThreadMinMs = 0;
+        double sorobanThreadMeanMs = 0;
+        double sorobanThreadMaxMs = 0;
+
+        double applyUpgradesMs = 0;
+
+        double sealAndBucketMs = 0;
+        // Sub-timings of sealAndBucketMs: eviction-scan resolution, the
+        // sealing ltx.getAllEntries call, the live bucket batch, the waits on
+        // the async hot-archive batch and in-memory soroban state update, the
+        // bucket list hash, the header/HAS DB store, and the apply-snapshot
+        // advance.
+        double sealEvictionMs = 0;
+        double sealGetAllEntriesMs = 0;
+        double sealAddLiveBatchMs = 0;
+        double sealHotArchiveWaitMs = 0;
+        double sealInMemStateWaitMs = 0;
+        double sealSnapshotHashMs = 0;
+        double sealStoreHeaderMs = 0;
+        double sealAdvanceSnapshotMs = 0;
+
+        double sqlCommitMs = 0;
+        double postCommitMs = 0;
+    };
+
+    LedgerClosePhaseTimings const&
+    getLastPhaseTimings() const
+    {
+        return mLastPhaseTimings;
+    }
+
+    LedgerClosePhaseTimings mLastPhaseTimings;
+
     friend class BucketTestUtils::LedgerManagerForBucketTests;
 #endif
 };
