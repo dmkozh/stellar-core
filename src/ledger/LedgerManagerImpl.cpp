@@ -2792,8 +2792,7 @@ void
 LedgerManagerImpl::applySorobanStage(
     AppConnector& app, LedgerHeader const& header,
     GlobalParallelApplyLedgerState& globalParState, ApplyStage const& stage,
-    Hash const& sorobanBasePrngSeed,
-    ParallelApplyLedgerKeySet const& readWriteSet)
+    Hash const& sorobanBasePrngSeed)
 {
     ZoneScoped;
     auto const& config = app.getConfig();
@@ -2813,6 +2812,7 @@ LedgerManagerImpl::applySorobanStage(
         app, stage, globalParState, sorobanBasePrngSeed, config, ledgerInfo);
 #ifdef BUILD_TESTS
     mLastPhaseTimings.sorobanParallelApplyMs += lap();
+
 #endif
 
     if (config.invariantsEnabled())
@@ -2834,7 +2834,7 @@ LedgerManagerImpl::applySorobanStage(
     mLastPhaseTimings.sorobanRefundMetaMs += lap();
 #endif
 
-    globalParState.commitChangesFromThreads(app, threadStates, readWriteSet);
+    globalParState.commitChangesFromThreads(app, threadStates);
 #ifdef BUILD_TESTS
     mLastPhaseTimings.sorobanCommitFromThreadsMs += lap();
 #endif
@@ -2866,37 +2866,6 @@ LedgerManagerImpl::applySorobanStages(AppConnector& app, AbstractLedgerTxn& ltx,
     // depend only on the (static) tx set footprints, and computing them here
     // keeps them off the critical path of each stage's thread-change merge.
 #ifdef BUILD_TESTS
-    auto rwSetStart = std::chrono::steady_clock::now();
-#endif
-    std::vector<ParallelApplyLedgerKeySet> readWriteSets(stages.size());
-    {
-        std::vector<std::function<int()>> tasks;
-        tasks.reserve(stages.size());
-        for (size_t i = 0; i < stages.size(); ++i)
-        {
-            tasks.emplace_back([i, &stages, &readWriteSets]() {
-                readWriteSets[i] = getReadWriteKeysForStage(stages[i]);
-                return 0;
-            });
-        }
-        if (tasks.size() > 1)
-        {
-            app.getBatchExecutor().executeBatch(std::move(tasks));
-        }
-        else
-        {
-            for (auto& task : tasks)
-            {
-                task();
-            }
-        }
-    }
-
-#ifdef BUILD_TESTS
-    mLastPhaseTimings.sorobanBuildRwSetsMs =
-        std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - rwSetStart)
-            .count();
     // These accumulate across the stages of this ledger, so reset them here.
     mLastPhaseTimings.sorobanRefundMetaMs = 0;
     mLastPhaseTimings.sorobanParallelApplyMs = 0;
@@ -2934,7 +2903,7 @@ LedgerManagerImpl::applySorobanStages(AppConnector& app, AbstractLedgerTxn& ltx,
     for (size_t i = 0; i < stages.size(); ++i)
     {
         applySorobanStage(app, header, globalParState, stages[i],
-                          sorobanBasePrngSeed, readWriteSets[i]);
+                          sorobanBasePrngSeed);
     }
 #ifdef BUILD_TESTS
     // Discard the stage loop: it is already accounted for by the per-stage

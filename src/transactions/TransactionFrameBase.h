@@ -56,12 +56,13 @@ using TransactionFrameBaseConstPtr =
 class ParallelApplyLedgerKey
 {
   public:
-    ParallelApplyLedgerKey() = default;
-    ParallelApplyLedgerKey(LedgerKey const& ledgerKey) : mLedgerKey(ledgerKey)
+    ParallelApplyLedgerKey(LedgerKey const& ledgerKey)
+        : mLedgerKey(ledgerKey), mHash(std::hash<LedgerKey>{}(mLedgerKey))
     {
     }
     ParallelApplyLedgerKey(LedgerKey&& ledgerKey)
         : mLedgerKey(std::move(ledgerKey))
+        , mHash(std::hash<LedgerKey>{}(mLedgerKey))
     {
     }
 
@@ -79,18 +80,12 @@ class ParallelApplyLedgerKey
     size_t
     hash() const
     {
-        // 0 doubles as "not yet computed"; a key that genuinely hashes to 0
-        // just gets rehashed every time, which is correct if slightly slower.
-        if (mHash == 0)
-        {
-            mHash = std::hash<LedgerKey>{}(mLedgerKey);
-        }
         return mHash;
     }
 
   private:
-    mutable size_t mHash{0};
     LedgerKey mLedgerKey;
+    size_t mHash;
 };
 
 inline bool
@@ -130,10 +125,21 @@ template <StaticLedgerEntryScope S> struct ParallelApplyEntry
     }
     template <StaticLedgerEntryScope S2>
     ParallelApplyEntry<S2>
-    rescope(LedgerEntryScope<S> const& s1, LedgerEntryScope<S2> const& s2) const
+    rescope(LedgerEntryScope<S> const& s1,
+            LedgerEntryScope<S2> const& s2) const&
     {
         auto adoptedEntry = s2.scopeAdoptEntryOptFrom(mLedgerEntry, s1);
         return ParallelApplyEntry<S2>{adoptedEntry, mIsDirty};
+    }
+    // Moves the entry payload into the new scope rather than copying it; only
+    // valid when this entry will not be read again.
+    template <StaticLedgerEntryScope S2>
+    ParallelApplyEntry<S2>
+    rescope(LedgerEntryScope<S> const& s1, LedgerEntryScope<S2> const& s2) &&
+    {
+        auto adoptedEntry =
+            s2.scopeAdoptEntryOptFrom(std::move(mLedgerEntry), s1);
+        return ParallelApplyEntry<S2>{std::move(adoptedEntry), mIsDirty};
     }
 };
 using GlobalParallelApplyEntry =

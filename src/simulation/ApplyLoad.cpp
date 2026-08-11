@@ -147,7 +147,6 @@ logPhaseTimingsTable(
     auto loadSorobanConfig = extract(&T::loadSorobanConfigMs);
     auto parTotal = extract(&T::applyParallelPhaseTotalMs);
     auto buildTxBundles = extract(&T::buildTxBundlesMs);
-    auto buildRwSets = extract(&T::sorobanBuildRwSetsMs);
     auto setupGlobal = extract(&T::sorobanSetupGlobalMs);
     auto setupReadOnly = extract(&T::sorobanSetupReadOnlyMs);
     auto setupCommitWrites = extract(&T::sorobanSetupCommitWritesMs);
@@ -185,10 +184,10 @@ logPhaseTimingsTable(
     std::vector<double> parGap(n);
     for (size_t i = 0; i < n; ++i)
     {
-        parGap[i] = parTotal[i] - buildTxBundles[i] - buildRwSets[i] -
-                    setupGlobal[i] - sorobanParallel[i] - invariants[i] -
-                    refundMeta[i] - commitThreads[i] - destroyThreads[i] -
-                    commitLtx[i] - destroyGlobal[i];
+        parGap[i] = parTotal[i] - buildTxBundles[i] - setupGlobal[i] -
+                    sorobanParallel[i] - invariants[i] - refundMeta[i] -
+                    commitThreads[i] - destroyThreads[i] - commitLtx[i] -
+                    destroyGlobal[i];
     }
     // Gap inside soroban_setup_glbl.
     std::vector<double> setupGap(n);
@@ -233,7 +232,6 @@ logPhaseTimingsTable(
         {"| load_soroban_config", computePhaseStats(loadSorobanConfig)},
         {"| parallel_total", computePhaseStats(parTotal)},
         {"|   build_tx_bundles", computePhaseStats(buildTxBundles)},
-        {"|   build_rw_sets", computePhaseStats(buildRwSets)},
         {"|   soroban_setup_glbl", computePhaseStats(setupGlobal)},
         {"|     setup_read_only", computePhaseStats(setupReadOnly)},
         {"|     setup_commit_writes", computePhaseStats(setupCommitWrites)},

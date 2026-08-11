@@ -176,27 +176,6 @@ commitPreParallelApplyWrites(AppConnector& app, AbstractLedgerTxn& ltx,
 namespace stellar
 {
 
-ParallelApplyLedgerKeySet
-getReadWriteKeysForStage(ApplyStage const& stage)
-{
-    ZoneScoped;
-    ParallelApplyLedgerKeySet res;
-
-    for (auto const& txBundle : stage)
-    {
-        for (auto const& lk :
-             txBundle.getTx()->sorobanResources().footprint.readWrite)
-        {
-            res.emplace(lk);
-            if (isSorobanEntry(lk))
-            {
-                res.emplace(getTTLKey(lk));
-            }
-        }
-    }
-    return res;
-}
-
 PreV23LedgerAccessHelper::PreV23LedgerAccessHelper(AbstractLedgerTxn& ltx)
     : mLtx(ltx)
 {
@@ -615,22 +594,26 @@ GlobalParallelApplyLedgerState::maybeMergeRoTTLBumps(
 void
 GlobalParallelApplyLedgerState::commitChangeFromThread(
     ThreadParallelApplyLedgerState const& thread,
-    ParallelApplyLedgerKey const& key, ThreadParallelApplyEntry const& parEntry,
+    ParallelApplyLedgerKey const& key, ThreadParallelApplyEntry&& parEntry,
     ParallelApplyLedgerKeySet const& readWriteSet)
 {
     if (!parEntry.mIsDirty)
     {
         return;
     }
-    auto rescopedParEntry = parEntry.rescope(thread, *this);
-    auto [it, inserted] = globalMapShardFor(key).emplace(key, rescopedParEntry);
-    if (!inserted)
+    // Move the entry payload out of the thread map rather than copying it: the
+    // thread state is not read again after this merge.
+    auto rescopedParEntry = std::move(parEntry).rescope(thread, *this);
+    auto& shard = globalMapShardFor(key);
+    auto it = shard.find(key);
+    if (it == shard.end())
     {
-        if (!maybeMergeRoTTLBumps(key, rescopedParEntry, it->second,
-                                  readWriteSet))
-        {
-            it->second = rescopedParEntry;
-        }
+        shard.emplace(key, std::move(rescopedParEntry));
+    }
+    else if (!maybeMergeRoTTLBumps(key, rescopedParEntry, it->second,
+                                   readWriteSet))
+    {
+        it->second = std::move(rescopedParEntry);
     }
 }
 
@@ -638,18 +621,38 @@ void
 GlobalParallelApplyLedgerState::commitShardChangesFromThreads(
     size_t taskIdx, size_t numTasks,
     std::vector<std::unique_ptr<ThreadParallelApplyLedgerState>> const& threads,
-    ParallelApplyLedgerKeySet const& readWriteSet)
+    size_t rwKeyCountHint)
 {
     ZoneScoped;
+    // The slice of the stage's read-write TTL key set owned by this worker:
+    // only the keys routing to the shards it merges. A key is only ever looked
+    // up in the shard its hash routes to, and this worker only merges (and so
+    // only queries) keys satisfying the same predicate, so restricting the set
+    // this way gives the same find() answers as the whole-stage set would for
+    // every key this worker can ask about.
+    ParallelApplyLedgerKeySet readWriteSet;
+    readWriteSet.reserve(rwKeyCountHint / numTasks + 1);
     for (auto const& thread : threads)
     {
-        for (auto const& [key, entry] : thread->getEntryMap())
+        for (auto const& key : thread->getRwFootprintTTLKeys())
+        {
+            if (globalMapShardOf(key) % numTasks == taskIdx)
+            {
+                readWriteSet.emplace(key);
+            }
+        }
+    }
+
+    for (auto const& thread : threads)
+    {
+        for (auto& [key, entry] : thread->getEntryMap())
         {
             if (globalMapShardOf(key) % numTasks != taskIdx)
             {
                 continue;
             }
-            commitChangeFromThread(*thread, key, entry, readWriteSet);
+            commitChangeFromThread(*thread, key, std::move(entry),
+                                   readWriteSet);
         }
     }
 }
@@ -657,8 +660,7 @@ GlobalParallelApplyLedgerState::commitShardChangesFromThreads(
 void
 GlobalParallelApplyLedgerState::commitChangesFromThreads(
     AppConnector& app,
-    std::vector<std::unique_ptr<ThreadParallelApplyLedgerState>> const& threads,
-    ParallelApplyLedgerKeySet const& readWriteSet)
+    std::vector<std::unique_ptr<ThreadParallelApplyLedgerState>> const& threads)
 {
     ZoneScoped;
     releaseAssert(threadIsMain() ||
@@ -680,9 +682,16 @@ GlobalParallelApplyLedgerState::commitChangesFromThreads(
     size_t numTasks = std::min(
         kGlobalEntryMapShards,
         std::max<size_t>(1, app.getBatchExecutor().preferredTaskCount()));
+    // Sizing hint for the per-worker key set slices; cheap to sum up front.
+    size_t rwKeyCountHint = 0;
+    for (auto const& thread : threads)
+    {
+        rwKeyCountHint += thread->getRwFootprintTTLKeys().size();
+    }
+
     if (numTasks <= 1)
     {
-        commitShardChangesFromThreads(0, 1, threads, readWriteSet);
+        commitShardChangesFromThreads(0, 1, threads, rwKeyCountHint);
     }
     else
     {
@@ -690,9 +699,9 @@ GlobalParallelApplyLedgerState::commitChangesFromThreads(
         tasks.reserve(numTasks);
         for (size_t i = 0; i < numTasks; ++i)
         {
-            tasks.emplace_back([this, i, numTasks, &threads, &readWriteSet]() {
+            tasks.emplace_back([this, i, numTasks, &threads, rwKeyCountHint]() {
                 commitShardChangesFromThreads(i, numTasks, threads,
-                                              readWriteSet);
+                                              rwKeyCountHint);
                 return 0;
             });
         }
@@ -731,21 +740,50 @@ ThreadParallelApplyLedgerState::collectClusterFootprintEntriesFromGlobal(
         }
     };
 
+    // NB: the read-write and read-only footprints are walked separately (and
+    // by reference). Iterating `{footprint.readWrite, footprint.readOnly}`
+    // would materialize an initializer_list, deep-copying both footprints --
+    // including every SCVal allocation -- for every tx bundle.
+    auto collectFootprint = [&](xdr::xvector<LedgerKey> const& keys,
+                                bool isReadWrite) {
+        for (auto const& key : keys)
+        {
+            fetchFromGlobal(key);
+            if (isSorobanEntry(key))
+            {
+                ParallelApplyLedgerKey ttlKey(getTTLKey(key));
+                fetchFromGlobal(ttlKey);
+                if (isReadWrite)
+                {
+                    // Harvest the TTL key here rather than recomputing the
+                    // stage's read-write TTL key set separately: this is
+                    // where its (expensive) SHA256 is already being paid,
+                    // on the parallel per-cluster path.
+                    mRwFootprintTTLKeys.push_back(std::move(ttlKey));
+                }
+            }
+            else if (isReadWrite && key.type() == TTL)
+            {
+                mRwFootprintTTLKeys.emplace_back(key);
+            }
+        }
+    };
+
+    // Reserve once for the whole cluster: reserving per bundle would resize to
+    // an exact size each time and copy the vector on every iteration.
+    size_t rwKeyCount = 0;
+    for (auto const& txBundle : cluster)
+    {
+        rwKeyCount +=
+            txBundle.getTx()->sorobanResources().footprint.readWrite.size();
+    }
+    mRwFootprintTTLKeys.reserve(rwKeyCount);
+
     for (auto const& txBundle : cluster)
     {
         auto const& footprint = txBundle.getTx()->sorobanResources().footprint;
-        for (auto const& keys : {footprint.readWrite, footprint.readOnly})
-        {
-            for (auto const& key : keys)
-            {
-                fetchFromGlobal(key);
-                if (isSorobanEntry(key))
-                {
-                    auto ttlKey = getTTLKey(key);
-                    fetchFromGlobal(ttlKey);
-                }
-            }
-        }
+        collectFootprint(footprint.readWrite, /*isReadWrite=*/true);
+        collectFootprint(footprint.readOnly, /*isReadWrite=*/false);
     }
 }
 
@@ -828,6 +866,18 @@ ThreadParallelApplyLedgerState::flushRemainingRoTTLBumps()
 
 ThreadParallelApplyEntryMap const&
 ThreadParallelApplyLedgerState::getEntryMap() const
+{
+    return mThreadEntryMap;
+}
+
+std::vector<ParallelApplyLedgerKey> const&
+ThreadParallelApplyLedgerState::getRwFootprintTTLKeys() const
+{
+    return mRwFootprintTTLKeys;
+}
+
+ThreadParallelApplyEntryMap&
+ThreadParallelApplyLedgerState::getEntryMap()
 {
     return mThreadEntryMap;
 }

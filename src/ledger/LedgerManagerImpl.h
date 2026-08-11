@@ -394,13 +394,10 @@ class LedgerManagerImpl : public LedgerManager
                                     ParallelLedgerInfo const& ledgerInfo,
                                     LedgerHeader const& header);
 
-    // readWriteSet is the stage's read-write key set, precomputed by
-    // applySorobanStages (see getReadWriteKeysForStage).
     void applySorobanStage(AppConnector& app, LedgerHeader const& header,
                            GlobalParallelApplyLedgerState& globalParState,
                            ApplyStage const& stage,
-                           Hash const& sorobanBasePrngSeed,
-                           ParallelApplyLedgerKeySet const& readWriteSet);
+                           Hash const& sorobanBasePrngSeed);
 
     void applySorobanStages(AppConnector& app, AbstractLedgerTxn& ltx,
                             std::vector<ApplyStage> const& stages,
@@ -667,7 +664,6 @@ class LedgerManagerImpl : public LedgerManager
 
         // Sub-timings of applyParallelPhaseTotalMs.
         double buildTxBundlesMs = 0;
-        double sorobanBuildRwSetsMs = 0;
         double sorobanSetupGlobalMs = 0;
         double sorobanParallelApplyMs = 0;
         double sorobanCheckInvariantsMs = 0;

@@ -69,13 +69,6 @@ class ParallelLedgerInfo
     Hash networkID;
 };
 
-// The set of read-write footprint keys (plus their TTL keys) of all the
-// transactions in a stage. Consulted by the thread-change merge to tell
-// read-only TTL bumps (which are max-merged) apart from write conflicts.
-// Depends only on the stage's (static) tx set, so it can be computed ahead of
-// the stage's execution.
-ParallelApplyLedgerKeySet getReadWriteKeysForStage(ApplyStage const& stage);
-
 class ThreadParallelApplyLedgerState
     : public LedgerEntryScope<StaticLedgerEntryScope::ThreadParApply>
 {
@@ -118,6 +111,13 @@ class ThreadParallelApplyLedgerState
     // when/if the corresponding entry is modified, otherwise they are merged
     // (by taking maximums) into the global map at the end of the thread's life.
     ParallelApplyLedgerKeyMap<uint32_t> mRoTTLBumps;
+
+    // TTL keys derived from the read-write footprints of this cluster's txs
+    // (plus any read-write footprint key that is itself a TTL key). Collected
+    // during collectClusterFootprintEntriesFromGlobal, which already computes
+    // these TTL keys, and consumed by the thread-to-global merge to tell
+    // read-only TTL bumps apart from real writes. May contain duplicates.
+    std::vector<ParallelApplyLedgerKey> mRwFootprintTTLKeys;
 
     void collectClusterFootprintEntriesFromGlobal(
         AppConnector& app, GlobalParallelApplyLedgerState const& global,
@@ -162,7 +162,17 @@ class ThreadParallelApplyLedgerState
     // TTL entry is present in the `mThreadEntryMap` and is >= the bump TTL.
     void flushRemainingRoTTLBumps();
 
+    // The read-write footprint TTL keys harvested from this thread's cluster;
+    // see mRwFootprintTTLKeys. Read concurrently by the shard workers of the
+    // thread-to-global merge, which only read (the keys' hashes are computed
+    // at construction, so lookups do not mutate them).
+    std::vector<ParallelApplyLedgerKey> const& getRwFootprintTTLKeys() const;
+
     ParallelApplyEntryMap<staticScope> const& getEntryMap() const;
+    // Non-const accessor used by the thread-to-global merge, which moves the
+    // entries out. Safe to call concurrently from the shard workers: they
+    // mutate disjoint mapped values and never modify the map's structure.
+    ParallelApplyEntryMap<staticScope>& getEntryMap();
 
     RestoredEntries const& getRestoredEntries() const;
 
@@ -265,7 +275,7 @@ class GlobalParallelApplyLedgerState
 
     void commitChangeFromThread(ThreadParallelApplyLedgerState const& thread,
                                 ParallelApplyLedgerKey const& key,
-                                ThreadParallelApplyEntry const& parEntry,
+                                ThreadParallelApplyEntry&& parEntry,
                                 ParallelApplyLedgerKeySet const& readWriteSet);
 
     // Merges the entries of every thread that route to one of the shards
@@ -282,7 +292,7 @@ class GlobalParallelApplyLedgerState
         size_t taskIdx, size_t numTasks,
         std::vector<std::unique_ptr<ThreadParallelApplyLedgerState>> const&
             threads,
-        ParallelApplyLedgerKeySet const& readWriteSet);
+        size_t rwKeyCountHint);
 
   public:
     GlobalParallelApplyLedgerState(AppConnector& app, ApplyLedgerView applyView,
@@ -297,14 +307,10 @@ class GlobalParallelApplyLedgerState
     findInGlobalEntryMap(ParallelApplyLedgerKey const& key) const;
     RestoredEntries const& getRestoredEntries() const;
 
-    // readWriteSet is the stage's read-write key set (see
-    // getReadWriteKeysForStage); it is passed in rather than computed here so
-    // that it can be precomputed off the critical path.
     void commitChangesFromThreads(
         AppConnector& app,
         std::vector<std::unique_ptr<ThreadParallelApplyLedgerState>> const&
-            threads,
-        ParallelApplyLedgerKeySet const& readWriteSet);
+            threads);
 
     void commitChangesToLedgerTxn(AbstractLedgerTxn& ltx) const;
 
