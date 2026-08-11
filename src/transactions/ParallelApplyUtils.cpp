@@ -385,8 +385,24 @@ GlobalParallelApplyLedgerState::preApplyAndCollectModifiedClassicEntries(
 
     auto header =
         std::make_shared<LedgerHeader const>(ltx.loadHeader().current());
+#ifdef BUILD_TESTS
+    auto lapStart = std::chrono::steady_clock::now();
+    auto lap = [&lapStart]() {
+        auto now = std::chrono::steady_clock::now();
+        double ms =
+            std::chrono::duration<double, std::milli>(now - lapStart).count();
+        lapStart = now;
+        return ms;
+    };
+#endif
     readOnlyParallelPreApply(app, txBundles, header, ltx);
+#ifdef BUILD_TESTS
+    mSetupReadOnlyMs += lap();
+#endif
     commitPreParallelApplyWrites(app, ltx, txBundles);
+#ifdef BUILD_TESTS
+    mSetupCommitWritesMs += lap();
+#endif
 
     for (auto const& txBundle : txBundles)
     {
@@ -394,6 +410,9 @@ GlobalParallelApplyLedgerState::preApplyAndCollectModifiedClassicEntries(
         fetchInMemoryClassicEntries(footprint.readWrite);
         fetchInMemoryClassicEntries(footprint.readOnly);
     }
+#ifdef BUILD_TESTS
+    mSetupCollectClassicMs += lap();
+#endif
 }
 
 void

@@ -1737,7 +1737,17 @@ LedgerManagerImpl::applyLedger(LedgerCloseData const& ledgerData,
     header.current().scpValue = sv;
 
     maybeResetLedgerCloseMetaDebugStream(header.current().ledgerSeq);
+#ifdef BUILD_TESTS
+    mLastPhaseTimings = LedgerClosePhaseTimings{};
+    auto prepareStart = std::chrono::steady_clock::now();
+#endif
     auto applicableTxSet = txSet->prepareForApply(mApp, prevHeader);
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.prepareTxSetMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - prepareStart)
+            .count();
+#endif
 
     if (applicableTxSet == nullptr)
     {
@@ -1813,9 +1823,23 @@ LedgerManagerImpl::applyLedger(LedgerCloseData const& ledgerData,
     else
 #endif
     {
+#ifdef BUILD_TESTS
+        auto lapStart = std::chrono::steady_clock::now();
+        auto lap = [&lapStart]() {
+            auto now = std::chrono::steady_clock::now();
+            double ms =
+                std::chrono::duration<double, std::milli>(now - lapStart)
+                    .count();
+            lapStart = now;
+            return ms;
+        };
+#endif
         // first, prefetch source accounts for txset, then charge fees
         prefetchTxSourceIds(mApp.getLedgerTxnRoot(), *applicableTxSet,
                             mApp.getConfig());
+#ifdef BUILD_TESTS
+        mLastPhaseTimings.prefetchSourceAccountsMs = lap();
+#endif
 
         // Time the entire transaction processing phase from fee processing
         // through transaction application
@@ -1826,6 +1850,9 @@ LedgerManagerImpl::applyLedger(LedgerCloseData const& ledgerData,
         // to use
         auto const mutableTxResults = processFeesSeqNums(
             *applicableTxSet, ltx, ledgerCloseMeta, ledgerData);
+#ifdef BUILD_TESTS
+        mLastPhaseTimings.processFeesSeqNumsMs = lap();
+#endif
         txResultSet = applyTransactions(*applicableTxSet, mutableTxResults, ltx,
                                         ledgerCloseMeta);
     }
@@ -1842,6 +1869,9 @@ LedgerManagerImpl::applyLedger(LedgerCloseData const& ledgerData,
     // transactions and are beginning to commit ledger phase.
     mApplyState.markStartOfCommitting();
     JITTER_INJECT_DELAY();
+#ifdef BUILD_TESTS
+    auto upgradesStart = std::chrono::steady_clock::now();
+#endif
 
     bool upgradeApplied = false;
     for (size_t i = 0; i < sv.upgrades.size(); i++)
@@ -1895,10 +1925,23 @@ LedgerManagerImpl::applyLedger(LedgerCloseData const& ledgerData,
     }
 
     ledgerSeq = ltx.loadHeader().current().ledgerSeq;
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.applyUpgradesMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - upgradesStart)
+            .count();
+    auto sealStart = std::chrono::steady_clock::now();
+#endif
 
     auto lclApplyView = mApplyState.copyApplyLedgerView();
     auto appliedLedgerState = sealLedgerTxnAndStoreInBucketsAndDB(
         lclApplyView, ltx, ledgerCloseMeta, initialLedgerVers);
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.sealAndBucketMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - sealStart)
+            .count();
+#endif
 
     // NB: from now on, the ledger state may not change, but LCL still hasn't
     // advanced properly. Hence when requesting the ledger state data (such as
@@ -2005,7 +2048,17 @@ LedgerManagerImpl::applyLedger(LedgerCloseData const& ledgerData,
     JITTER_INJECT_DELAY();
 
     // step 2
+#ifdef BUILD_TESTS
+    auto sqlCommitStart = std::chrono::steady_clock::now();
+#endif
     ltx.commit();
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.sqlCommitMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - sqlCommitStart)
+            .count();
+    auto postCommitStart = std::chrono::steady_clock::now();
+#endif
 
 #ifdef BUILD_TESTS
     mLatestTxResultSet = txResultSet;
@@ -2043,6 +2096,10 @@ LedgerManagerImpl::applyLedger(LedgerCloseData const& ledgerData,
     maybeRunSnapshotInvariantFromLedgerState(mApplyState.copyApplyLedgerView());
 
 #ifdef BUILD_TESTS
+    mLastPhaseTimings.postCommitMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - postCommitStart)
+            .count();
     maybeSimulateSleep(mApp.getConfig(), txSet->sizeOpTotalForLogging(),
                        applyLedgerTime, mApplySleepRng);
     recordTxE2eLatency(*applicableTxSet);
@@ -2636,22 +2693,55 @@ LedgerManagerImpl::applySorobanStageClustersInParallel(
         std::function<std::unique_ptr<ThreadParallelApplyLedgerState>()>>
         tasks;
     tasks.reserve(stage.numClusters());
+#ifdef BUILD_TESTS
+    // Per-cluster wall times; each worker fills only its own slot, and they
+    // are only read after the join barrier below.
+    std::vector<double> clusterMs(stage.numClusters(), 0.0);
+#endif
     for (size_t i = 0; i < stage.numClusters(); ++i)
     {
         tasks.emplace_back([this, &app, &globalState, &stage, i, &config,
-                            &ledgerInfo, &sorobanBasePrngSeed]() {
+                            &ledgerInfo, &sorobanBasePrngSeed
+#ifdef BUILD_TESTS
+                            ,
+                            &clusterMs
+#endif
+        ]() {
+#ifdef BUILD_TESTS
+            auto clusterStart = std::chrono::steady_clock::now();
+#endif
             auto const& cluster = stage.getCluster(i);
             auto threadStatePtr =
                 std::make_unique<ThreadParallelApplyLedgerState>(
                     app, globalState, cluster, i);
-            return applyThread(app, std::move(threadStatePtr), cluster, config,
-                               ledgerInfo, sorobanBasePrngSeed);
+            auto res = applyThread(app, std::move(threadStatePtr), cluster,
+                                   config, ledgerInfo, sorobanBasePrngSeed);
+#ifdef BUILD_TESTS
+            clusterMs[i] = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - clusterStart)
+                               .count();
+#endif
+            return res;
         });
     }
 
     try
     {
-        return app.getBatchExecutor().executeBatch(std::move(tasks));
+        auto res = app.getBatchExecutor().executeBatch(std::move(tasks));
+#ifdef BUILD_TESTS
+        if (!clusterMs.empty())
+        {
+            // Safe to read: all workers have passed the join barrier.
+            mLastPhaseTimings.sorobanThreadMinMs +=
+                *std::min_element(clusterMs.begin(), clusterMs.end());
+            mLastPhaseTimings.sorobanThreadMaxMs +=
+                *std::max_element(clusterMs.begin(), clusterMs.end());
+            mLastPhaseTimings.sorobanThreadMeanMs +=
+                std::accumulate(clusterMs.begin(), clusterMs.end(), 0.0) /
+                static_cast<double>(clusterMs.size());
+        }
+#endif
+        return res;
     }
     catch (std::exception const& e)
     {
@@ -2707,14 +2797,30 @@ LedgerManagerImpl::applySorobanStage(
     ZoneScoped;
     auto const& config = app.getConfig();
     auto ledgerInfo = getParallelLedgerInfo(app, header);
+#ifdef BUILD_TESTS
+    auto lapStart = std::chrono::steady_clock::now();
+    auto lap = [&lapStart]() {
+        auto now = std::chrono::steady_clock::now();
+        double ms =
+            std::chrono::duration<double, std::milli>(now - lapStart).count();
+        lapStart = now;
+        return ms;
+    };
+#endif
 
     auto threadStates = applySorobanStageClustersInParallel(
         app, stage, globalParState, sorobanBasePrngSeed, config, ledgerInfo);
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.sorobanParallelApplyMs += lap();
+#endif
 
     if (config.invariantsEnabled())
     {
         checkAllTxBundleInvariants(app, stage, config, ledgerInfo, header);
     }
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.sorobanCheckInvariantsMs += lap();
+#endif
     // We don't call processPostApply for post v23 transactions at the
     // moment because processPostApply is currently a no-op for those
     // transactions, so just set refundable fee meta here.
@@ -2723,8 +2829,19 @@ LedgerManagerImpl::applySorobanStage(
         txBundle.getEffects().getMeta().maybeSetRefundableFeeMeta(
             txBundle.getResPayload().getRefundableFeeTracker());
     }
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.sorobanRefundMetaMs += lap();
+#endif
 
     globalParState.commitChangesFromThreads(app, threadStates);
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.sorobanCommitFromThreadsMs += lap();
+    // Destroy the thread states here rather than letting them go out of scope
+    // at the end of this function, so their cost lands in a row of its own
+    // instead of the gap. Equivalent: nothing reads them after the merge.
+    threadStates.clear();
+    mLastPhaseTimings.sorobanDestroyThreadStatesMs += lap();
+#endif
 }
 
 void
@@ -2734,18 +2851,63 @@ LedgerManagerImpl::applySorobanStages(AppConnector& app, AbstractLedgerTxn& ltx,
                                       Hash const& sorobanBasePrngSeed)
 {
     ZoneScoped;
-    GlobalParallelApplyLedgerState globalParState(
-        app, mApplyState.copyApplyLedgerView(), ltx, stages,
-        mApplyState.getInMemorySorobanState(), sorobanConfig);
-    // LedgerTxn is not passed into applySorobanStage, so there's no risk
-    // of the header being updated while we apply the stages.
-    auto const& header = ltx.loadHeader().current();
-    for (auto const& stage : stages)
+#ifdef BUILD_TESTS
+    // These accumulate across the stages of this ledger, so reset them here.
+    mLastPhaseTimings.sorobanRefundMetaMs = 0;
+    mLastPhaseTimings.sorobanParallelApplyMs = 0;
+    mLastPhaseTimings.sorobanThreadMinMs = 0;
+    mLastPhaseTimings.sorobanThreadMeanMs = 0;
+    mLastPhaseTimings.sorobanThreadMaxMs = 0;
+    mLastPhaseTimings.sorobanCheckInvariantsMs = 0;
+    mLastPhaseTimings.sorobanCommitFromThreadsMs = 0;
+    mLastPhaseTimings.sorobanDestroyThreadStatesMs = 0;
+    auto lapStart = std::chrono::steady_clock::now();
+    auto lap = [&lapStart]() {
+        auto now = std::chrono::steady_clock::now();
+        double ms =
+            std::chrono::duration<double, std::milli>(now - lapStart).count();
+        lapStart = now;
+        return ms;
+    };
+#endif
+
+    // Scoped so that the global state's destruction is attributable to its own
+    // row below rather than disappearing into the gap on function return.
     {
-        applySorobanStage(app, header, globalParState, stage,
-                          sorobanBasePrngSeed);
+        GlobalParallelApplyLedgerState globalParState(
+            app, mApplyState.copyApplyLedgerView(), ltx, stages,
+            mApplyState.getInMemorySorobanState(), sorobanConfig);
+#ifdef BUILD_TESTS
+        mLastPhaseTimings.sorobanSetupGlobalMs = lap();
+        mLastPhaseTimings.sorobanSetupReadOnlyMs =
+            globalParState.mSetupReadOnlyMs;
+        mLastPhaseTimings.sorobanSetupCommitWritesMs =
+            globalParState.mSetupCommitWritesMs;
+        mLastPhaseTimings.sorobanSetupCollectClassicMs =
+            globalParState.mSetupCollectClassicMs;
+#endif
+        // LedgerTxn is not passed into applySorobanStage, so there's no risk
+        // of the header being updated while we apply the stages.
+        auto const& header = ltx.loadHeader().current();
+        for (auto const& stage : stages)
+        {
+            applySorobanStage(app, header, globalParState, stage,
+                              sorobanBasePrngSeed);
+        }
+#ifdef BUILD_TESTS
+        // Discard the stage loop: it is already accounted for by the per-stage
+        // timings that applySorobanStage accumulates.
+        lap();
+#endif
+        globalParState.commitChangesToLedgerTxn(ltx);
+#ifdef BUILD_TESTS
+        mLastPhaseTimings.sorobanCommitToLtxMs = lap();
+#endif
     }
-    globalParState.commitChangesToLedgerTxn(ltx);
+#ifdef BUILD_TESTS
+    // The global entry map was destroyed by the scope exit above.
+    mLastPhaseTimings.sorobanDestroyGlobalStateMs = lap();
+#endif
 }
 
 void
@@ -2834,8 +2996,23 @@ LedgerManagerImpl::applyTransactions(
     }
     TransactionResultSet txResultSet;
     txResultSet.results.reserve(numTxs);
+#ifdef BUILD_TESTS
+    auto applyTxStart = std::chrono::steady_clock::now();
+    auto lapStart = applyTxStart;
+    auto lap = [&lapStart]() {
+        auto now = std::chrono::steady_clock::now();
+        double ms =
+            std::chrono::duration<double, std::milli>(now - lapStart).count();
+        lapStart = now;
+        return ms;
+    };
+    mLastPhaseTimings.applyTxSetupMs = lap();
+#endif
 
     prefetchTransactionData(mApp.getLedgerTxnRoot(), txSet, mApp.getConfig());
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.prefetchTxDataMs = lap();
+#endif
     auto phases = txSet.getPhasesInApplyOrder();
 
     Hash sorobanBasePrngSeed = txSet.getContentsHash();
@@ -2853,6 +3030,9 @@ LedgerManagerImpl::applyTransactions(
         enableTxMeta = true;
     }
 #endif
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.applyTxMidSetupMs = lap();
+#endif
     std::optional<SorobanNetworkConfig> sorobanConfig;
     if (protocolVersionStartsFrom(ltx.loadHeader().current().ledgerVersion,
                                   SOROBAN_PROTOCOL_VERSION))
@@ -2860,6 +3040,11 @@ LedgerManagerImpl::applyTransactions(
         sorobanConfig =
             std::make_optional(SorobanNetworkConfig::loadFromLedger(ltx));
     }
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.loadSorobanConfigMs = lap();
+    mLastPhaseTimings.applyParallelPhaseTotalMs = 0;
+    mLastPhaseTimings.applySeqClassicMs = 0;
+#endif
     std::vector<ApplyStage> applyStages;
     for (auto const& phase : phases)
     {
@@ -2885,15 +3070,30 @@ LedgerManagerImpl::applyTransactions(
         }
         else
         {
+#ifdef BUILD_TESTS
+            auto seqStart = std::chrono::steady_clock::now();
+#endif
             applySequentialPhase(phase, mutableTxResults, index, ltx,
                                  enableTxMeta, sorobanConfig,
                                  sorobanBasePrngSeed, ledgerCloseMeta,
                                  txResultSet);
+#ifdef BUILD_TESTS
+            mLastPhaseTimings.applySeqClassicMs +=
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - seqStart)
+                    .count();
+#endif
         }
     }
+#ifdef BUILD_TESTS
+    lap();
+#endif
 
     processPostTxSetApply(phases, applyStages, ltx, ledgerCloseMeta,
                           txResultSet);
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.postTxSetApplyMs = lap();
+#endif
 
     // Update cluster and stage metrics
     if (!applyStages.empty())
@@ -2908,6 +3108,16 @@ LedgerManagerImpl::applyTransactions(
     }
 
     logTxApplyMetrics(ltx, numTxs, numOps);
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.applyTxTailMs = lap();
+    // applyStages is destroyed by the caller's scope exit, which we cannot
+    // time from in here; the benchmark reports it as part of the tx gap.
+    mLastPhaseTimings.destroyApplyStagesMs = 0;
+    mLastPhaseTimings.applyTransactionsMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - applyTxStart)
+            .count();
+#endif
     return txResultSet;
 }
 
@@ -2919,6 +3129,9 @@ LedgerManagerImpl::applyParallelPhase(
     SorobanNetworkConfig const& sorobanConfig, Hash const& sorobanBasePrngSeed)
 {
     ZoneScoped;
+#ifdef BUILD_TESTS
+    auto parPhaseStart = std::chrono::steady_clock::now();
+#endif
 
     auto const& txSetStages = phase.getParallelStages();
 
@@ -2963,9 +3176,21 @@ LedgerManagerImpl::applyParallelPhase(
         }
         applyStages.emplace_back(std::move(applyClusters));
     }
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.buildTxBundlesMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - parPhaseStart)
+            .count();
+#endif
 
     applySorobanStages(mApp.getAppConnector(), ltx, applyStages, sorobanConfig,
                        sorobanBasePrngSeed);
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.applyParallelPhaseTotalMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - parPhaseStart)
+            .count();
+#endif
 
     // meta will be processed in processPostTxSetApply
 }
@@ -3037,6 +3262,10 @@ LedgerManagerImpl::processPostTxSetApply(
     TransactionResultSet& txResultSet)
 {
     ZoneScoped;
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.postTxRefundsMs = 0;
+    mLastPhaseTimings.postTxResultsMs = 0;
+#endif
     for (auto const& phase : phases)
     {
         if (phase.isParallel())
@@ -3045,6 +3274,9 @@ LedgerManagerImpl::processPostTxSetApply(
             {
                 for (auto const& txBundle : stage)
                 {
+#ifdef BUILD_TESTS
+                    auto refundStart = std::chrono::steady_clock::now();
+#endif
                     {
                         LedgerTxn ltxInner(ltx);
                         txBundle.getTx()->processPostTxSetApply(
@@ -3061,6 +3293,13 @@ LedgerManagerImpl::processPostTxSetApply(
                         }
                         ltxInner.commit();
                     }
+#ifdef BUILD_TESTS
+                    auto resultsStart = std::chrono::steady_clock::now();
+                    mLastPhaseTimings.postTxRefundsMs +=
+                        std::chrono::duration<double, std::milli>(resultsStart -
+                                                                  refundStart)
+                            .count();
+#endif
 
                     // setPostTxApplyFeeProcessing can update the feeCharged in
                     // the result, so this needs to be done after
@@ -3068,6 +3307,12 @@ LedgerManagerImpl::processPostTxSetApply(
                                          txBundle.getEffects().getMeta(),
                                          *txBundle.getTx(),
                                          txBundle.getResPayload(), txResultSet);
+#ifdef BUILD_TESTS
+                    mLastPhaseTimings.postTxResultsMs +=
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - resultsStart)
+                            .count();
+#endif
                 }
             }
         }
@@ -3169,8 +3414,17 @@ LedgerManagerImpl::finalizeLedgerTxnChanges(
         // `getAllTTLKeysWithoutSealing` must be called at the right time
         // _after_ all operations have been applied, but _before_ evictions.
         auto sorobanConfig = SorobanNetworkConfig::loadFromLedger(ltx);
+#ifdef BUILD_TESTS
+        auto evictionStart = std::chrono::steady_clock::now();
+#endif
         evictedState = mApp.getBucketManager().resolveBackgroundEvictionScan(
             lclApplyView, ltx, ltx.getAllKeysWithoutSealing());
+#ifdef BUILD_TESTS
+        mLastPhaseTimings.sealEvictionMs =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - evictionStart)
+                .count();
+#endif
 
         if (protocolVersionStartsFrom(
                 initialLedgerVers,
@@ -3262,8 +3516,21 @@ LedgerManagerImpl::finalizeLedgerTxnChanges(
         finalSorobanConfig =
             std::make_optional(SorobanNetworkConfig::loadFromLedger(ltx));
     }
+#ifdef BUILD_TESTS
+    auto lapStart = std::chrono::steady_clock::now();
+    auto lap = [&lapStart]() {
+        auto now = std::chrono::steady_clock::now();
+        double ms =
+            std::chrono::duration<double, std::milli>(now - lapStart).count();
+        lapStart = now;
+        return ms;
+    };
+#endif
     // NB: getAllEntries seals the ltx.
     ltx.getAllEntries(initEntries, liveEntries, deadEntries);
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.sealGetAllEntriesMs = lap();
+#endif
 
     // Launch async task to update in-memory Soroban state. This is independent
     // from both addHotArchiveBatch and addLiveBatch, so all can run in
@@ -3279,12 +3546,21 @@ LedgerManagerImpl::finalizeLedgerTxnChanges(
     mApplyState.addAnyContractsToModuleCache(lh.ledgerVersion, liveEntries);
     mApp.getBucketManager().addLiveBatch(mApp, lh, initEntries, liveEntries,
                                          deadEntries);
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.sealAddLiveBatchMs = lap();
+#endif
     // Wait for all async operations to complete before returning.
     if (hotArchiveBatchFuture.valid())
     {
         hotArchiveBatchFuture.get();
     }
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.sealHotArchiveWaitMs = lap();
+#endif
     inMemoryStateUpdateFuture.get();
+#ifdef BUILD_TESTS
+    mLastPhaseTimings.sealInMemStateWaitMs = lap();
+#endif
     return finalSorobanConfig;
 }
 
@@ -3332,11 +3608,31 @@ LedgerManagerImpl::sealLedgerTxnAndStoreInBucketsAndDB(
     ImmutableLedgerDataPtr res;
     ltx.unsealHeader([this, &res, sorobanConfig = std::move(sorobanConfig)](
                          LedgerHeader& lh) mutable {
+#ifdef BUILD_TESTS
+        auto lapStart = std::chrono::steady_clock::now();
+        auto lap = [&lapStart]() {
+            auto now = std::chrono::steady_clock::now();
+            double ms =
+                std::chrono::duration<double, std::milli>(now - lapStart)
+                    .count();
+            lapStart = now;
+            return ms;
+        };
+#endif
         mApp.getBucketManager().snapshotLedger(lh);
+#ifdef BUILD_TESTS
+        mLastPhaseTimings.sealSnapshotHashMs = lap();
+#endif
         auto has = storePersistentStateAndLedgerHeaderInDB(
             lh, /* appendToCheckpoint */ true);
+#ifdef BUILD_TESTS
+        mLastPhaseTimings.sealStoreHeaderMs = lap();
+#endif
         res = advanceApplySnapshotAndMakeLedgerState(lh, has,
                                                      std::move(sorobanConfig));
+#ifdef BUILD_TESTS
+        mLastPhaseTimings.sealAdvanceSnapshotMs = lap();
+#endif
     });
 
     releaseAssert(res);
