@@ -930,14 +930,14 @@ ThreadParallelApplyLedgerState::upsertEntry(
             releaseAssertOrThrow(le);
             le.value().lastModifiedLedgerSeq = ledgerSeq;
         });
-    mThreadEntryMap.insert_or_assign(key, parAppEntry);
+    mThreadEntryMap.insert_or_assign(key, std::move(parAppEntry));
 }
 void
 ThreadParallelApplyLedgerState::eraseEntry(ParallelApplyLedgerKey const& key)
 {
     auto parAppEntry =
         ThreadParallelApplyEntry::dirty(scopeAdoptEntryOpt(std::nullopt));
-    mThreadEntryMap.insert_or_assign(key, parAppEntry);
+    mThreadEntryMap.insert_or_assign(key, std::move(parAppEntry));
 }
 
 void
