@@ -97,6 +97,11 @@ class TransactionTestFrame : public TransactionFrameBase
 
     MutableTxResultPtr createValidationSuccessResult() const override;
 
+    MutableTxResultPtr
+    createSuccessResultWithFeeCharged(LedgerHeader const& header,
+                                      std::optional<int64_t> baseFee,
+                                      int64_t feeCharged) const override;
+
     TransactionEnvelope const& getEnvelope() const override;
     TransactionEnvelope& getMutableEnvelope() const override;
 

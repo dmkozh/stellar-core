@@ -68,22 +68,24 @@ LedgerCloseMetaFrame::reserveTxProcessing(size_t n)
 }
 
 void
-LedgerCloseMetaFrame::pushTxFeeProcessing(
-    LedgerEntryChanges const& feeProcessing)
+LedgerCloseMetaFrame::pushTxFeeProcessing(LedgerEntryChanges&& feeProcessing)
 {
     switch (mVersion)
     {
     case 0:
         mLedgerCloseMeta.v0().txProcessing.emplace_back();
-        mLedgerCloseMeta.v0().txProcessing.back().feeProcessing = feeProcessing;
+        mLedgerCloseMeta.v0().txProcessing.back().feeProcessing =
+            std::move(feeProcessing);
         break;
     case 1:
         mLedgerCloseMeta.v1().txProcessing.emplace_back();
-        mLedgerCloseMeta.v1().txProcessing.back().feeProcessing = feeProcessing;
+        mLedgerCloseMeta.v1().txProcessing.back().feeProcessing =
+            std::move(feeProcessing);
         break;
     case 2:
         mLedgerCloseMeta.v2().txProcessing.emplace_back();
-        mLedgerCloseMeta.v2().txProcessing.back().feeProcessing = feeProcessing;
+        mLedgerCloseMeta.v2().txProcessing.back().feeProcessing =
+            std::move(feeProcessing);
         break;
     default:
         releaseAssert(false);

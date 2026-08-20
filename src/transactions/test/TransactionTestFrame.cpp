@@ -170,6 +170,15 @@ TransactionTestFrame::createValidationSuccessResult() const
     return mTransactionFrame->createValidationSuccessResult();
 }
 
+MutableTxResultPtr
+TransactionTestFrame::createSuccessResultWithFeeCharged(
+    LedgerHeader const& header, std::optional<int64_t> baseFee,
+    int64_t feeCharged) const
+{
+    return mTransactionFrame->createSuccessResultWithFeeCharged(header, baseFee,
+                                                                feeCharged);
+}
+
 TransactionEnvelope const&
 TransactionTestFrame::getEnvelope() const
 {
