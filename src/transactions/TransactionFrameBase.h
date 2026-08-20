@@ -179,6 +179,13 @@ class TransactionFrameBase
     processFeeSeqNum(AbstractLedgerTxn& ltx,
                      std::optional<int64_t> baseFee) const = 0;
 
+    // Creates the result of successful fee processing with the provided
+    // charged fee. Does not access or modify the ledger state.
+    virtual MutableTxResultPtr
+    createSuccessResultWithFeeCharged(LedgerHeader const& header,
+                                      std::optional<int64_t> baseFee,
+                                      int64_t feeCharged) const = 0;
+
     // After this transaction has been applied
     virtual void
     processPostApply(AppConnector& app, AbstractLedgerTxn& ltx,

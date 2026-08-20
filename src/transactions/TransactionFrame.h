@@ -284,7 +284,12 @@ class TransactionFrame : public TransactionFrameBase
     MutableTxResultPtr
     createTxErrorResult(TransactionResultCode txErrorCode) const override;
 
-    virtual MutableTxResultPtr createValidationSuccessResult() const override;
+    MutableTxResultPtr createValidationSuccessResult() const override;
+
+    MutableTxResultPtr
+    createSuccessResultWithFeeCharged(LedgerHeader const& header,
+                                      std::optional<int64_t> baseFee,
+                                      int64_t feeCharged) const override;
 
     void
     insertKeysForFeeProcessing(UnorderedSet<LedgerKey>& keys) const override;

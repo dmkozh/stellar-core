@@ -2469,6 +2469,339 @@ LedgerManagerImpl::updateCanonicalStateForTesting(LedgerHeader const& header)
 #endif
 }
 
+namespace
+{
+struct TxSetFeeCharges
+{
+    std::vector<MutableTxResultPtr> mTxResults;
+    // Fee processing changes for every transaction in the apply order. Only
+    // populated when the meta is emitted.
+    std::vector<LedgerEntryChanges> mChanges;
+    // Deduplicated fee source accounts with all the fees of the transaction
+    // set charged.
+    std::vector<InternalLedgerEntry> mUpdatedAccounts;
+    int64_t mTotalFees{};
+    bool mMergeOpSeen{};
+};
+
+// Computes the fee charges for a transaction set without modifying the ledger
+// state.
+//
+// The fee amounts, the fee source account reads and the materialization of the
+// results and the meta all run on the batch executor; only charging the fees
+// itself is sequential, as the balances have to be updated in the apply order.
+class TxFeeProcessor
+{
+  public:
+    TxFeeProcessor(ApplicableTxSetFrame const& txSet,
+                   std::vector<TransactionFrameBaseConstPtr> const& txs,
+                   LedgerHeader const& header, bool emitMeta,
+                   BatchExecutor& executor);
+
+    TxSetFeeCharges processFees(AbstractLedgerTxn& ltx,
+                                ApplyLedgerView const& lclView,
+                                Config const& cfg);
+
+  private:
+    // Fee charged for a single transaction.
+    struct Charge
+    {
+        // Index of the fee source account in `mAccountKeys`.
+        size_t mAccountIndex{};
+        // Whether this is the first charge of the fee source account in this
+        // transaction set.
+        bool mIsFirstChargeForAccount{};
+        int64_t mFee{};
+        int64_t mBalanceAfter{};
+    };
+
+    void computeFeeAmounts();
+    void groupChargesByFeeSource();
+    void loadFeeSourceAccounts(AbstractLedgerTxn& ltx,
+                               ApplyLedgerView const& lclView,
+                               Config const& cfg);
+    void chargeFees();
+    TxSetFeeCharges materializeCharges() const;
+    LedgerEntryChanges buildFeeChanges(Charge const& charge) const;
+
+    ApplicableTxSetFrame const& mTxSet;
+    std::vector<TransactionFrameBaseConstPtr> const& mTxs;
+    LedgerHeader const& mHeader;
+    bool const mEmitMeta;
+    BatchExecutor& mExecutor;
+
+    std::vector<std::optional<int64_t>> mBaseFees;
+    // Fees before capping them at the fee source account balance.
+    std::vector<int64_t> mUncappedFees;
+    std::vector<Charge> mCharges;
+    std::vector<LedgerKey> mAccountKeys;
+    std::vector<std::shared_ptr<LedgerEntry const>> mLoadedAccounts;
+    // Balances of the accounts in `mAccountKeys` after charging the fees.
+    std::vector<int64_t> mBalances;
+    int64_t mTotalFees{};
+    bool mMergeOpSeen{};
+};
+
+TxFeeProcessor::TxFeeProcessor(
+    ApplicableTxSetFrame const& txSet,
+    std::vector<TransactionFrameBaseConstPtr> const& txs,
+    LedgerHeader const& header, bool emitMeta, BatchExecutor& executor)
+    : mTxSet(txSet)
+    , mTxs(txs)
+    , mHeader(header)
+    , mEmitMeta(emitMeta)
+    , mExecutor(executor)
+{
+}
+
+TxSetFeeCharges
+TxFeeProcessor::processFees(AbstractLedgerTxn& ltx,
+                            ApplyLedgerView const& lclView, Config const& cfg)
+{
+    ZoneScoped;
+    computeFeeAmounts();
+    groupChargesByFeeSource();
+    loadFeeSourceAccounts(ltx, lclView, cfg);
+    chargeFees();
+    return materializeCharges();
+}
+
+void
+TxFeeProcessor::computeFeeAmounts()
+{
+    ZoneScoped;
+    mBaseFees.resize(mTxs.size());
+    mUncappedFees.resize(mTxs.size());
+    bool const trackMergeOps =
+        protocolVersionStartsFrom(mHeader.ledgerVersion, ProtocolVersion::V_19);
+    std::atomic<bool> mergeOpSeen{false};
+    mExecutor.executeBatchOverRanges(
+        mTxs.size(), [&](size_t begin, size_t end) {
+            bool localMergeOpSeen = false;
+            for (size_t i = begin; i < end; ++i)
+            {
+                auto const& tx = mTxs[i];
+                mBaseFees[i] = mTxSet.getTxBaseFee(tx);
+                mUncappedFees[i] = tx->getFee(mHeader, mBaseFees[i], true);
+                localMergeOpSeen =
+                    localMergeOpSeen ||
+                    (trackMergeOps && mergeOpInTx(tx->getRawOperations()));
+            }
+            if (localMergeOpSeen)
+            {
+                mergeOpSeen.store(true, std::memory_order_relaxed);
+            }
+        });
+    mMergeOpSeen = mergeOpSeen.load(std::memory_order_relaxed);
+}
+
+void
+TxFeeProcessor::groupChargesByFeeSource()
+{
+    ZoneScoped;
+    mCharges.resize(mTxs.size());
+    mAccountKeys.reserve(mTxs.size());
+    UnorderedMap<AccountID, size_t> accountIndices;
+    accountIndices.reserve(mTxs.size());
+    for (size_t i = 0; i < mTxs.size(); ++i)
+    {
+        auto const& feeSource = mTxs[i]->getFeeSourceID();
+        auto [it, inserted] =
+            accountIndices.try_emplace(feeSource, mAccountKeys.size());
+        if (inserted)
+        {
+            mAccountKeys.push_back(accountKey(feeSource));
+        }
+        mCharges[i].mAccountIndex = it->second;
+        mCharges[i].mIsFirstChargeForAccount = inserted;
+    }
+}
+
+void
+TxFeeProcessor::loadFeeSourceAccounts(AbstractLedgerTxn& ltx,
+                                      ApplyLedgerView const& lclView,
+                                      Config const& cfg)
+{
+    ZoneScoped;
+    mLoadedAccounts.resize(mAccountKeys.size());
+#ifdef BUILD_TESTS
+    if (cfg.MODE_USES_IN_MEMORY_LEDGER)
+    {
+        // In the in-memory mode the ledger state is stored in an LTX below the
+        // root, so it's not necessarily reflected in the ledger snapshot and
+        // has to be read from the LTX chain (which is thread-safe as long as
+        // the chain is not modified).
+        mExecutor.executeBatchOverRanges(
+            mAccountKeys.size(), [&](size_t begin, size_t end) {
+                ApplyLedgerView view(lclView);
+                for (size_t i = begin; i < end; ++i)
+                {
+                    auto const& key = mAccountKeys[i];
+                    auto [foundInLtx, ltxEntry] =
+                        ltx.getNewestVersionBelowRoot(key);
+                    if (!foundInLtx)
+                    {
+                        mLoadedAccounts[i] = view.loadLiveEntry(key);
+                    }
+                    else if (ltxEntry)
+                    {
+                        // Alias the entry owned by the LTX instead of copying
+                        // it.
+                        mLoadedAccounts[i] = std::shared_ptr<LedgerEntry const>(
+                            ltxEntry, &ltxEntry->ledgerEntry());
+                    }
+                }
+            });
+        return;
+    }
+#endif
+    // Fee processing is the first writer of the accounts within a ledger, so
+    // the accounts can be read from the ledger snapshot without accounting for
+    // any changes made by the ledger that is being applied.
+    mExecutor.executeBatchOverRanges(
+        mAccountKeys.size(), [&](size_t begin, size_t end) {
+            ApplyLedgerView view(lclView);
+            for (size_t i = begin; i < end; ++i)
+            {
+                mLoadedAccounts[i] = view.loadLiveEntry(mAccountKeys[i]);
+            }
+        });
+}
+
+void
+TxFeeProcessor::chargeFees()
+{
+    ZoneScoped;
+    mBalances.reserve(mLoadedAccounts.size());
+    for (auto const& account : mLoadedAccounts)
+    {
+        if (!account)
+        {
+            throw std::runtime_error("Unexpected database state");
+        }
+        mBalances.push_back(account->data.account().balance);
+    }
+    for (size_t i = 0; i < mCharges.size(); ++i)
+    {
+        auto& charge = mCharges[i];
+        auto& balance = mBalances[charge.mAccountIndex];
+        int64_t fee = mUncappedFees[i];
+        if (fee > 0)
+        {
+            fee = std::min(balance, fee);
+            // Note: the balance is allowed to fall below the reserve plus the
+            // liabilities here; this is caught later in `commonValid`.
+            stellar::addBalance(balance, -fee);
+            mTotalFees += fee;
+        }
+        charge.mFee = fee;
+        charge.mBalanceAfter = balance;
+    }
+}
+
+TxSetFeeCharges
+TxFeeProcessor::materializeCharges() const
+{
+    ZoneScoped;
+    TxSetFeeCharges staged;
+    staged.mTotalFees = mTotalFees;
+    staged.mMergeOpSeen = mMergeOpSeen;
+    staged.mTxResults.resize(mTxs.size());
+    staged.mChanges.resize(mEmitMeta ? mTxs.size() : 0);
+    staged.mUpdatedAccounts.resize(mAccountKeys.size());
+
+    mExecutor.executeBatchOverRanges(mTxs.size(), [&](size_t begin,
+                                                      size_t end) {
+        for (size_t i = begin; i < end; ++i)
+        {
+            auto const& charge = mCharges[i];
+            staged.mTxResults[i] = mTxs[i]->createSuccessResultWithFeeCharged(
+                mHeader, mBaseFees[i], charge.mFee);
+            if (mEmitMeta)
+            {
+                staged.mChanges[i] = buildFeeChanges(charge);
+            }
+        }
+    });
+    mExecutor.executeBatchOverRanges(
+        mAccountKeys.size(), [&](size_t begin, size_t end) {
+            for (size_t i = begin; i < end; ++i)
+            {
+                staged.mUpdatedAccounts[i] = *mLoadedAccounts[i];
+                auto& account = staged.mUpdatedAccounts[i].ledgerEntry();
+                account.data.account().balance = mBalances[i];
+                account.lastModifiedLedgerSeq = mHeader.ledgerSeq;
+            }
+        });
+    return staged;
+}
+
+LedgerEntryChanges
+TxFeeProcessor::buildFeeChanges(Charge const& charge) const
+{
+    auto const& loadedAccount = *mLoadedAccounts[charge.mAccountIndex];
+    LedgerEntryChanges changes;
+    changes.reserve(2);
+
+    changes.emplace_back(LEDGER_ENTRY_STATE);
+    auto& state = changes.back().state();
+    state = loadedAccount;
+    state.data.account().balance = charge.mBalanceAfter + charge.mFee;
+    if (!charge.mIsFirstChargeForAccount)
+    {
+        // A previous charge of the same account has already stamped
+        // `lastModifiedLedgerSeq` with the current ledger.
+        state.lastModifiedLedgerSeq = mHeader.ledgerSeq;
+    }
+
+    changes.emplace_back(LEDGER_ENTRY_UPDATED);
+    auto& updated = changes.back().updated();
+    updated = loadedAccount;
+    updated.data.account().balance = charge.mBalanceAfter;
+    updated.lastModifiedLedgerSeq = mHeader.ledgerSeq;
+
+    return changes;
+}
+
+// Records the maximum sequence number to apply for every source account of the
+// transaction set. This is only necessary for the transaction sets that contain
+// account merges.
+void
+writeMaxSeqNumsToApply(AbstractLedgerTxn& ltx,
+                       std::vector<TxSetPhaseFrame> const& phases)
+{
+    ZoneScoped;
+    std::map<AccountID, SequenceNumber> accToMaxSeq;
+    for (auto const& phase : phases)
+    {
+        for (auto const& tx : phase)
+        {
+            auto res = accToMaxSeq.emplace(tx->getSourceID(), tx->getSeqNum());
+            if (!res.second)
+            {
+                res.first->second =
+                    std::max(res.first->second, tx->getSeqNum());
+            }
+        }
+    }
+
+    for (auto const& [accountID, seqNum] : accToMaxSeq)
+    {
+        if (loadMaxSeqNumToApply(ltx, accountID))
+        {
+            throw std::runtime_error("found unexpected MAX_SEQ_NUM_TO_APPLY");
+        }
+        InternalLedgerEntry gle(InternalLedgerEntryType::MAX_SEQ_NUM_TO_APPLY);
+        gle.maxSeqNumToApplyEntry().sourceAccount = accountID;
+        gle.maxSeqNumToApplyEntry().maxSeqNum = seqNum;
+        if (!ltx.create(gle))
+        {
+            throw std::runtime_error("create failed");
+        }
+    }
+}
+} // namespace
+
 std::vector<MutableTxResultPtr>
 LedgerManagerImpl::processFeesSeqNums(
     ApplicableTxSetFrame const& txSet, AbstractLedgerTxn& ltxOuter,
@@ -2484,7 +2817,6 @@ LedgerManagerImpl::processFeesSeqNums(
     {
         LedgerTxn ltx(ltxOuter);
         auto header = ltx.loadHeader().current();
-        std::map<AccountID, SequenceNumber> accToMaxSeq;
 
 #ifdef BUILD_TESTS
         // If we have expected results, we assign them to the mutable tx results
@@ -2500,81 +2832,98 @@ LedgerManagerImpl::processFeesSeqNums(
                 std::make_optional(expectedResults->results.begin());
         }
 #endif
-
-        bool mergeSeen = false;
-        for (auto const& phase : txSet.getPhasesInApplyOrder())
-        {
-            for (auto const& tx : phase)
-            {
-                LedgerTxn ltxTx(ltx);
-                txResults.push_back(
-                    tx->processFeeSeqNum(ltxTx, txSet.getTxBaseFee(tx)));
+        // Collects the fee processing outcome of a single transaction in the
+        // apply order. `changes` must be non-null iff the meta is emitted.
+        auto collectTxResult = [&](TransactionFrameBase const& tx,
+                                   MutableTxResultPtr&& txResult,
+                                   LedgerEntryChanges* changes) {
+            txResults.push_back(std::move(txResult));
 #ifdef BUILD_TESTS
-                if (expectedResultsIter)
-                {
-                    releaseAssert(*expectedResultsIter !=
-                                  expectedResults->results.end());
-                    releaseAssert((*expectedResultsIter)->transactionHash ==
-                                  tx->getContentsHash());
-                    txResults.back()->setReplayTransactionResult(
-                        (*expectedResultsIter)->result);
+            if (expectedResultsIter)
+            {
+                releaseAssert(*expectedResultsIter !=
+                              expectedResults->results.end());
+                releaseAssert((*expectedResultsIter)->transactionHash ==
+                              tx.getContentsHash());
+                txResults.back()->setReplayTransactionResult(
+                    (*expectedResultsIter)->result);
 
-                    ++(*expectedResultsIter);
-                }
+                ++(*expectedResultsIter);
+            }
 #endif // BUILD_TESTS
+            if (ledgerCloseMeta)
+            {
+                releaseAssert(changes);
+                ledgerCloseMeta->pushTxFeeProcessing(std::move(*changes));
+            }
+            ++index;
+        };
 
-                if (protocolVersionStartsFrom(
-                        ltxTx.loadHeader().current().ledgerVersion,
-                        ProtocolVersion::V_19))
-                {
-                    auto res =
-                        accToMaxSeq.emplace(tx->getSourceID(), tx->getSeqNum());
-                    if (!res.second)
-                    {
-                        res.first->second =
-                            std::max(res.first->second, tx->getSeqNum());
-                    }
+        auto const& phases = txSet.getPhasesInApplyOrder();
+        bool mergeOpSeen = false;
+        // Starting from protocol 10 we process the fees in parallel.
+        // Before protocol 10 the sequence numbers are consumed during the fee
+        // processing, and we use sequential processing in order to simplify
+        // the parallel path that only charges the fees.
+        if (protocolVersionStartsFrom(header.ledgerVersion,
+                                      ProtocolVersion::V_10))
+        {
+            std::vector<TransactionFrameBaseConstPtr> txs;
+            txs.reserve(txSet.sizeTxTotal());
+            for (auto const& phase : phases)
+            {
+                txs.insert(txs.end(), phase.begin(), phase.end());
+            }
 
-                    if (mergeOpInTx(tx->getRawOperations()))
-                    {
-                        mergeSeen = true;
-                    }
-                }
+            TxFeeProcessor feeProcessor(txSet, txs, header,
+                                        ledgerCloseMeta != nullptr,
+                                        mApp.getBatchExecutor());
+            auto feeCharges = feeProcessor.processFees(
+                ltx, mApplyState.copyApplyLedgerView(), mApp.getConfig());
+            mergeOpSeen = feeCharges.mMergeOpSeen;
 
-                if (ledgerCloseMeta)
-                {
-                    ledgerCloseMeta->pushTxFeeProcessing(ltxTx.getChanges());
-                }
-                ++index;
-                ltxTx.commit();
+            for (size_t i = 0; i < txs.size(); ++i)
+            {
+                collectTxResult(*txs[i], std::move(feeCharges.mTxResults[i]),
+                                ledgerCloseMeta ? &feeCharges.mChanges[i]
+                                                : nullptr);
+            }
+            for (auto const& account : feeCharges.mUpdatedAccounts)
+            {
+                ltx.updateWithoutLoading(account);
+            }
+            if (feeCharges.mTotalFees > 0)
+            {
+                ltx.loadHeader().current().feePool += feeCharges.mTotalFees;
             }
         }
-        if (protocolVersionStartsFrom(ltx.loadHeader().current().ledgerVersion,
-                                      ProtocolVersion::V_19) &&
-            mergeSeen)
+        else
         {
-            for (auto const& [accountID, seqNum] : accToMaxSeq)
+            // Pre-V10 sequential fee processing path.
+            for (auto const& phase : phases)
             {
-                auto ltxe = loadMaxSeqNumToApply(ltx, accountID);
-                if (!ltxe)
+                for (auto const& tx : phase)
                 {
-                    InternalLedgerEntry gle(
-                        InternalLedgerEntryType::MAX_SEQ_NUM_TO_APPLY);
-                    gle.maxSeqNumToApplyEntry().sourceAccount = accountID;
-                    gle.maxSeqNumToApplyEntry().maxSeqNum = seqNum;
-
-                    auto res = ltx.create(gle);
-                    if (!res)
+                    // Use a child LTX in order to capture the per-tx changes
+                    // for the meta.
+                    LedgerTxn ltxTx(ltx);
+                    auto txResult =
+                        tx->processFeeSeqNum(ltxTx, txSet.getTxBaseFee(tx));
+                    LedgerEntryChanges changes;
+                    if (ledgerCloseMeta)
                     {
-                        throw std::runtime_error("create failed");
+                        changes = ltxTx.getChanges();
                     }
-                }
-                else
-                {
-                    throw std::runtime_error(
-                        "found unexpected MAX_SEQ_NUM_TO_APPLY");
+                    ltxTx.commit();
+                    collectTxResult(*tx, std::move(txResult),
+                                    ledgerCloseMeta ? &changes : nullptr);
                 }
             }
+        }
+
+        if (mergeOpSeen)
+        {
+            writeMaxSeqNumsToApply(ltx, phases);
         }
 
         ltx.commit();

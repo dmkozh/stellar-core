@@ -670,6 +670,14 @@ TransactionFrame::createValidationSuccessResult() const
     return MutableTransactionResult::createSuccess(*this, 0);
 }
 
+MutableTxResultPtr
+TransactionFrame::createSuccessResultWithFeeCharged(
+    LedgerHeader const& header, std::optional<int64_t> baseFee,
+    int64_t feeCharged) const
+{
+    return MutableTransactionResult::createSuccess(*this, feeCharged);
+}
+
 std::optional<TimeBounds const> const
 TransactionFrame::getTimeBounds() const
 {
@@ -1816,7 +1824,7 @@ TransactionFrame::processFeeSeqNum(AbstractLedgerTxn& ltx,
         }
         acc.seqNum = getSeqNum();
     }
-    return MutableTransactionResult::createSuccess(*this, fee);
+    return createSuccessResultWithFeeCharged(header.current(), baseFee, fee);
 }
 
 bool

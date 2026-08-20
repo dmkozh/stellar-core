@@ -757,13 +757,7 @@ FeeBumpTransactionFrame::processFeeSeqNum(AbstractLedgerTxn& ltx,
         header.feePool += fee;
     }
 
-    int64_t innerFeeCharged = 0;
-    if (protocolVersionIsBefore(header.ledgerVersion, ProtocolVersion::V_25))
-    {
-        innerFeeCharged = mInnerTx->getFee(header, baseFee, true);
-    }
-    return FeeBumpMutableTransactionResult::createSuccess(*mInnerTx, fee,
-                                                          innerFeeCharged);
+    return createSuccessResultWithFeeCharged(header, baseFee, fee);
 }
 
 void
@@ -798,6 +792,20 @@ MutableTxResultPtr
 FeeBumpTransactionFrame::createValidationSuccessResult() const
 {
     return FeeBumpMutableTransactionResult::createSuccess(*mInnerTx, 0, 0);
+}
+
+MutableTxResultPtr
+FeeBumpTransactionFrame::createSuccessResultWithFeeCharged(
+    LedgerHeader const& header, std::optional<int64_t> baseFee,
+    int64_t feeCharged) const
+{
+    int64_t innerFeeCharged = 0;
+    if (protocolVersionIsBefore(header.ledgerVersion, ProtocolVersion::V_25))
+    {
+        innerFeeCharged = mInnerTx->getFee(header, baseFee, true);
+    }
+    return FeeBumpMutableTransactionResult::createSuccess(*mInnerTx, feeCharged,
+                                                          innerFeeCharged);
 }
 
 std::shared_ptr<StellarMessage const>
