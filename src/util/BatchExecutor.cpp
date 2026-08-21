@@ -215,7 +215,7 @@ BatchExecutor::executeBatchOverRanges(
     size_t count, std::function<void(size_t, size_t)> const& work)
 {
     size_t const numTasks = preferredTaskCount();
-    if (count < numTasks)
+    if (count < numTasks || getenv("EXEC_BATCH_OVER_RANGES_SINGLE_THREAD"))
     {
         work(size_t(0), count);
         return;
