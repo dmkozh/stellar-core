@@ -356,6 +356,8 @@ def build_docker_command(config_path: str, image: str,
     command = [
         "docker",
         "run",
+        "-e",
+        "EXEC_BATCH_OVER_RANGES_SINGLE_THREAD=1",
         "--init",
         "--rm",
         "-v",
