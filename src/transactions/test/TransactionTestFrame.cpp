@@ -403,10 +403,11 @@ TransactionTestFrame::parallelApply(
 }
 
 MutableTxResultPtr
-TransactionTestFrame::processFeeSeqNum(AbstractLedgerTxn& ltx,
-                                       std::optional<int64_t> baseFee) const
+TransactionTestFrame::processFeeSeqNumPreV10(
+    AbstractLedgerTxn& ltx, std::optional<int64_t> baseFee) const
 {
-    mTransactionTxResult = mTransactionFrame->processFeeSeqNum(ltx, baseFee);
+    mTransactionTxResult =
+        mTransactionFrame->processFeeSeqNumPreV10(ltx, baseFee);
     return mTransactionTxResult->clone();
 }
 

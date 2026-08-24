@@ -186,8 +186,8 @@ class FeeBumpTransactionFrame : public TransactionFrameBase
     void insertKeysForTxApply(UnorderedSet<LedgerKey>& keys) const override;
 
     MutableTxResultPtr
-    processFeeSeqNum(AbstractLedgerTxn& ltx,
-                     std::optional<int64_t> baseFee) const override;
+    processFeeSeqNumPreV10(AbstractLedgerTxn& ltx,
+                           std::optional<int64_t> baseFee) const override;
 
     std::shared_ptr<StellarMessage const> toStellarMessage() const override;
 

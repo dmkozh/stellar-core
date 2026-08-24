@@ -2933,8 +2933,8 @@ LedgerManagerImpl::processFeesSeqNums(
                     // Use a child LTX in order to capture the per-tx changes
                     // for the meta.
                     LedgerTxn ltxTx(ltx);
-                    auto txResult =
-                        tx->processFeeSeqNum(ltxTx, txSet.getTxBaseFee(tx));
+                    auto txResult = tx->processFeeSeqNumPreV10(
+                        ltxTx, txSet.getTxBaseFee(tx));
                     LedgerEntryChanges changes;
                     if (ledgerCloseMeta)
                     {

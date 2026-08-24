@@ -173,9 +173,13 @@ class TransactionFrameBase
     insertKeysForFeeProcessing(UnorderedSet<LedgerKey>& keys) const = 0;
     virtual void insertKeysForTxApply(UnorderedSet<LedgerKey>& keys) const = 0;
 
+    // Charges the transaction fee and consumes the sequence number for the
+    // protocol versions before 10. Starting from protocol 10 the fees are
+    // charged by the ledger manager and the sequence numbers are consumed
+    // during the transaction application.
     virtual MutableTxResultPtr
-    processFeeSeqNum(AbstractLedgerTxn& ltx,
-                     std::optional<int64_t> baseFee) const = 0;
+    processFeeSeqNumPreV10(AbstractLedgerTxn& ltx,
+                           std::optional<int64_t> baseFee) const = 0;
 
     // Creates the result of successful fee processing with the provided
     // charged fee. Does not access or modify the ledger state.

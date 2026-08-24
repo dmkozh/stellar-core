@@ -1742,13 +1742,15 @@ TransactionFrame::commonValid(
 }
 
 MutableTxResultPtr
-TransactionFrame::processFeeSeqNum(AbstractLedgerTxn& ltx,
-                                   std::optional<int64_t> baseFee) const
+TransactionFrame::processFeeSeqNumPreV10(AbstractLedgerTxn& ltx,
+                                         std::optional<int64_t> baseFee) const
 {
     ZoneScoped;
     mCachedAccountPreProtocol8.reset();
 
     auto header = ltx.loadHeader();
+    releaseAssert(protocolVersionIsBefore(header.current().ledgerVersion,
+                                          ProtocolVersion::V_10));
 
     auto sourceAccount = loadSourceAccount(ltx, header);
     if (!sourceAccount)
@@ -1769,18 +1771,13 @@ TransactionFrame::processFeeSeqNum(AbstractLedgerTxn& ltx,
         stellar::addBalance(acc.balance, -fee);
         header.current().feePool += fee;
     }
-    // in v10 we update sequence numbers during apply
-    if (protocolVersionIsBefore(header.current().ledgerVersion,
-                                ProtocolVersion::V_10))
+    if (acc.seqNum + 1 != getSeqNum())
     {
-        if (acc.seqNum + 1 != getSeqNum())
-        {
-            // this should not happen as the transaction set is sanitized
-            // for sequence numbers
-            throw std::runtime_error("Unexpected account state");
-        }
-        acc.seqNum = getSeqNum();
+        // this should not happen as the transaction set is sanitized
+        // for sequence numbers
+        throw std::runtime_error("Unexpected account state");
     }
+    acc.seqNum = getSeqNum();
     return createSuccessResultWithFeeCharged(header.current(), baseFee, fee);
 }
 

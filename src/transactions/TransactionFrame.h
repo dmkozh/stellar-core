@@ -293,10 +293,9 @@ class TransactionFrame : public TransactionFrameBase
     insertKeysForFeeProcessing(UnorderedSet<LedgerKey>& keys) const override;
     void insertKeysForTxApply(UnorderedSet<LedgerKey>& keys) const override;
 
-    // collect fee, consume sequence number
     MutableTxResultPtr
-    processFeeSeqNum(AbstractLedgerTxn& ltx,
-                     std::optional<int64_t> baseFee) const override;
+    processFeeSeqNumPreV10(AbstractLedgerTxn& ltx,
+                           std::optional<int64_t> baseFee) const override;
 
     // `commonPreApply` runs all pre-application steps that are common between
     // parallelApply and (sequential) apply:
@@ -361,7 +360,7 @@ class TransactionFrame : public TransactionFrameBase
                Hash const& sorobanBasePrngSeed) const override;
 
     // Performs the necessary post-apply transaction processing.
-    // This has to be called after both `processFeeSeqNum` and
+    // This has to be called after both the fee processing and
     // `apply` have been called.
     // Currently this only takes care of Soroban fee refunds.
     void

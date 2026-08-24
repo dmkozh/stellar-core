@@ -177,8 +177,8 @@ class TransactionTestFrame : public TransactionFrameBase
         TxEffects& effects) const override;
 
     MutableTxResultPtr
-    processFeeSeqNum(AbstractLedgerTxn& ltx,
-                     std::optional<int64_t> baseFee) const override;
+    processFeeSeqNumPreV10(AbstractLedgerTxn& ltx,
+                           std::optional<int64_t> baseFee) const override;
 
     void
     processPostApply(AppConnector& app, AbstractLedgerTxn& ltx,

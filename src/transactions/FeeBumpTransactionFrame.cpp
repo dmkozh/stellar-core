@@ -716,30 +716,12 @@ FeeBumpTransactionFrame::insertKeysForTxApply(
 }
 
 MutableTxResultPtr
-FeeBumpTransactionFrame::processFeeSeqNum(AbstractLedgerTxn& ltx,
-                                          std::optional<int64_t> baseFee) const
+FeeBumpTransactionFrame::processFeeSeqNumPreV10(
+    AbstractLedgerTxn& ltx, std::optional<int64_t> baseFee) const
 {
-    auto& header = ltx.loadHeader().current();
-
-    auto feeSource = stellar::loadAccount(ltx, getFeeSourceID());
-    if (!feeSource)
-    {
-        throw std::runtime_error("Unexpected database state");
-    }
-    auto& acc = feeSource.current().data.account();
-
-    auto fee = getFee(header, baseFee, true);
-    if (fee > 0)
-    {
-        fee = std::min(acc.balance, fee);
-        // Note: TransactionUtil addBalance checks that reserve plus liabilities
-        // are respected. In this case, we allow it to fall below that since it
-        // will be caught later in commonValid.
-        stellar::addBalance(acc.balance, -fee);
-        header.feePool += fee;
-    }
-
-    return createSuccessResultWithFeeCharged(header, baseFee, fee);
+    // Fee bump transactions are only supported starting from protocol 13, so
+    // they never take the pre-protocol 10 fee processing path.
+    throw std::runtime_error("Fee bump transaction in a pre-V10 ledger");
 }
 
 void
