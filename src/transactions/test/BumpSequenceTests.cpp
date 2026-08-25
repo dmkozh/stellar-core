@@ -95,8 +95,20 @@ TEST_CASE_VERSIONS("bump sequence", "[tx][bumpsequence]")
 
             a.bumpSequence(newSeq);
             REQUIRE(a.loadSequenceNumber() == newSeq);
-            REQUIRE_THROWS_AS(applyTx({a.tx({payment(*root, 1)})}, *app),
-                              ex_txBAD_SEQ);
+
+            // Right now the transaction validation is broken for this edge case
+            // because it checks `isBadSeq` against the LCL ledger sequence,
+            // instead of LCL+1 used during transaction application. Thus the
+            // transaction can be included into ledger and fail with txBAD_SEQ
+            // during application. This change also has been introduced
+            // accidentally without a protocol gate, so we have a blanket test
+            // for this behavior for now.
+            // We should eventually fix this with a protocol guard; at that
+            // point this check should be conditioned on protocols before the
+            // fix.
+            auto r = closeLedger(*app, {a.tx({payment(*root, 1)})});
+            checkTx(0, r, txBAD_SEQ);
+            REQUIRE(a.loadSequenceNumber() == newSeq);
         });
     }
 

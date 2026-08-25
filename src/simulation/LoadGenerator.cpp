@@ -945,9 +945,6 @@ LoadGenerator::submitTx(GeneratedLoadConfig const& cfg,
              (status == TransactionQueue::AddResultCode::ADD_STATUS_ERROR &&
               code == txINSUFFICIENT_FEE)))
         {
-            // Rollback the seq num of the test account as we regenerate the
-            // transaction.
-            from->setSequenceNumber(from->getLastSequenceNumber() - 1);
             CLOG_INFO(LoadGen, "skipped low fee tx with fee {}",
                       tx->getInclusionFee());
             return false;
@@ -1289,30 +1286,15 @@ std::vector<TxGenerator::TestAccountPtr>
 LoadGenerator::checkAccountSynced(Application& app)
 {
     std::vector<TxGenerator::TestAccountPtr> result;
-    for (auto const& acc : mTxGenerator.getAccounts())
+    for (auto const& [_, account] : mTxGenerator.getAccounts())
     {
-        TxGenerator::TestAccountPtr account = acc.second;
-        auto accountFromDB = *account;
-
-        auto reloadRes = mTxGenerator.loadAccount(accountFromDB);
-        // Ensure that the sequence number matches expected
-        // seqnum. Timeout after 20 ledgers.
-        if (!reloadRes)
-        {
-            auto msg =
-                fmt::format("Account {} used to submit payment tx could not "
-                            "load, DB might be in a corrupted state",
-                            account->getAccountId());
-            throw std::runtime_error(msg);
-        }
-        else if (account->getLastSequenceNumber() !=
-                 accountFromDB.getLastSequenceNumber())
+        auto cachedSeqNum = account->getCachedSequenceNumber();
+        auto actualSeqNum = account->getLastSequenceNumber();
+        if (cachedSeqNum != actualSeqNum)
         {
             CLOG_TRACE(LoadGen,
                        "Account {} is at sequence num {}, but the DB is at  {}",
-                       account->getAccountId(),
-                       account->getLastSequenceNumber(),
-                       accountFromDB.getLastSequenceNumber());
+                       account->getAccountId(), cachedSeqNum, actualSeqNum);
             result.push_back(account);
         }
     }

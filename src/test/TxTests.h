@@ -71,7 +71,7 @@ TransactionResult expectedResult(int64_t fee, size_t opsCount,
                                  TransactionResultCode code,
                                  std::vector<ExpectedOpResult> ops = {});
 
-bool applyCheck(TransactionTestFramePtr tx, Application& app,
+bool applyCheck(TransactionTestFramePtr const& tx, Application& app,
                 bool checkSeqNum = true);
 void applyTx(TransactionTestFramePtr const& tx, Application& app,
              bool checkSeqNum = true);

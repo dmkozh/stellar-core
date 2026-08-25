@@ -7,6 +7,7 @@
 #include "crypto/SignerKey.h"
 #include "crypto/SignerKeyUtils.h"
 #include "herder/Herder.h"
+#include "ledger/ImmutableLedgerView.h"
 #include "ledger/LedgerManager.h"
 #include "ledger/LedgerTxn.h"
 #include "ledger/LedgerTxnEntry.h"
@@ -783,6 +784,36 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
                 19},
         };
 
+        auto applyTwo = [&](TransactionTestFramePtr const& mutator,
+                            TransactionTestFramePtr const& tx) {
+            {
+                CheckValidLedgerViewWrapper ledgerView(*app);
+                auto diagnostics = DiagnosticEventManager::createDisabled();
+                REQUIRE(tx->checkValid(app->getAppConnector(), ledgerView, 0, 0,
+                                       0, diagnostics)
+                            ->isSuccess());
+            }
+            auto r = closeLedger(*app, {mutator, tx}, /* strictOrder */ true);
+            checkTx(0, r, txSUCCESS);
+            return r.results.at(1).result;
+        };
+
+        // Consumes `acc`'s sequence number from a transaction sourced by the
+        // root account, so that it can share a ledger with a transaction
+        // sourced by `acc`.
+        auto seqBumper = [&](TestAccount& acc, SequenceNumber bumpTo) {
+            return transactionFrameFromOps(app->getNetworkID(), *root,
+                                           {acc.op(bumpSequence(bumpTo))},
+                                           {acc});
+        };
+
+        // Same, for changing `acc`'s signers and thresholds.
+        auto optionsSetter = [&](TestAccount& acc,
+                                 SetOptionsArguments const& args) {
+            return transactionFrameFromOps(app->getNetworkID(), *root,
+                                           {acc.op(setOptions(args))}, {acc});
+        };
+
         for (auto const& alternative : alternatives)
         {
             auto ledgerVersion = getLclProtocolVersion(*app);
@@ -832,16 +863,33 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
                             REQUIRE(tx->getResultCode() == txBAD_SEQ);
                             REQUIRE(getAccountSigners(a1, *app).size() == 1);
                         });
+
+                        // From protocol 10 the sequence number can be consumed
+                        // by another transaction in the same ledger, so `tx`
+                        // is valid on its own and only fails during apply.
+                        TransactionTestFramePtr bumper;
+                        auto setupBumped = [&]() {
+                            tx = a1.tx({payment(*root, 1000)});
+                            getSignatures(tx).clear();
+                            setSeqNum(tx, tx->getSeqNum() + 1);
+
+                            SignerKey sk = alternative.createSigner(tx);
+                            Signer sk1(sk, 1);
+                            a1.setOptions(setSigner(sk1));
+                            REQUIRE(getAccountSigners(a1, *app).size() == 1);
+                            alternative.sign(tx);
+                            bumper = seqBumper(a1, tx->getSeqNum() + 10);
+                        };
                         for_versions(10, 12, *app, [&] {
-                            setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txBAD_SEQ);
+                            setupBumped();
+                            auto res = applyTwo(bumper, tx);
+                            REQUIRE(res.result.code() == txBAD_SEQ);
                             REQUIRE(getAccountSigners(a1, *app).size() == 1);
                         });
                         for_versions_from(13, *app, [&] {
-                            setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txBAD_SEQ);
+                            setupBumped();
+                            auto res = applyTwo(bumper, tx);
+                            REQUIRE(res.result.code() == txBAD_SEQ);
                             REQUIRE(getAccountSigners(a1, *app).size() ==
                                     (alternative.autoRemove ? 0 : 1));
                         });
@@ -891,37 +939,62 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
 
                     SECTION("too many signatures (signed by owner)")
                     {
-                        TransactionTestFramePtr tx;
+                        TransactionTestFramePtr tx, raiser;
+                        auto extra = getAccount("extra signer");
+                        // Signed payload signers are the last kind checked, so
+                        // this signature is always examined after the
+                        // alternative one regardless of which alternative is
+                        // in use.
+                        auto extraPayload = xdr::opaque_vec<64>{'p', 'a', 'y'};
+                        SignerKey extraKey = SignerKeyUtils::ed25519PayloadKey(
+                            extra.getPublicKey().ed25519(), extraPayload);
+                        auto signWithExtra = [&](TransactionTestFramePtr t) {
+                            DecoratedSignature sig;
+                            sig.signature = extra.sign(extraPayload);
+                            sig.hint = SignatureUtils::getSignedPayloadHint(
+                                extraKey.ed25519SignedPayload());
+                            t->addSignature(sig);
+                        };
                         auto setup = [&]() {
+                            a1.setOptions(setMedThreshold(2) |
+                                          setSigner(Signer(extraKey, 1)));
+
                             tx = a1.tx({payment(*root, 1000)});
+                            getSignatures(tx).clear();
                             setSeqNum(tx, tx->getSeqNum() + 1);
-                            a1.setSequenceNumber(a1.getLastSequenceNumber() -
-                                                 1);
 
                             SignerKey sk = alternative.createSigner(tx);
                             Signer sk1(sk, 1);
                             a1.setOptions(setSigner(sk1));
-                            REQUIRE(getAccountSigners(a1, *app).size() == 1);
+                            REQUIRE(getAccountSigners(a1, *app).size() == 2);
                             alternative.sign(tx);
+                            signWithExtra(tx);
+                            // Both signers are needed to reach the threshold,
+                            // so both signatures are used. Another transaction
+                            // in the same ledger doubles the alternative
+                            // signer's weight, which makes the second
+                            // signature redundant - and so unused - at apply.
+                            raiser =
+                                optionsSetter(a1, setSigner(Signer(sk, 2)));
                         };
                         for_versions({3, 4, 5, 6, 8, 9}, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txBAD_AUTH_EXTRA);
-                            REQUIRE(getAccountSigners(a1, *app).size() == 1);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txBAD_AUTH_EXTRA);
+                            REQUIRE(getAccountSigners(a1, *app).size() == 2);
                         });
                         for_versions({7}, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txSUCCESS);
-                            REQUIRE(getAccountSigners(a1, *app).size() == 1);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txSUCCESS);
+                            REQUIRE(getAccountSigners(a1, *app).size() == 2);
                         });
                         for_versions_from(10, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txBAD_AUTH_EXTRA);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txBAD_AUTH_EXTRA);
                             REQUIRE(getAccountSigners(a1, *app).size() ==
-                                    (alternative.autoRemove ? 0 : 1));
+                                    (alternative.autoRemove ? 1 : 2));
                         });
                     }
 
@@ -1088,12 +1161,12 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
                     SECTION("failing transaction")
                     {
                         TransactionTestFramePtr tx;
+                        // Underfunded payments are only rejected during apply,
+                        // so the transaction itself is valid.
                         auto setup = [&]() {
-                            tx = a1.tx({payment(*root, -1)});
+                            tx = a1.tx({payment(*root, a1.getBalance() * 10)});
                             getSignatures(tx).clear();
                             setSeqNum(tx, tx->getSeqNum() + 1);
-                            a1.setSequenceNumber(a1.getLastSequenceNumber() -
-                                                 1);
 
                             SignerKey sk = alternative.createSigner(tx);
                             Signer sk1(sk, 1);
@@ -1106,7 +1179,7 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
                             applyCheck(tx, *app);
                             REQUIRE(tx->getResultCode() == stellar::txFAILED);
                             REQUIRE(PaymentOpFrame::getInnerCode(getFirstResult(
-                                        tx)) == stellar::PAYMENT_MALFORMED);
+                                        tx)) == stellar::PAYMENT_UNDERFUNDED);
                             REQUIRE(getAccountSigners(a1, *app).size() == 1);
                         });
                         for_versions_from(10, *app, [&] {
@@ -1114,7 +1187,7 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
                             applyCheck(tx, *app);
                             REQUIRE(tx->getResultCode() == stellar::txFAILED);
                             REQUIRE(PaymentOpFrame::getInnerCode(getFirstResult(
-                                        tx)) == stellar::PAYMENT_MALFORMED);
+                                        tx)) == stellar::PAYMENT_UNDERFUNDED);
                             REQUIRE(getAccountSigners(a1, *app).size() ==
                                     (alternative.autoRemove ? 0 : 1));
                         });
@@ -1132,7 +1205,7 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
 
                     SECTION("not enough rights (envelope)")
                     {
-                        TransactionTestFramePtr tx;
+                        TransactionTestFramePtr tx, raiser;
                         auto setup = [&]() {
                             tx = a1.tx({payment(*root, 1000)});
                             getSignatures(tx).clear();
@@ -1141,28 +1214,32 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
                                                  1);
 
                             SignerKey sk = alternative.createSigner(tx);
-                            Signer sk1(sk, 5); // below low rights
+                            // enough rights for the payment when built...
+                            Signer sk1(sk, 50);
                             a1.setOptions(setSigner(sk1));
                             REQUIRE(getAccountSigners(a1, *app).size() == 2);
                             alternative.sign(tx);
+                            // ...but another transaction in the same ledger
+                            // raises the threshold above the signer's weight.
+                            raiser = optionsSetter(a1, setLowThreshold(51));
                         };
                         for_versions({3, 4, 5, 6, 8, 9, 10, 11, 12}, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txBAD_AUTH);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txBAD_AUTH);
                             REQUIRE(getAccountSigners(a1, *app).size() == 2);
                         });
                         for_versions_from(13, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txBAD_AUTH);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txBAD_AUTH);
                             REQUIRE(getAccountSigners(a1, *app).size() ==
                                     (alternative.autoRemove ? 1 : 2));
                         });
                         for_versions({7}, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txSUCCESS);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txSUCCESS);
                             REQUIRE(getAccountSigners(a1, *app).size() == 2);
                         });
                     }
@@ -1170,33 +1247,32 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
                     SECTION("not enough rights (envelope). Same pre auth "
                             "signer on both tx and op source account")
                     {
-                        TransactionTestFramePtr tx;
+                        TransactionTestFramePtr tx, raiser;
                         auto setup = [&]() {
                             tx = a1.tx({root->op(payment(a1, 100))});
                             getSignatures(tx).clear();
                             setSeqNum(tx, tx->getSeqNum() + 1);
-                            a1.setSequenceNumber(a1.getLastSequenceNumber() -
-                                                 1);
 
                             SignerKey sk = alternative.createSigner(tx);
-                            Signer sk1(sk, 5); // below low rights
+                            Signer sk1(sk, 10); // exactly low rights
                             a1.setOptions(setSigner(sk1));
                             root->setOptions(setSigner(sk1));
                             REQUIRE(getAccountSigners(a1, *app).size() == 2);
                             REQUIRE(getAccountSigners(*root, *app).size() == 1);
                             alternative.sign(tx);
+                            raiser = optionsSetter(a1, setLowThreshold(11));
                         };
                         for_versions({3, 4, 5, 6, 8, 9, 10, 11, 12}, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txBAD_AUTH);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txBAD_AUTH);
                             REQUIRE(getAccountSigners(a1, *app).size() == 2);
                             REQUIRE(getAccountSigners(*root, *app).size() == 1);
                         });
                         for_versions_from(13, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txBAD_AUTH);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txBAD_AUTH);
                             REQUIRE(getAccountSigners(a1, *app).size() ==
                                     (alternative.autoRemove ? 1 : 2));
                             REQUIRE(getAccountSigners(*root, *app).size() ==
@@ -1204,8 +1280,8 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
                         });
                         for_versions({7}, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txSUCCESS);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txSUCCESS);
                             REQUIRE(getAccountSigners(a1, *app).size() == 2);
                             REQUIRE(getAccountSigners(*root, *app).size() == 1);
                         });
@@ -1214,32 +1290,32 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
                     SECTION("Bad seq num. Same pre auth "
                             "signer on both tx and op source account")
                     {
-                        TransactionTestFramePtr tx;
+                        TransactionTestFramePtr tx, bumper;
                         auto setup = [&]() {
                             tx = a1.tx({root->op(payment(a1, 100))});
                             getSignatures(tx).clear();
-                            a1.setSequenceNumber(a1.getLastSequenceNumber() -
-                                                 1);
+                            setSeqNum(tx, tx->getSeqNum() + 1);
 
                             SignerKey sk = alternative.createSigner(tx);
-                            Signer sk1(sk, 5); // below low rights
+                            Signer sk1(sk, 10); // exactly low rights
                             a1.setOptions(setSigner(sk1));
                             root->setOptions(setSigner(sk1));
                             REQUIRE(getAccountSigners(a1, *app).size() == 2);
                             REQUIRE(getAccountSigners(*root, *app).size() == 1);
                             alternative.sign(tx);
+                            bumper = seqBumper(a1, tx->getSeqNum() + 10);
                         };
                         for_versions(10, 12, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txBAD_SEQ);
+                            auto res = applyTwo(bumper, tx);
+                            REQUIRE(res.result.code() == txBAD_SEQ);
                             REQUIRE(getAccountSigners(a1, *app).size() == 2);
                             REQUIRE(getAccountSigners(*root, *app).size() == 1);
                         });
                         for_versions_from(13, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txBAD_SEQ);
+                            auto res = applyTwo(bumper, tx);
+                            REQUIRE(res.result.code() == txBAD_SEQ);
                             REQUIRE(getAccountSigners(a1, *app).size() ==
                                     (alternative.autoRemove ? 1 : 2));
                             REQUIRE(getAccountSigners(*root, *app).size() ==
@@ -1250,36 +1326,42 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
                     SECTION("not enough rights (operation)")
                     {
                         // updating thresholds requires high
-                        TransactionTestFramePtr tx;
+                        TransactionTestFramePtr tx, raiser;
                         auto setup = [&]() {
                             tx = a1.tx({setOptions(th)},
                                        a1.getLastSequenceNumber() + 2);
                             getSignatures(tx).clear();
 
                             SignerKey sk = alternative.createSigner(tx);
-                            Signer sk1(sk, 95); // med rights account
+                            // exactly high rights when the tx is built...
+                            Signer sk1(sk, 100);
                             a1.setOptions(setSigner(sk1));
                             REQUIRE(getAccountSigners(a1, *app).size() == 2);
                             alternative.sign(tx);
+                            // ...but another transaction in the same ledger
+                            // raises high above the signer's weight.
+                            raiser = optionsSetter(a1, setHighThreshold(101));
                         };
                         for_versions({3, 4, 5, 6, 8, 9}, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txFAILED);
-                            REQUIRE(getFirstResultCode(tx) == opBAD_AUTH);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txFAILED);
+                            REQUIRE(res.result.results()[0].code() ==
+                                    opBAD_AUTH);
                             REQUIRE(getAccountSigners(a1, *app).size() == 2);
                         });
                         for_versions({7}, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txSUCCESS);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txSUCCESS);
                             REQUIRE(getAccountSigners(a1, *app).size() == 2);
                         });
                         for_versions_from(10, *app, [&] {
                             setup();
-                            applyCheck(tx, *app);
-                            REQUIRE(tx->getResultCode() == txFAILED);
-                            REQUIRE(getFirstResultCode(tx) == opBAD_AUTH);
+                            auto res = applyTwo(raiser, tx);
+                            REQUIRE(res.result.code() == txFAILED);
+                            REQUIRE(res.result.results()[0].code() ==
+                                    opBAD_AUTH);
                             REQUIRE(getAccountSigners(a1, *app).size() ==
                                     (alternative.autoRemove ? 1 : 2));
                         });
@@ -1890,17 +1972,23 @@ TEST_CASE_VERSIONS("txenvelope", "[tx][envelope]")
             {
                 for_all_versions(*app, [&] {
                     setup();
+                    auto baseFee = app->getLedgerManager().getLastTxFee();
                     txFrame =
                         root->tx({payment(a1.getPublicKey(), paymentAmount)});
-                    setFullFee(txFrame,
-                               app->getLedgerManager().getLastTxFee() - 1);
+                    setFullFee(txFrame, baseFee - 1);
 
-                    applyCheck(txFrame, *app);
-
+                    REQUIRE(!applyCheck(txFrame, *app));
                     REQUIRE(txFrame->getResultCode() == txINSUFFICIENT_FEE);
-                    // during apply, feeCharged is smaller in this case
-                    REQUIRE(txFrame->getResult().feeCharged ==
-                            app->getLedgerManager().getLastTxFee() - 1);
+
+                    // A transaction bidding below the base fee is rejected by
+                    // validation and can never reach apply, so assert the fee
+                    // it would be charged directly. Note that this differs
+                    // from the fee reported by validation, which is the fee
+                    // necessary to be accepted.
+                    LedgerTxn ltx(app->getLedgerTxnRoot());
+                    REQUIRE(txFrame->getFee(ltx.loadHeader().current(), baseFee,
+                                            /* applying */ true) ==
+                            baseFee - 1);
                 });
             }
 

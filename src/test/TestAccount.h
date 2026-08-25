@@ -157,6 +157,11 @@ class TestAccount
         return mSn;
     }
 
+    // Returns the sequence number this account is expected to be at, i.e.
+    // the one assigned to the most recent transaction built from it, without
+    // consulting the ledger.
+    SequenceNumber getCachedSequenceNumber() const;
+
     SequenceNumber
     nextSequenceNumber()
     {

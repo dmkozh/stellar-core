@@ -28,17 +28,24 @@ TestAccount::loadSequenceNumber()
     return getLastSequenceNumber();
 }
 
+SequenceNumber
+TestAccount::getCachedSequenceNumber() const
+{
+    return mSn;
+}
+
 void
 TestAccount::updateSequenceNumber()
 {
-    if (mSn == 0)
+    CheckValidLedgerViewWrapper ledgerView(mApp);
+    auto const entry = ledgerView.load(accountKey(getPublicKey()));
+    if (entry)
     {
-        CheckValidLedgerViewWrapper ledgerView(mApp);
-        auto const entry = ledgerView.load(accountKey(getPublicKey()));
-        if (entry)
-        {
-            mSn = entry.current().data.account().seqNum;
-        }
+        mSn = entry.current().data.account().seqNum;
+    }
+    else
+    {
+        mSn = 0;
     }
 }
 

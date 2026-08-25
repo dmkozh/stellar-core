@@ -186,18 +186,20 @@ class TxGenerator
     // transaction, there is a minimum padded size (see comments in TxTests.h),
     // and that padding rounds up to the nearest multiple of four (since we are
     // using XDR).
-    TransactionFrameBaseConstPtr
-    createTransactionFramePtr(TestAccountPtr from, std::vector<Operation> ops,
-                              std::optional<uint32_t> maxGeneratedFeeRate,
-                              std::optional<uint32_t> byteCount,
-                              std::optional<Memo> memo = std::nullopt);
+    TransactionFrameBaseConstPtr createTransactionFramePtr(
+        TestAccountPtr from, std::vector<Operation> ops,
+        std::optional<uint32_t> maxGeneratedFeeRate,
+        std::optional<uint32_t> byteCount,
+        std::optional<Memo> memo = std::nullopt,
+        std::optional<SequenceNumber> seqNum = std::nullopt);
 
     std::pair<TestAccountPtr, TransactionFrameBaseConstPtr>
     paymentTransaction(uint32_t numAccounts, uint32_t offset,
                        uint32_t ledgerNum, uint64_t sourceAccount,
                        std::optional<uint32_t> byteCount,
                        std::optional<uint32_t> maxGeneratedFeeRate,
-                       std::optional<Memo> memo = std::nullopt);
+                       std::optional<Memo> memo = std::nullopt,
+                       std::optional<SequenceNumber> seqNum = std::nullopt);
 
     std::pair<TestAccountPtr, TransactionFrameBaseConstPtr>
     createUploadWasmTransaction(

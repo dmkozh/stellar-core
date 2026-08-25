@@ -177,7 +177,6 @@ TEST_CASE_VERSIONS("standalone", "[herder][acceptance]")
 
                 txCs.emplace_back(a1.tx({payment(*root, paymentAmount)}));
                 txCs.emplace_back(b1.tx({payment(a1, paymentAmount)}));
-                txCs.emplace_back(c1.tx({payment(*root, paymentAmount)}));
 
                 feedTx(txCs[0],
                        TransactionQueue::AddResultCode::ADD_STATUS_PENDING);
@@ -185,7 +184,11 @@ TEST_CASE_VERSIONS("standalone", "[herder][acceptance]")
                        TransactionQueue::AddResultCode::ADD_STATUS_ERROR);
                 if (hasC)
                 {
-                    feedTx(txCs[2],
+                    // Send a transaction that would be expected if last txB
+                    // transaction hasn't been a sequence number bump. Since
+                    // it was a sequence bump, this is expected to fail.
+                    feedTx(c1.tx({payment(*root, paymentAmount)},
+                                 txBs.back()->getSeqNum() + 1),
                            TransactionQueue::AddResultCode::ADD_STATUS_ERROR);
                 }
 
@@ -1801,9 +1804,9 @@ TEST_CASE("surge pricing", "[herder][txset][soroban]")
             Application::pointer app = createTestApplication(clock, cfg);
             auto root = app->getRoot();
 
-            auto destAccount = root->create("destAccount", 500000000);
-
-            auto tx = makeMultiPayment(destAccount, *root, 1, 100, 0, 1);
+            // No transaction can be applied in this configuration, so the
+            // root account pays itself instead of setting up a new account.
+            auto tx = makeMultiPayment(*root, *root, 1, 100, 0, 1);
 
             TxFrameList invalidTxs;
             auto txSet =
@@ -1876,13 +1879,13 @@ TEST_CASE("surge pricing", "[herder][txset][soroban]")
         SorobanNetworkConfig conf =
             app->getLedgerManager().getLastClosedSorobanNetworkConfig();
 
-        uint32_t const baseFee = 10'000'000;
+        uint32_t const highBaseFee = 10'000'000;
         SorobanResources resources;
         resources.instructions = 800'000;
         resources.diskReadBytes = conf.txMaxDiskReadBytes();
         resources.writeBytes = 1000;
         auto sorobanTx = createUploadWasmTx(
-            *app, acc2, baseFee, DEFAULT_TEST_RESOURCE_FEE, resources);
+            *app, acc2, highBaseFee, DEFAULT_TEST_RESOURCE_FEE, resources);
 
         auto generateTxs = [&](std::vector<TestAccount>& accounts,
                                SorobanNetworkConfig conf) {
@@ -1914,8 +1917,9 @@ TEST_CASE("surge pricing", "[herder][txset][soroban]")
                     res.footprint.readOnly.emplace_back(key);
                 }
 
-                auto tx = createUploadWasmTx(*app, acc, baseFee * 10,
-                                             /* refundableFee */ baseFee, res);
+                auto tx =
+                    createUploadWasmTx(*app, acc, highBaseFee * 10,
+                                       /* refundableFee */ highBaseFee, res);
                 if (rand_flip())
                 {
                     txs.emplace_back(tx);
@@ -1923,7 +1927,8 @@ TEST_CASE("surge pricing", "[herder][txset][soroban]")
                 else
                 {
                     // Double the inclusion fee
-                    txs.emplace_back(feeBump(*app, acc, tx, baseFee * 10 * 2));
+                    txs.emplace_back(
+                        feeBump(*app, acc, tx, highBaseFee * 10 * 2));
                 }
                 CLOG_INFO(Herder,
                           "Generated tx with {} instructions, {} read "
@@ -1939,12 +1944,11 @@ TEST_CASE("surge pricing", "[herder][txset][soroban]")
         {
             SECTION("invalid fee")
             {
-                // Fee too small
-                auto invalidSoroban = createUploadWasmTx(
-                    *app, acc2, 100, DEFAULT_TEST_RESOURCE_FEE, resources);
-
                 SECTION("build block")
                 {
+                    // Fee lower than ledger min fee (100)
+                    auto invalidSoroban = createUploadWasmTx(
+                        *app, acc2, 99, DEFAULT_TEST_RESOURCE_FEE, resources);
                     PerPhaseTransactionList invalidPhases;
                     invalidPhases.resize(
                         static_cast<size_t>(TxSetPhase::PHASE_COUNT));
@@ -1966,10 +1970,14 @@ TEST_CASE("surge pricing", "[herder][txset][soroban]")
                     auto ledgerHash = app->getLedgerManager()
                                           .getLastClosedLedgerHeader()
                                           .hash;
+                    // Fee lower than the base fee in tx set
+                    auto invalidSoroban = createUploadWasmTx(
+                        *app, acc2, highBaseFee - 1, DEFAULT_TEST_RESOURCE_FEE,
+                        resources);
                     auto invalidTxSet =
                         testtxset::makeNonValidatedGeneralizedTxSet(
                             {{std::make_pair(std::nullopt, TxFrameList{tx})},
-                             {std::make_pair(baseFee,
+                             {std::make_pair(highBaseFee,
                                              TxFrameList{invalidSoroban})}},
                             *app, ledgerHash)
                             .second;
@@ -1986,11 +1994,12 @@ TEST_CASE("surge pricing", "[herder][txset][soroban]")
                 auto insns = static_cast<uint32_t>(
                     conf.ledgerMaxInstructions() * 6 / 10);
                 resources.instructions = insns;
-                auto soroban1 = createUploadWasmTx(
-                    *app, acc2, baseFee, DEFAULT_TEST_RESOURCE_FEE, resources);
+                auto soroban1 =
+                    createUploadWasmTx(*app, acc2, highBaseFee,
+                                       DEFAULT_TEST_RESOURCE_FEE, resources);
                 // Pick soroban2 by fee
                 auto soroban2 =
-                    createUploadWasmTx(*app, acc3, baseFee + 1,
+                    createUploadWasmTx(*app, acc3, highBaseFee + 1,
                                        DEFAULT_TEST_RESOURCE_FEE, resources);
 
                 SECTION("build block")
@@ -2007,9 +2016,7 @@ TEST_CASE("surge pricing", "[herder][txset][soroban]")
                     // Both txs are valid individually, but only one fits
                     REQUIRE(txSet->sizeTxTotal() == 2);
                     REQUIRE(invalidPhases[0].empty());
-                    REQUIRE(invalidPhases[1].size() == 1);
-                    REQUIRE(invalidPhases[1][0]->getFullHash() ==
-                            soroban1->getFullHash());
+                    REQUIRE(invalidPhases[1].empty());
                 }
                 SECTION("validate block")
                 {
@@ -2057,8 +2064,9 @@ TEST_CASE("surge pricing", "[herder][txset][soroban]")
         SECTION("soroban surge pricing, classic unaffected")
         {
             // Another soroban tx with higher fee, which will be selected
-            auto sorobanTxHighFee = createUploadWasmTx(
-                *app, acc3, baseFee * 2, DEFAULT_TEST_RESOURCE_FEE, resources);
+            auto sorobanTxHighFee =
+                createUploadWasmTx(*app, acc3, highBaseFee * 2,
+                                   DEFAULT_TEST_RESOURCE_FEE, resources);
             PerPhaseTransactionList invalidPhases;
             invalidPhases.resize(static_cast<size_t>(TxSetPhase::PHASE_COUNT));
             auto txSet = makeTxSetFromTransactions(
@@ -2089,8 +2097,9 @@ TEST_CASE("surge pricing", "[herder][txset][soroban]")
             // Another soroban tx with high fee and a bit less resources
             // Still half capacity available
             resources.diskReadBytes = conf.txMaxDiskReadBytes() / 2;
-            auto sorobanTxHighFee = createUploadWasmTx(
-                *app, acc3, baseFee * 2, DEFAULT_TEST_RESOURCE_FEE, resources);
+            auto sorobanTxHighFee =
+                createUploadWasmTx(*app, acc3, highBaseFee * 2,
+                                   DEFAULT_TEST_RESOURCE_FEE, resources);
 
             // Create another small soroban tx, with small fee. It should be
             // picked up anyway since we can't fit sorobanTx (gaps are allowed)
@@ -2098,8 +2107,9 @@ TEST_CASE("surge pricing", "[herder][txset][soroban]")
             resources.diskReadBytes = 1;
             resources.writeBytes = 1;
 
-            auto smallSorobanLowFee = createUploadWasmTx(
-                *app, acc4, baseFee / 10, DEFAULT_TEST_RESOURCE_FEE, resources);
+            auto smallSorobanLowFee =
+                createUploadWasmTx(*app, acc4, highBaseFee / 10,
+                                   DEFAULT_TEST_RESOURCE_FEE, resources);
 
             PerPhaseTransactionList invalidPhases;
             invalidPhases.resize(static_cast<size_t>(TxSetPhase::PHASE_COUNT));
@@ -3896,7 +3906,8 @@ TEST_CASE("tx queue source account limit", "[herder][transactionqueue]")
         auto b1 = TestAccount{*app, getAccount("B")};
 
         auto tx1 = root->tx({createAccount(a1, minBalance2)});
-        auto tx2 = root->tx({createAccount(b1, minBalance2)});
+        auto tx2 =
+            root->tx({createAccount(b1, minBalance2)}, tx1->getSeqNum() + 1);
 
         return std::make_tuple(*root, a1, b1, tx1, tx2);
     };

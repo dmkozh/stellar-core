@@ -629,14 +629,28 @@ generateTransactions(Application& app, std::filesystem::path const& outputFile,
              "{}...",
              numTransactions, accounts, offset);
 
+    // As we pre-generate multiple transactions from the same source account,
+    // keep track of the expected sequence numbers for each source account (
+    // normally test machninery fetches the sequence numbers from ledger).
+    std::unordered_map<uint64_t, SequenceNumber> lastSeqNum;
+
     // Loop through accounts to create payment transactions
     for (uint32_t i = 0; i < numTransactions; i++)
     {
         uint64_t sourceAccountId = (i % accounts) + offset;
 
+        std::optional<SequenceNumber> seqNum;
+        auto seqIt = lastSeqNum.find(sourceAccountId);
+        if (seqIt != lastSeqNum.end())
+        {
+            seqNum = seqIt->second + 1;
+        }
+
         // Create a payment transaction
-        auto [account, tx] = txgen.paymentTransaction(
-            accounts, offset, 0, sourceAccountId, 1, std::nullopt);
+        auto [account, tx] =
+            txgen.paymentTransaction(accounts, offset, 0, sourceAccountId, 1,
+                                     std::nullopt, std::nullopt, seqNum);
+        lastSeqNum[sourceAccountId] = tx->getSeqNum();
 
         // Convert to TransactionEnvelope and write to output
         TransactionEnvelope txEnv = tx->getEnvelope();

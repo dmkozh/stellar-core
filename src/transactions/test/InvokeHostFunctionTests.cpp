@@ -6017,10 +6017,9 @@ TEST_CASE("settings upgrade command line utils", "[tx][soroban][upgrades]")
         ConfigUpgradeSet upgradeSet2;
         upgradeSet2.updatedEntry = initialEntries;
 
-        auto invokeRes2 =
-            getInvokeTx(a1.getPublicKey(), contractCodeLedgerKey,
-                        contractSourceRefLedgerKey, contractID, upgradeSet2,
-                        a1.getLastSequenceNumber() + 4, 0);
+        auto invokeRes2 = getInvokeTx(a1.getPublicKey(), contractCodeLedgerKey,
+                                      contractSourceRefLedgerKey, contractID,
+                                      upgradeSet2, a1.nextSequenceNumber(), 0);
 
         auto const& upgradeSetKey2 = invokeRes2.second;
 
@@ -6130,11 +6129,11 @@ TEST_CASE("settings upgrade command line utils", "[tx][soroban][upgrades]")
             // Value is too high due to the check in validateConfigUpgradeSet
             costEntryIter->contractLedgerCost()
                 .sorobanStateRentFeeGrowthFactor = 50'001;
-            REQUIRE_THROWS_AS(
+            REQUIRE_THROWS_WITH(
                 getInvokeTx(a1.getPublicKey(), contractCodeLedgerKey,
                             contractSourceRefLedgerKey, contractID, upgradeSet,
-                            a1.getLastSequenceNumber() + 3, 0),
-                std::runtime_error);
+                            a1.nextSequenceNumber(), 0),
+                "Invalid contractLedgerCost");
         }
     }
 }
