@@ -586,3 +586,196 @@ TEST_CASE_VERSIONS("meta stream contains reasonable meta", "[ledgerclosemeta]")
         }
     }
 }
+
+TEST_CASE("LedgerCloseMetaV3 is gated by protocol and config",
+          "[ledgerclosemeta]")
+{
+    using namespace stellar::txtest;
+
+    auto getMetaVersion = [](uint32_t protocolVersion,
+                             bool useV3) -> std::optional<int> {
+        VirtualClock clock;
+        Config cfg = getTestConfig();
+        cfg.TESTING_UPGRADE_LEDGER_PROTOCOL_VERSION = protocolVersion;
+        cfg.USE_LEDGER_CLOSE_META_V3 = useV3;
+        if (!testutil::isTestApplicationProtocolVersionSupported(cfg))
+        {
+            return std::nullopt;
+        }
+        auto app = createTestApplication(clock, cfg);
+        auto root = app->getRoot();
+        closeLedger(*app, {root->tx({payment(root->getPublicKey(), 1)})});
+        auto const& lcm =
+            app->getLedgerManager().getLastClosedLedgerCloseMeta();
+        REQUIRE(lcm);
+        return lcm->getXDR().v();
+    };
+
+    auto const v3Protocol = static_cast<uint32_t>(ProtocolVersion::V_29);
+    SECTION("flag disabled")
+    {
+        REQUIRE(getMetaVersion(Config::CURRENT_LEDGER_PROTOCOL_VERSION,
+                               false) == 2);
+    }
+    SECTION("protocol before V3")
+    {
+        auto v = getMetaVersion(v3Protocol - 1, true);
+        if (!v)
+        {
+            SUCCEED("Skipping historical Soroban protocol test: requested "
+                    "protocol is not linked in this build");
+            return;
+        }
+        REQUIRE(*v == 2);
+    }
+    SECTION("V3 enabled")
+    {
+        REQUIRE(getMetaVersion(v3Protocol, true) == 3);
+        REQUIRE(getMetaVersion(Config::CURRENT_LEDGER_PROTOCOL_VERSION, true) ==
+                3);
+    }
+}
+
+TEST_CASE("LedgerCloseMetaV3 contents", "[ledgerclosemeta][soroban]")
+{
+    using namespace stellar::txtest;
+
+    Config cfg = getTestConfig();
+    cfg.USE_LEDGER_CLOSE_META_V3 = true;
+    // Only allow 2 classic operations per ledger in order to trigger surge
+    // pricing and make the classic base fee differ from the ledger base fee.
+    cfg.TESTING_UPGRADE_MAX_TX_SET_SIZE = 2;
+
+    SorobanTest test(cfg);
+    auto& app = test.getApp();
+    ContractStorageTestClient client(test);
+    auto& contract = client.getContract();
+
+    auto bal = app.getLedgerManager().getLastMinBalance(2);
+    auto acc1 = test.getRoot().create("acc1", bal);
+    auto acc2 = test.getRoot().create("acc2", bal);
+    auto acc3 = test.getRoot().create("acc3", bal);
+    auto acc4 = test.getRoot().create("acc4", bal);
+
+    auto makeClassicTx = [&](TestAccount& acc, uint32_t fee) {
+        return transactionFromOperationsV1(
+            app, acc.getSecretKey(), acc.nextSequenceNumber(),
+            {payment(test.getRoot().getPublicKey(), 1)}, fee);
+    };
+    // The lowest fee tx will be surge priced out of the tx set.
+    std::vector<TransactionFrameBasePtr> txs = {makeClassicTx(acc1, 300),
+                                                makeClassicTx(acc2, 200),
+                                                makeClassicTx(acc3, 150)};
+
+    auto keySymbol = makeSymbolSCVal("key");
+    auto lk = contractDataKey(contract.getAddress(), keySymbol,
+                              ContractDataDurability::PERSISTENT);
+    auto putSpec = SorobanInvocationSpec()
+                       .setInstructions(4'000'000)
+                       .setReadBytes(10'000)
+                       .setWriteBytes(1'000)
+                       .setInclusionFee(1'000)
+                       .setRefundableResourceFee(40'000)
+                       .setReadWriteFootprint({lk});
+    auto sorobanTx =
+        contract
+            .prepareInvocation("put_persistent", {keySymbol, makeU64SCVal(42)},
+                               putSpec)
+            .withExactNonRefundableResourceFee()
+            .createTx(&acc4);
+    txs.push_back(sorobanTx);
+
+    auto txSet = makeTxSetFromTransactions(txs, app, ApplyTimeOffset{}).first;
+    // Collect the expected base fees directly from the tx set XDR.
+    GeneralizedTransactionSet txSetXdr;
+    txSet->toXDR(txSetXdr);
+    UnorderedMap<Hash, std::optional<int64_t>> expectedBaseFees;
+    auto toOptional = [](xdr::pointer<int64> const& fee) {
+        return fee ? std::make_optional<int64_t>(*fee) : std::nullopt;
+    };
+    for (auto const& phase : txSetXdr.v1TxSet().phases)
+    {
+        if (phase.v() == 0)
+        {
+            for (auto const& component : phase.v0Components())
+            {
+                auto const& c = component.txsMaybeDiscountedFee();
+                for (auto const& env : c.txs)
+                {
+                    expectedBaseFees[xdrSha256(env)] = toOptional(c.baseFee);
+                }
+            }
+        }
+        else
+        {
+            auto const& c = phase.parallelTxsComponent();
+            for (auto const& stage : c.executionStages)
+            {
+                for (auto const& cluster : stage)
+                {
+                    for (auto const& env : cluster)
+                    {
+                        expectedBaseFees[xdrSha256(env)] =
+                            toOptional(c.baseFee);
+                    }
+                }
+            }
+        }
+    }
+    REQUIRE(expectedBaseFees.size() == 3);
+
+    closeLedger(app, txSet);
+
+    auto const& lcmFrame =
+        app.getLedgerManager().getLastClosedLedgerCloseMeta();
+    REQUIRE(lcmFrame);
+    auto const& lcm = lcmFrame->getXDR();
+    REQUIRE(lcm.v() == 3);
+    auto const& v3 = lcm.v3();
+    auto const& header = v3.ledgerHeader.header;
+    REQUIRE(v3.txProcessing.size() == 3);
+
+    TransactionResultSet resultSet;
+    bool seenSurgePricedClassic = false;
+    for (auto const& txp : v3.txProcessing)
+    {
+        auto tx = TransactionFrameBase::makeTransactionFromWire(
+            app.getNetworkID(), txp.tx);
+        auto it = expectedBaseFees.find(tx->getFullHash());
+        REQUIRE(it != expectedBaseFees.end());
+        REQUIRE(it->second);
+        REQUIRE(txp.baseFee);
+        REQUIRE(*txp.baseFee == *it->second);
+
+        REQUIRE(!txp.feeProcessing.empty());
+        REQUIRE(txp.result.result.code() == txSUCCESS);
+        if (tx->isSoroban())
+        {
+            // The tx has a refund.
+            REQUIRE(!txp.postTxApplyFeeProcessing.empty());
+        }
+        else
+        {
+            REQUIRE(txp.postTxApplyFeeProcessing.empty());
+            // Single-op classic transactions are charged exactly the base fee.
+            REQUIRE(txp.result.feeCharged == *txp.baseFee);
+            if (*txp.baseFee > header.baseFee)
+            {
+                seenSurgePricedClassic = true;
+            }
+        }
+        auto& rp = resultSet.results.emplace_back();
+        rp.transactionHash = tx->getContentsHash();
+        rp.result = txp.result;
+    }
+    REQUIRE(seenSurgePricedClassic);
+    // The transaction order and results must be consistent with the results
+    // hash stored in the header.
+    REQUIRE(xdrSha256(resultSet) == header.txSetResultHash);
+
+    auto const& sorobanCfg =
+        app.getLedgerManager().getLastClosedSorobanNetworkConfig();
+    REQUIRE(v3.sorobanFeeWrite1KB == sorobanCfg.feeRent1KB());
+    REQUIRE(v3.totalByteSizeOfLiveSorobanState ==
+            sorobanCfg.getAverageSorobanStateSize());
+}

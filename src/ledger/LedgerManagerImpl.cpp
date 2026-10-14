@@ -1803,7 +1803,7 @@ LedgerManagerImpl::applyLedger(LedgerCloseData const& ledgerData,
         // enables us to discard incomplete meta and retry, should anything in
         // this method throw.
         ledgerCloseMeta = std::make_unique<LedgerCloseMetaFrame>(
-            header.current().ledgerVersion);
+            header.current().ledgerVersion, mApp.getConfig());
         ledgerCloseMeta->reserveTxProcessing(applicableTxSet->sizeTxTotal());
         ledgerCloseMeta->populateTxSet(*txSet);
     }
@@ -1814,7 +1814,7 @@ LedgerManagerImpl::applyLedger(LedgerCloseData const& ledgerData,
     if (!ledgerCloseMeta && !mApp.getConfig().DISABLE_TX_META_FOR_TESTING)
     {
         ledgerCloseMeta = std::make_unique<LedgerCloseMetaFrame>(
-            header.current().ledgerVersion);
+            header.current().ledgerVersion, mApp.getConfig());
         ledgerCloseMeta->reserveTxProcessing(applicableTxSet->sizeTxTotal());
         ledgerCloseMeta->populateTxSet(*txSet);
     }
@@ -2498,8 +2498,10 @@ LedgerManagerImpl::processFeesSeqNums(
             for (auto const& tx : phase)
             {
                 LedgerTxn ltxTx(ltx);
-                txResults.push_back(
-                    tx->processFeeSeqNum(ltxTx, txSet.getTxBaseFee(tx)));
+                // Look up the base fee only once, as it is also needed for
+                // the meta.
+                auto baseFee = txSet.getTxBaseFee(tx);
+                txResults.push_back(tx->processFeeSeqNum(ltxTx, baseFee));
 #ifdef BUILD_TESTS
                 if (expectedResultsIter)
                 {
@@ -2534,7 +2536,8 @@ LedgerManagerImpl::processFeesSeqNums(
 
                 if (ledgerCloseMeta)
                 {
-                    ledgerCloseMeta->pushTxFeeProcessing(ltxTx.getChanges());
+                    ledgerCloseMeta->pushTxFeeProcessing(ltxTx.getChanges(),
+                                                         *tx, baseFee);
                 }
                 ++index;
                 ltxTx.commit();

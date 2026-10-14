@@ -3004,6 +3004,59 @@ TEST_CASE("upgrade to version 20 - LedgerCloseMetaV1", "[upgrades][acceptance]")
     REQUIRE(metaFrameCount == 2);
 }
 
+// Similarly to the test above, the ledger that upgrades to the protocol that
+// supports LedgerCloseMetaV3 should still emit V2 meta, and only the following
+// ledgers should emit V3 meta.
+TEST_CASE("upgrade to LedgerCloseMetaV3 protocol", "[upgrades]")
+{
+    TmpDirManager tdm(std::string("lcm-v3-upgrade-meta-") +
+                      binToHex(randomBytes(8)));
+    TmpDir td = tdm.tmpDir("lcm-v3-upgrade-meta-ok");
+    std::string metaPath = td.getName() + "/stream.xdr";
+
+    auto const v3Protocol = static_cast<uint32_t>(ProtocolVersion::V_29);
+    VirtualClock clock;
+    Config cfg = getTestConfig();
+    cfg.METADATA_OUTPUT_STREAM = metaPath;
+    cfg.USE_CONFIG_FOR_GENESIS = false;
+    cfg.USE_LEDGER_CLOSE_META_V3 = true;
+    auto app = createTestApplication(clock, cfg);
+
+    executeUpgrade(*app, makeProtocolVersionUpgrade(v3Protocol - 1));
+    executeUpgrade(*app, makeProtocolVersionUpgrade(v3Protocol));
+    uint32 upgradeLedger = app->getLedgerManager().getLastClosedLedgerNum();
+    closeLedger(*app);
+    closeLedger(*app);
+
+    XDRInputFileStream in;
+    in.open(metaPath);
+    LedgerCloseMeta lcm;
+    std::map<uint32_t, int> metaVersions;
+    while (in.readOne(lcm))
+    {
+        if (lcm.v() == 0)
+        {
+            // Meta for the ledger that upgrades from the genesis protocol.
+            metaVersions[lcm.v0().ledgerHeader.header.ledgerSeq] = 0;
+        }
+        else if (lcm.v() == 2)
+        {
+            metaVersions[lcm.v2().ledgerHeader.header.ledgerSeq] = 2;
+        }
+        else
+        {
+            REQUIRE(lcm.v() == 3);
+            REQUIRE(lcm.v3().ledgerHeader.header.ledgerVersion == v3Protocol);
+            metaVersions[lcm.v3().ledgerHeader.header.ledgerSeq] = 3;
+        }
+    }
+    REQUIRE(metaVersions.size() == 4);
+    REQUIRE(metaVersions.at(upgradeLedger - 1) == 0);
+    REQUIRE(metaVersions.at(upgradeLedger) == 2);
+    REQUIRE(metaVersions.at(upgradeLedger + 1) == 3);
+    REQUIRE(metaVersions.at(upgradeLedger + 2) == 3);
+}
+
 TEST_CASE("configuration initialized in version upgrade", "[soroban][upgrades]")
 {
     VirtualClock clock;

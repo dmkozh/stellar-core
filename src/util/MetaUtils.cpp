@@ -226,6 +226,20 @@ normalizeMeta(LedgerCloseMeta& lcm)
         }
         break;
     }
+    case 3:
+    {
+        auto& v3 = lcm.v3();
+        for (auto& u : v3.upgradesProcessing)
+        {
+            sortChanges(u.changes);
+        }
+        for (auto& tx : v3.txProcessing)
+        {
+            sortChanges(tx.feeProcessing);
+            normalizeMeta(tx.txApplyProcessing);
+        }
+        break;
+    }
     default:
         abort();
     }
@@ -251,6 +265,9 @@ zeroNonDeterministicDiagnostics(LedgerCloseMeta& lcm)
         break;
     case 2:
         zeroTxProcessing(lcm.v2().txProcessing);
+        break;
+    case 3:
+        zeroTxProcessing(lcm.v3().txProcessing);
         break;
     default:
         abort();

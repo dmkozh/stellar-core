@@ -98,6 +98,8 @@ class ApplyLedgersFromMetaWork : public Work
                 return lcm.v1().ledgerHeader.header;
             case 2:
                 return lcm.v2().ledgerHeader.header;
+            case 3:
+                return lcm.v3().ledgerHeader.header;
             default:
                 releaseAssert(false);
             }
@@ -132,9 +134,22 @@ class ApplyLedgersFromMetaWork : public Work
         {
             txSet = TxSetXDRFrame::makeFromWire(lcm.v1().txSet);
         }
-        else
+        else if (lcm.v() == 2)
         {
             txSet = TxSetXDRFrame::makeFromWire(lcm.v2().txSet);
+        }
+        else
+        {
+            // V3 meta doesn't contain the transaction set and it can't be
+            // reconstructed from the meta (the per-transaction data in meta
+            // doesn't preserve the transaction set structure).
+            CLOG_FATAL(Work,
+                       "Ledger {} meta is LedgerCloseMetaV3, which doesn't "
+                       "contain the transaction set and thus can't be "
+                       "replayed. Disable USE_LEDGER_CLOSE_META_V3 in order "
+                       "to produce replayable debug meta.",
+                       ledgerSeqToApply);
+            return BasicWork::State::WORK_FAILURE;
         }
 
         LedgerCloseData ledgerCloseData(ledgerSeqToApply, txSet, lh.scpValue);

@@ -879,6 +879,12 @@ class Config : public std::enable_shared_from_this<Config>
     bool EMIT_SOROBAN_TRANSACTION_META_EXT_V1;
     bool EMIT_LEDGER_CLOSE_META_EXT_V1;
 
+    // When true, emit `LedgerCloseMetaV3` for protocol 29 and later. V3 meta
+    // doesn't contain the transaction set; instead every
+    // `TransactionResultMetaV2` contains the transaction envelope and the base
+    // fee that the transaction set applied to the transaction.
+    bool USE_LEDGER_CLOSE_META_V3;
+
     // Controls the emission of events for classic operations. If enabled,
     // classic events will be enabled for protocol >= 23. Note this does not
     // affect events in protocols 22 and earlier.

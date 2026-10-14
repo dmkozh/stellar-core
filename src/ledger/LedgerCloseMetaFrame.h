@@ -6,20 +6,32 @@
 
 #include "herder/TxSetFrame.h"
 #include "xdr/Stellar-ledger.h"
+#include <optional>
 
 namespace stellar
 {
+class Config;
+class TransactionFrameBase;
 
 // Wrapper around LedgerCloseMeta XDR that provides mutable access to fields
 // in the proper version of meta.
 class LedgerCloseMetaFrame
 {
   public:
-    LedgerCloseMetaFrame(uint32_t protocolVersion);
+    // Creates meta of the version appropriate for the provided protocol
+    // version and config.
+    LedgerCloseMetaFrame(uint32_t protocolVersion, Config const& config);
 
     LedgerHeaderHistoryEntry& ledgerHeader();
     void reserveTxProcessing(size_t n);
-    void pushTxFeeProcessing(LedgerEntryChanges const& feeProcessing);
+    // Adds a new transaction entry to the meta with the provided fee
+    // processing changes. This has to be called for the transactions in apply
+    // order.
+    // `tx` and `baseFee` (the base fee that the transaction set applies to
+    // `tx`) are only used for the meta versions that store them (V3+).
+    void pushTxFeeProcessing(LedgerEntryChanges const& feeProcessing,
+                             TransactionFrameBase const& tx,
+                             std::optional<int64_t> baseFee);
 
     void setTxProcessingMetaAndResultPair(TransactionMeta&& tm,
                                           TransactionResultPair&& rp,
@@ -28,6 +40,8 @@ class LedgerCloseMetaFrame
 
     xdr::xvector<UpgradeEntryMeta>& upgradesProcessing();
 
+    // Stores the transaction set in meta. This is a no-op for the meta
+    // versions that don't contain the transaction set (V3+).
     void populateTxSet(TxSetXDRFrame const& txSet);
 
     // Used for populating meta from background eviction scan

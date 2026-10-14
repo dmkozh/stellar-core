@@ -343,6 +343,7 @@ Config::Config() : NODE_SEED(SecretKey::random())
 
     EMIT_SOROBAN_TRANSACTION_META_EXT_V1 = false;
     EMIT_LEDGER_CLOSE_META_EXT_V1 = false;
+    USE_LEDGER_CLOSE_META_V3 = false;
 
     FORCE_OLD_STYLE_LEADER_ELECTION = false;
     // This is not configurable for now. It doesn't need to be a network-wide
@@ -1992,6 +1993,8 @@ Config::processConfig(std::shared_ptr<cpptoml::table> t)
                  }},
                 {"EMIT_LEDGER_CLOSE_META_EXT_V1",
                  [&]() { EMIT_LEDGER_CLOSE_META_EXT_V1 = readBool(item); }},
+                {"USE_LEDGER_CLOSE_META_V3",
+                 [&]() { USE_LEDGER_CLOSE_META_V3 = readBool(item); }},
                 {"EMIT_CLASSIC_EVENTS",
                  [&]() { EMIT_CLASSIC_EVENTS = readBool(item); }},
                 {"BACKFILL_STELLAR_ASSET_EVENTS",

@@ -234,6 +234,8 @@ lcmLedgerSeq(LedgerCloseMeta const& lcm)
         return lcm.v1().ledgerHeader.header.ledgerSeq;
     case 2:
         return lcm.v2().ledgerHeader.header.ledgerSeq;
+    case 3:
+        return lcm.v3().ledgerHeader.header.ledgerSeq;
     default:
         releaseAssert(false);
     }
