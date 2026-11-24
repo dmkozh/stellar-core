@@ -43,6 +43,7 @@
 #include "transactions/TransactionFrame.h"
 #include "transactions/TransactionUtils.h"
 #include "transactions/test/TransactionTestFrame.h"
+#include "util/BatchExecutor.h"
 #include "util/Decoder.h"
 #include "util/Math.h"
 #include "util/MetricsRegistry.h"
@@ -970,6 +971,7 @@ TEST_CASE("tx set validation rejects txs that fee source cannot pay for",
     Config cfg(getTestConfig());
     VirtualClock clock;
     Application::pointer app = createTestApplication(clock, cfg);
+    app->getBatchExecutor().setPreferredTaskCountForTesting(3);
 
     auto root = app->getRoot();
 

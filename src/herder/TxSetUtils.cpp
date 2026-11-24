@@ -15,7 +15,6 @@
 #include "main/AppConnector.h"
 #include "main/Application.h"
 #include "main/Config.h"
-#include "main/ErrorMessages.h"
 #include "transactions/MutableTransactionResult.h"
 #include "transactions/TransactionUtils.h"
 #include "util/BatchExecutor.h"
@@ -164,16 +163,14 @@ TxSetUtils::buildAccountTxQueues(TxFrameList const& txs)
     return queues;
 }
 
-template <typename T>
 TxFrameListWithErrors
 TxSetUtils::getInvalidTxListWithErrors(
-    T const& inTxs, Application& app,
+    TxFrameList const& txs, Application& app,
     UnorderedMap<AccountID, int64_t>& accountFeeMap,
     uint64_t lowerBoundCloseTimeOffset, uint64_t upperBoundCloseTimeOffset)
 {
     ZoneScoped;
     releaseAssert(threadIsMain());
-    TxFrameList txs(inTxs.begin(), inTxs.end());
 
     auto ledgerView = app.getLedgerManager().getLCLView();
     // Validate minSeqLedgerGap and LedgerBounds against the next ledgerSeq,
@@ -194,11 +191,11 @@ TxSetUtils::getInvalidTxListWithErrors(
     // In some cases we might process a transaction set for ledger N while
     // applying ledger N, in which case we won't be able to re-use the batch
     // executor and thus need to fall back to single-threaded execution.
-    // This is really an edge case: it requires several tx sets to exist for the
-    // same ledger (which is rare), and the timing must be very specific for
-    // processing to happen after the vote and application start. Thus in
-    // practice we may consider this rare enough to not worry about the
-    // performance impact.
+    // This is really an edge case: it requires SCP to be validating a value
+    // for slot N that isn't cached yet (e.g. from a peer's late ballot
+    // statement) while N is being applied. Thus in practice we may consider
+    // this rare enough to not worry about the performance impact.
+    //
     // NB: Both this method and `isApplying` must happen on the main thread,
     // so there is no race condition risk.
     if (app.getLedgerManager().isApplying())
@@ -224,13 +221,14 @@ TxSetUtils::getInvalidTxListWithErrors(
         ledgerViews.emplace_back(app.getLedgerManager().getLCLView());
     }
 
-    std::vector<std::pair<bool, std::optional<int64_t>>> txValidationResult(
-        txs.size());
+    // For every transaction stores the available balance of its fee source
+    // account if the transaction is valid, and `nullopt` otherwise.
+    std::vector<std::optional<int64_t>> feeSourceBalances(txs.size());
     auto& appConnector = app.getAppConnector();
 
     app.getBatchExecutor().executeBatchOverRanges(
         txs.size(), taskCount,
-        [&appConnector, &txs, &ledgerViews, &txValidationResult,
+        [&appConnector, &txs, &ledgerViews, &feeSourceBalances,
          lowerBoundCloseTimeOffset, upperBoundCloseTimeOffset,
          validationLedgerSeq](size_t begin, size_t end, size_t rangeIndex) {
             auto const& view = *ledgerViews.at(rangeIndex);
@@ -242,17 +240,16 @@ TxSetUtils::getInvalidTxListWithErrors(
                                               lowerBoundCloseTimeOffset,
                                               upperBoundCloseTimeOffset,
                                               diagnostics, validationLedgerSeq);
-                txValidationResult[i].first = res->isSuccess();
                 if (!res->isSuccess())
                 {
                     continue;
                 }
                 auto feeSource = view.getAccount(txs[i]->getFeeSourceID());
-                if (feeSource)
-                {
-                    txValidationResult[i].second =
-                        getAvailableBalance(header, feeSource.current());
-                }
+                // Valid transactions must have an existing fee source
+                // account in the ledger view.
+                releaseAssert(feeSource);
+                feeSourceBalances[i] =
+                    getAvailableBalance(header, feeSource.current());
             }
         });
 
@@ -263,8 +260,8 @@ TxSetUtils::getInvalidTxListWithErrors(
     for (size_t i = 0; i < txs.size(); ++i)
     {
         auto const& tx = txs[i];
-        auto const& [txIsValid, feeSourceBalance] = txValidationResult[i];
-        if (!txIsValid)
+        auto const& feeSourceBalance = feeSourceBalances[i];
+        if (!feeSourceBalance)
         {
             invalidTxs.emplace_back(tx);
             errorCode = TxSetValidationResult::TX_VALIDATION_FAILED;
@@ -278,17 +275,6 @@ TxSetUtils::getInvalidTxListWithErrors(
         else
         {
             accFee += tx->getFullFee();
-        }
-        // `feeSourceBalance` should exist as transaction must be valid, log
-        // an internal error and skip the transaction otherwise.
-        if (!feeSourceBalance)
-        {
-            CLOG_ERROR(Herder,
-                       "Account not found when checking TxSet validity");
-            CLOG_ERROR(Herder, "{}", REPORT_INTERNAL_BUG);
-            invalidTxs.emplace_back(tx);
-            errorCode = TxSetValidationResult::TX_VALIDATION_FAILED;
-            continue;
         }
         if (*feeSourceBalance < accFee)
         {
@@ -306,18 +292,6 @@ TxSetUtils::getInvalidTxListWithErrors(
 
     return invalidTxsWithError;
 }
-
-// Explicit template instantiations for getInvalidTxListWithErrors
-template TxFrameListWithErrors
-TxSetUtils::getInvalidTxListWithErrors<TxFrameList>(
-    TxFrameList const& txs, Application& app,
-    UnorderedMap<AccountID, int64_t>& accountFeeMap,
-    uint64_t lowerBoundCloseTimeOffset, uint64_t upperBoundCloseTimeOffset);
-template TxFrameListWithErrors
-TxSetUtils::getInvalidTxListWithErrors<TxSetPhaseFrame>(
-    TxSetPhaseFrame const& txs, Application& app,
-    UnorderedMap<AccountID, int64_t>& accountFeeMap,
-    uint64_t lowerBoundCloseTimeOffset, uint64_t upperBoundCloseTimeOffset);
 
 TxFrameList
 TxSetUtils::trimInvalid(TxFrameList const& txs, Application& app,
